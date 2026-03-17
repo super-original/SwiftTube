@@ -170,7 +170,8 @@ class BrowserAuthManager:
             return None
         return {
             "cookiefile": str(self._cookie_path),
-            "extractor_args": {"youtube": {"player_client": ["web_safari"]}},
+            # mweb + PO token provider is yt-dlp's current recommended HQ route.
+            "extractor_args": {"youtube": {"player_client": ["mweb"]}},
         }
 
     def _validate_or_raise(self, material: Optional[AuthMaterial] = None) -> None:

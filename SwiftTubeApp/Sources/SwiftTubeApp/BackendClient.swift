@@ -23,6 +23,13 @@ final class BackendClient {
         return try await performRequest(url: url)
     }
 
+    func fetchComments(id: String) async throws -> CommentsResponse {
+        let url = baseURL.appendingPathComponent("video/")
+            .appendingPathComponent(id)
+            .appendingPathComponent("comments")
+        return try await performRequest(url: url)
+    }
+
     func fetchAuthStatus() async throws -> AuthStatusResponse {
         try await performRequest(url: baseURL.appendingPathComponent("auth/status"))
     }

@@ -13,6 +13,7 @@ from .auth import BrowserAuthManager
 from .models import (
     AuthStatusResponse,
     BrowserAuthRequest,
+    CommentsResponse,
     RecommendationsResponse,
     VideoPlayback,
 )
@@ -161,15 +162,6 @@ def _video_info(
     watch_metadata = extract_watch_metadata(watch_data)
     related_videos = extract_related_videos(watch_data, current_video_id=video_id)
 
-    comments = []
-    comments_token = extract_comments_token(watch_data)
-    if comments_token:
-        try:
-            comments_response = client_web.next(continuation=comments_token)
-            comments = extract_comments(comments_response)
-        except Exception:
-            comments = []
-
     streams = parse_streams(player_data)
     best = pick_best_stream(streams)
     title = None
@@ -213,7 +205,7 @@ def _video_info(
             commentCountText=watch_metadata.get("commentCountText"),
             streams=streams,
             recommendations=related_videos,
-            comments=comments,
+            comments=[],
             playbackStrategy="direct",
             preferredMuxedStream=best,
             bestStreamUrl=best.url if best else None,
@@ -245,13 +237,31 @@ def _video_info(
         commentCountText=watch_metadata.get("commentCountText"),
         streams=resolved_streams,
         recommendations=related_videos,
-        comments=comments,
+        comments=[],
         playbackStrategy=resolved_strategy,
         preferredMuxedStream=resolved_muxed_stream,
         preferredVideoStream=playback_bundle.preferred_video_stream,
         preferredAudioStream=playback_bundle.preferred_audio_stream,
         bestStreamUrl=playback_bundle.best_stream_url,
         bestStream=playback_bundle.best_stream or best,
+    )
+
+
+def _comments_info(video_id: str, client_web: InnerTube) -> CommentsResponse:
+    watch_data = client_web.next(video_id=video_id)
+    watch_metadata = extract_watch_metadata(watch_data)
+    comments_token = extract_comments_token(watch_data)
+    comments = []
+    if comments_token:
+        try:
+            comments_response = client_web.next(continuation=comments_token)
+            comments = extract_comments(comments_response)
+        except Exception:
+            comments = []
+
+    return CommentsResponse(
+        comments=comments,
+        commentCountText=watch_metadata.get("commentCountText"),
     )
 
 
@@ -271,3 +281,19 @@ def video_info(video_id: str) -> VideoPlayback:
             auth_manager.clear()
 
     return _video_info(video_id, public_client_web, public_client_player)
+
+
+@app.get("/video/{video_id}/comments", response_model=CommentsResponse)
+def video_comments(video_id: str) -> CommentsResponse:
+    using_auth = auth_manager.is_authenticated
+    if using_auth:
+        client_web, _ = _build_clients(use_auth=True)
+        try:
+            return _comments_info(video_id, client_web)
+        except RequestError:
+            auth_manager.clear()
+
+    try:
+        return _comments_info(video_id, public_client_web)
+    except RequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc

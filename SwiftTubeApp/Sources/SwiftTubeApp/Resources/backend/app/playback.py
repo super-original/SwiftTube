@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import time
 from typing import Any, Iterable, List, Optional
 
 import httpx
@@ -8,6 +9,13 @@ from yt_dlp import YoutubeDL
 from yt_dlp.cookies import YoutubeDLCookieJar
 
 from .models import StreamInfo
+
+
+_AUTH_PLAYBACK_FAILURE_TTL_SECONDS = 900
+_PROVIDER_AVAILABILITY_TTL_SECONDS = 30
+_DEFAULT_PO_TOKEN_PROVIDER_URL = "http://127.0.0.1:4416"
+_auth_playback_failures: dict[str, float] = {}
+_provider_status_cache: dict[str, tuple[float, bool]] = {}
 
 
 @dataclass
@@ -126,6 +134,68 @@ def _is_manifest_url(url: str) -> bool:
         or lowered.endswith(".m3u8")
         or "/playlist/index.m3u8" in lowered
     )
+
+
+def _auth_cache_key(auth_options: dict[str, Any]) -> str:
+    cookie_file = auth_options.get("cookiefile")
+    extractor_args = auth_options.get("extractor_args") or {}
+    youtube_args = extractor_args.get("youtube") if isinstance(extractor_args, dict) else {}
+    clients = youtube_args.get("player_client") if isinstance(youtube_args, dict) else []
+    if not isinstance(clients, list):
+        clients = []
+    client_key = ",".join(client for client in clients if isinstance(client, str))
+    return f"{cookie_file or ''}|{client_key}"
+
+
+def _uses_po_token_provider(auth_options: dict[str, Any]) -> bool:
+    extractor_args = auth_options.get("extractor_args") or {}
+    youtube_args = extractor_args.get("youtube") if isinstance(extractor_args, dict) else {}
+    clients = youtube_args.get("player_client") if isinstance(youtube_args, dict) else []
+    if not isinstance(clients, list):
+        return False
+    return any(client in {"mweb", "web_music"} for client in clients if isinstance(client, str))
+
+
+def _provider_server_available(base_url: str = _DEFAULT_PO_TOKEN_PROVIDER_URL) -> bool:
+    now = time.time()
+    cached = _provider_status_cache.get(base_url)
+    if cached is not None and cached[0] > now:
+        return cached[1]
+
+    available = False
+    try:
+        response = httpx.get(f"{base_url}/ping", timeout=1.5)
+        available = 200 <= response.status_code < 300
+    except Exception:
+        available = False
+
+    _provider_status_cache[base_url] = (
+        now + _PROVIDER_AVAILABILITY_TTL_SECONDS,
+        available,
+    )
+    return available
+
+
+def _should_attempt_authenticated_playback(auth_options: dict[str, Any]) -> bool:
+    key = _auth_cache_key(auth_options)
+    failure_deadline = _auth_playback_failures.get(key)
+    if failure_deadline is not None and failure_deadline > time.time():
+        return False
+
+    if _uses_po_token_provider(auth_options) and not _provider_server_available():
+        return False
+
+    return True
+
+
+def _remember_authenticated_playback_failure(auth_options: dict[str, Any]) -> None:
+    _auth_playback_failures[_auth_cache_key(auth_options)] = (
+        time.time() + _AUTH_PLAYBACK_FAILURE_TTL_SECONDS
+    )
+
+
+def _clear_authenticated_playback_failure(auth_options: dict[str, Any]) -> None:
+    _auth_playback_failures.pop(_auth_cache_key(auth_options), None)
 
 
 def _build_streams(formats: Iterable[dict[str, Any]]) -> List[StreamInfo]:
@@ -295,7 +365,7 @@ def _validated_authenticated_bundle(
     bundle: PlaybackBundle,
     auth_options: dict[str, Any],
 ) -> Optional[PlaybackBundle]:
-    candidates = sorted(
+    muxed_candidates = sorted(
         [
             stream
             for stream in bundle.streams
@@ -307,14 +377,75 @@ def _validated_authenticated_bundle(
         reverse=True,
     )
 
-    for candidate in candidates[:2]:
+    reachable_muxed_stream = None
+    for candidate in muxed_candidates[:2]:
         if _stream_is_reachable(candidate, auth_options):
-            return replace(
-                bundle,
-                preferred_muxed_stream=candidate,
-                preferred_video_stream=None,
-                preferred_audio_stream=None,
-            )
+            reachable_muxed_stream = candidate
+            break
+
+    video_candidates = sorted(
+        [
+            stream
+            for stream in bundle.streams
+            if stream.hasVideo
+            and not stream.hasAudio
+            and (stream.container or "").startswith("mp4")
+        ],
+        key=_stream_score,
+        reverse=True,
+    )
+    audio_candidates = sorted(
+        [
+            stream
+            for stream in bundle.streams
+            if stream.hasAudio
+            and not stream.hasVideo
+            and (stream.container or "").startswith(("m4a", "mp4"))
+        ],
+        key=_stream_score,
+        reverse=True,
+    )
+
+    reachable_video_stream = next(
+        (
+            candidate
+            for candidate in video_candidates[:2]
+            if _stream_is_reachable(candidate, auth_options)
+        ),
+        None,
+    )
+    reachable_audio_stream = next(
+        (
+            candidate
+            for candidate in audio_candidates[:2]
+            if _stream_is_reachable(candidate, auth_options)
+        ),
+        None,
+    )
+
+    if (
+        reachable_video_stream is not None
+        and reachable_audio_stream is not None
+        and (
+            reachable_muxed_stream is None
+            or (reachable_video_stream.height or 0)
+            > (reachable_muxed_stream.height or 0)
+        )
+    ):
+        return replace(
+            bundle,
+            preferred_muxed_stream=reachable_muxed_stream,
+            preferred_video_stream=reachable_video_stream,
+            preferred_audio_stream=reachable_audio_stream,
+        )
+
+    if reachable_muxed_stream is not None:
+        return replace(
+            bundle,
+            preferred_muxed_stream=reachable_muxed_stream,
+            preferred_video_stream=None,
+            preferred_audio_stream=None,
+        )
 
     return None
 
@@ -330,7 +461,7 @@ def extract_playback(video_id: str, auth_options: Optional[dict[str, Any]] = Non
         "extractor_args": {"youtube": {"player_client": ["android"]}},
     }
 
-    if auth_options:
+    if auth_options and _should_attempt_authenticated_playback(auth_options):
         authenticated_opts = dict(public_opts)
         authenticated_opts.update(auth_options)
         try:
@@ -340,8 +471,10 @@ def extract_playback(video_id: str, auth_options: Optional[dict[str, Any]] = Non
                 auth_options,
             )
             if validated_bundle is not None:
+                _clear_authenticated_playback_failure(auth_options)
                 return validated_bundle
         except Exception:
             pass
+        _remember_authenticated_playback_failure(auth_options)
 
     return _extract_playback(video_id, public_opts)

@@ -61,6 +61,11 @@ struct CommentItem: Codable, Hashable, Identifiable {
     }
 }
 
+struct CommentsResponse: Codable {
+    let comments: [CommentItem]
+    let commentCountText: String?
+}
+
 struct VideoPlayback: Codable {
     let id: String
     let title: String?

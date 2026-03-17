@@ -56,6 +56,11 @@ class CommentItem(BaseModel):
     pinnedText: Optional[str] = None
 
 
+class CommentsResponse(BaseModel):
+    comments: List[CommentItem] = Field(default_factory=list)
+    commentCountText: Optional[str] = None
+
+
 class VideoPlayback(BaseModel):
     id: str
     title: Optional[str] = None

@@ -65,11 +65,11 @@ private extension PlayerScreen {
     }
 
     var comments: [CommentItem] {
-        playback?.comments ?? []
+        viewModel.comments
     }
 
     var commentHeaderText: String {
-        if let count = playback?.commentCountText, !count.isEmpty {
+        if let count = viewModel.commentCountText, !count.isEmpty {
             return "\(count) comments"
         }
         return "Comments"
@@ -231,7 +231,13 @@ private extension PlayerScreen {
     var commentsSection: some View {
         DetailCard(title: commentHeaderText) {
             VStack(alignment: .leading, spacing: 18) {
-                if comments.isEmpty {
+                if viewModel.isLoadingComments && comments.isEmpty {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text("Loading comments...")
+                            .foregroundStyle(.secondary)
+                    }
+                } else if comments.isEmpty {
                     Text("Comments aren’t available for this video right now.")
                         .foregroundStyle(.secondary)
                 } else {

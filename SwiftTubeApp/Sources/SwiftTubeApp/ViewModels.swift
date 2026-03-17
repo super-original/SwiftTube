@@ -57,11 +57,15 @@ final class PlayerViewModel: ObservableObject {
     @Published var playback: VideoPlayback? = nil
     @Published var isLoading = true
     @Published var errorMessage: String? = nil
+    @Published private(set) var comments: [CommentItem] = []
+    @Published private(set) var commentCountText: String? = nil
+    @Published private(set) var isLoadingComments = false
     @Published private(set) var activeStream: StreamInfo? = nil
     @Published private(set) var isUsingAdaptivePlayback = false
 
     let video: VideoItem
     private var upgradeTask: Task<Void, Never>? = nil
+    private var commentsTask: Task<Void, Never>? = nil
 
     init(video: VideoItem) {
         self.video = video
@@ -69,6 +73,7 @@ final class PlayerViewModel: ObservableObject {
 
     func load() {
         upgradeTask?.cancel()
+        commentsTask?.cancel()
         Task {
             await fetchPlayback()
         }
@@ -76,6 +81,7 @@ final class PlayerViewModel: ObservableObject {
 
     func stop() {
         upgradeTask?.cancel()
+        commentsTask?.cancel()
         player?.pause()
     }
 
@@ -94,6 +100,9 @@ final class PlayerViewModel: ObservableObject {
             self.player = nil
             self.activeStream = nil
             self.isUsingAdaptivePlayback = false
+            self.comments = []
+            self.commentCountText = playback.commentCountText
+            self.isLoadingComments = false
 
             if let player = buildDirectPlayer(for: playback) {
                 self.player = player
@@ -101,6 +110,7 @@ final class PlayerViewModel: ObservableObject {
                 self.errorMessage = nil
                 self.isLoading = false
                 player.play()
+                startCommentsLoad()
 
                 if playback.playbackStrategy == "adaptivePair",
                    let videoStream = playback.preferredVideoStream,
@@ -121,11 +131,37 @@ final class PlayerViewModel: ObservableObject {
             self.isUsingAdaptivePlayback = true
             self.player?.play()
             errorMessage = nil
+            isLoading = false
+            startCommentsLoad()
         } catch {
             player = nil
+            comments = []
+            commentCountText = nil
+            isLoadingComments = false
             activeStream = nil
             isUsingAdaptivePlayback = false
             errorMessage = "Failed to load video."
+        }
+    }
+
+    private func startCommentsLoad() {
+        commentsTask?.cancel()
+        commentsTask = Task { [weak self] in
+            await self?.fetchComments()
+        }
+    }
+
+    private func fetchComments() async {
+        isLoadingComments = true
+        defer { isLoadingComments = false }
+
+        do {
+            let response = try await BackendClient.shared.fetchComments(id: video.id)
+            guard !Task.isCancelled else { return }
+            comments = response.comments
+            commentCountText = response.commentCountText ?? commentCountText
+        } catch {
+            guard !Task.isCancelled else { return }
         }
     }
 

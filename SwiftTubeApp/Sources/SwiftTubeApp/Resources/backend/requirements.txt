@@ -3,3 +3,4 @@ uvicorn[standard]
 innertube
 pydantic
 yt-dlp
+bgutil-ytdlp-pot-provider
