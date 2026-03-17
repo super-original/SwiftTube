@@ -19,7 +19,7 @@ struct VideoCard: View {
                 .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                if let duration = video.durationText ?? video.viewCountText {
+                if let duration = video.durationText {
                     Text(duration)
                         .font(.caption)
                         .padding(.horizontal, 8)

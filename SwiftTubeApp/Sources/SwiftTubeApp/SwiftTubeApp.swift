@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 @main
@@ -17,5 +16,6 @@ struct SwiftTubeApp: App {
                     BrandAssets.installApplicationIcon()
                 }
         }
+        .windowToolbarStyle(.unified(showsTitle: false))
     }
 }

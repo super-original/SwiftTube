@@ -65,6 +65,7 @@ private extension ContentView {
             homeScreen
         case .video(let video):
             PlayerScreen(video: video)
+                .id(video.id)
         }
     }
 
@@ -207,8 +208,10 @@ private struct BrandToolbarLabel: View {
             Text("SwiftTube")
                 .font(.headline)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .foregroundStyle(.primary)
-        .contentShape(Rectangle())
+        .contentShape(Capsule())
     }
 }
 
@@ -246,6 +249,8 @@ private struct BackendToolbarStatus: View {
     var body: some View {
         Label(label, systemImage: "circle.fill")
             .font(.caption)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .foregroundStyle(color, .secondary)
     }
 }
