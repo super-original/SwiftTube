@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import os
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
@@ -23,6 +24,7 @@ from .parse import (
 from .playback import extract_playback
 
 app = FastAPI(title="SwiftTube Backend", version="0.1.0")
+INSTANCE_ID = os.environ.get("SWIFTTUBE_INSTANCE_ID")
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,7 +41,7 @@ client_player = InnerTube("WEB_PARENT_TOOLS")
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "instanceId": INSTANCE_ID}
 
 
 @app.get("/recommendations", response_model=RecommendationsResponse)

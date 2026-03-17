@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Darwin
 import Foundation
 
 enum BackendState: Equatable {
@@ -13,6 +14,13 @@ enum BackendState: Equatable {
 
 @MainActor
 final class BackendManager: ObservableObject {
+    private enum Constants {
+        static let host = "127.0.0.1"
+        static let port = 4891
+        static let startupTimeoutSeconds = 15
+        static let instanceIDEnvironmentKey = "SWIFTTUBE_INSTANCE_ID"
+    }
+
     @Published private(set) var state: BackendState = .idle
     @Published private(set) var statusMessage: String = "Idle"
     @Published private(set) var lastLogLine: String? = nil
@@ -63,6 +71,7 @@ final class BackendManager: ObservableObject {
 
     private func startBackend() async {
         do {
+            lastLogLine = nil
             state = .preparing
             statusMessage = "Preparing backend..."
 
@@ -79,17 +88,27 @@ final class BackendManager: ObservableObject {
             statusMessage = "Installing Python dependencies..."
             try await ensureVenv(at: venvURL, requirementsURL: requirementsURL)
 
+            try await clearConflictingBackendIfNeeded()
+
             state = .starting
             statusMessage = "Starting backend..."
-            try startUvicorn(venvURL: venvURL, backendURL: backendTargetURL)
+            let instanceID = UUID().uuidString
+            try startUvicorn(
+                venvURL: venvURL,
+                backendURL: backendTargetURL,
+                instanceID: instanceID
+            )
 
-            let healthy = await waitForHealth(timeoutSeconds: 30)
+            let healthy = await waitForHealth(
+                timeoutSeconds: Constants.startupTimeoutSeconds,
+                expectedInstanceID: instanceID
+            )
             if healthy {
                 state = .running
                 statusMessage = "Backend running"
             } else {
                 process?.terminate()
-                state = .failed("Backend failed to start. Check network access and try again.")
+                state = .failed(startupFailureMessage())
             }
         } catch {
             process?.terminate()
@@ -145,19 +164,20 @@ final class BackendManager: ObservableObject {
         }
     }
 
-    private func startUvicorn(venvURL: URL, backendURL: URL) throws {
+    private func startUvicorn(venvURL: URL, backendURL: URL, instanceID: String) throws {
         let uvicornProcess = Process()
         uvicornProcess.executableURL = venvURL.appendingPathComponent("bin/python")
         uvicornProcess.arguments = [
             "-m", "uvicorn",
             "app.main:app",
-            "--host", "127.0.0.1",
-            "--port", "4891",
+            "--host", Constants.host,
+            "--port", String(Constants.port),
             "--app-dir", backendURL.path
         ]
-        uvicornProcess.environment = [
-            "PYTHONUNBUFFERED": "1"
-        ]
+        uvicornProcess.environment = ProcessInfo.processInfo.environment.merging([
+            "PYTHONUNBUFFERED": "1",
+            Constants.instanceIDEnvironmentKey: instanceID,
+        ]) { _, new in new }
 
         let pipe = Pipe()
         uvicornProcess.standardOutput = pipe
@@ -183,18 +203,19 @@ final class BackendManager: ObservableObject {
         process = uvicornProcess
     }
 
-    private func waitForHealth(timeoutSeconds: Int) async -> Bool {
-        let url = URL(string: "http://127.0.0.1:4891/health")!
+    private func waitForHealth(timeoutSeconds: Int, expectedInstanceID: String) async -> Bool {
+        let url = URL(string: "http://\(Constants.host):\(Constants.port)/health")!
         let deadline = Date().addingTimeInterval(TimeInterval(timeoutSeconds))
 
         while Date() < deadline {
             do {
                 let (data, response) = try await URLSession.shared.data(from: url)
                 if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
-                    if let payload = String(data: data, encoding: .utf8), payload.contains("ok") {
+                    if let payload = try? JSONDecoder().decode(HealthStatus.self, from: data),
+                       payload.status == "ok",
+                       payload.instanceID == expectedInstanceID {
                         return true
                     }
-                    return true
                 }
             } catch {
                 // keep polling
@@ -202,6 +223,128 @@ final class BackendManager: ObservableObject {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         return false
+    }
+
+    private func clearConflictingBackendIfNeeded() async throws {
+        guard let pid = try await listeningPID(on: Constants.port) else { return }
+
+        let command = try await commandLine(for: pid)
+        guard isSwiftTubeBackend(command) else {
+            throw NSError(
+                domain: "SwiftTube",
+                code: 8,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Backend port \(Constants.port) is already in use by another process: \(command)"
+                ]
+            )
+        }
+
+        _ = Darwin.kill(pid_t(pid), SIGTERM)
+        if await waitForPortToClear(timeoutSeconds: 3) {
+            return
+        }
+
+        _ = Darwin.kill(pid_t(pid), SIGKILL)
+        if await waitForPortToClear(timeoutSeconds: 2) {
+            return
+        }
+
+        throw NSError(
+            domain: "SwiftTube",
+            code: 9,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Couldn’t stop the previous SwiftTube backend process on port \(Constants.port)."
+            ]
+        )
+    }
+
+    private func listeningPID(on port: Int) async throws -> Int? {
+        let output = try await captureProcessOutput(
+            launchPath: "/usr/sbin/lsof",
+            arguments: ["-nP", "-t", "-iTCP:\(port)", "-sTCP:LISTEN"],
+            acceptableExitCodes: [0, 1]
+        )
+
+        guard let firstLine = output
+            .split(whereSeparator: \.isNewline)
+            .first,
+            let pid = Int(firstLine.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return nil
+        }
+
+        return pid
+    }
+
+    private func commandLine(for pid: Int) async throws -> String {
+        let output = try await captureProcessOutput(
+            launchPath: "/bin/ps",
+            arguments: ["-p", String(pid), "-o", "command="]
+        )
+
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func waitForPortToClear(timeoutSeconds: Int) async -> Bool {
+        let deadline = Date().addingTimeInterval(TimeInterval(timeoutSeconds))
+
+        while Date() < deadline {
+            if (try? await listeningPID(on: Constants.port)) == nil {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+
+        return false
+    }
+
+    private func captureProcessOutput(
+        launchPath: String,
+        arguments: [String],
+        acceptableExitCodes: Set<Int32> = [0]
+    ) async throws -> String {
+        try await Task.detached(priority: .utility) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: launchPath)
+            process.arguments = arguments
+
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+
+            if acceptableExitCodes.contains(process.terminationStatus) {
+                return output
+            }
+
+            throw NSError(
+                domain: "SwiftTube",
+                code: Int(process.terminationStatus),
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Process failed: \(launchPath) \(arguments.joined(separator: " "))"
+                ]
+            )
+        }.value
+    }
+
+    private func isSwiftTubeBackend(_ command: String) -> Bool {
+        command.contains("uvicorn")
+            && command.contains("app.main:app")
+            && command.contains("SwiftTube")
+    }
+
+    private func startupFailureMessage() -> String {
+        if let lastLogLine, lastLogLine.localizedCaseInsensitiveContains("address already in use") {
+            return "Backend port \(Constants.port) is already in use. Quit the conflicting process and try again."
+        }
+
+        return "Backend failed to start. Check network access and try again."
     }
 
     private func runProcess(launchPath: String, arguments: [String]) async throws {
@@ -246,5 +389,15 @@ final class BackendManager: ObservableObject {
         let data = try Data(contentsOf: url)
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+private struct HealthStatus: Decodable {
+    let status: String
+    let instanceID: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case instanceID = "instanceId"
     }
 }
