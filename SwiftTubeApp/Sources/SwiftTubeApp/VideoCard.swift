@@ -3,15 +3,10 @@ import SwiftUI
 struct VideoCard: View {
     let video: VideoItem
 
-    private var thumbnailURL: URL? {
-        guard let urlString = video.thumbnails.last?.url else { return nil }
-        return URL(string: urlString)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: thumbnailURL) {
+                CachedAsyncImage(url: video.thumbnailURL) {
                     ZStack {
                         Rectangle()
                             .fill(Color.gray.opacity(0.2))
@@ -24,8 +19,8 @@ struct VideoCard: View {
                 .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                if let viewCount = video.viewCountText {
-                    Text(viewCount)
+                if let duration = video.durationText ?? video.viewCountText {
+                    Text(duration)
                         .font(.caption)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -48,11 +43,19 @@ struct VideoCard: View {
                     .foregroundColor(.secondary)
             }
 
-            if let published = video.publishedTimeText {
-                Text(published)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            HStack(spacing: 6) {
+                if let viewCount = video.viewCountText {
+                    Text(viewCount)
+                }
+                if let published = video.publishedTimeText {
+                    if video.viewCountText != nil {
+                        Text("•")
+                    }
+                    Text(published)
+                }
             }
+            .font(.caption)
+            .foregroundColor(.secondary)
         }
         .padding(12)
         .background(
