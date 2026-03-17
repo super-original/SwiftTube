@@ -62,6 +62,7 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var isLoadingComments = false
     @Published private(set) var activeStream: StreamInfo? = nil
     @Published private(set) var isUsingAdaptivePlayback = false
+    @Published private(set) var pendingAdaptiveStream: StreamInfo? = nil
 
     let video: VideoItem
     private var upgradeTask: Task<Void, Never>? = nil
@@ -103,6 +104,7 @@ final class PlayerViewModel: ObservableObject {
             self.comments = []
             self.commentCountText = playback.commentCountText
             self.isLoadingComments = false
+            self.pendingAdaptiveStream = nil
 
             if let player = buildDirectPlayer(for: playback) {
                 self.player = player
@@ -112,15 +114,10 @@ final class PlayerViewModel: ObservableObject {
                 player.play()
                 startCommentsLoad()
 
-                if playback.playbackStrategy == "adaptivePair",
-                   let videoStream = playback.preferredVideoStream,
-                   let audioStream = playback.preferredAudioStream {
+                if playback.playbackStrategy == "adaptivePair" {
+                    self.pendingAdaptiveStream = playback.preferredVideoStream
                     upgradeTask = Task { [weak self] in
-                        await self?.upgradeToAdaptivePlayback(
-                            playback: playback,
-                            videoStream: videoStream,
-                            audioStream: audioStream
-                        )
+                        await self?.upgradeToAdaptivePlayback(playback: playback)
                     }
                 }
                 return
@@ -129,6 +126,7 @@ final class PlayerViewModel: ObservableObject {
             self.player = try await buildAdaptivePlayer(for: playback)
             self.activeStream = playback.preferredVideoStream ?? playback.bestStream
             self.isUsingAdaptivePlayback = true
+            self.pendingAdaptiveStream = nil
             self.player?.play()
             errorMessage = nil
             isLoading = false
@@ -140,6 +138,7 @@ final class PlayerViewModel: ObservableObject {
             isLoadingComments = false
             activeStream = nil
             isUsingAdaptivePlayback = false
+            pendingAdaptiveStream = nil
             errorMessage = "Failed to load video."
         }
     }
@@ -183,10 +182,12 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func buildAdaptivePlayer(for playback: VideoPlayback) async throws -> AVPlayer {
-        guard let videoStream = playback.preferredVideoStream,
-              let audioStream = playback.preferredAudioStream else {
+        guard let videoStream = try await bestAdaptiveVideoStream(for: playback),
+              let audioStream = bestAdaptiveAudioStream(for: playback) else {
             throw URLError(.badURL)
         }
+
+        pendingAdaptiveStream = videoStream
 
         let item = try await buildAdaptivePlayerItem(
             videoStream: videoStream,
@@ -210,12 +211,15 @@ final class PlayerViewModel: ObservableObject {
         return nil
     }
 
-    private func upgradeToAdaptivePlayback(
-        playback: VideoPlayback,
-        videoStream: StreamInfo,
-        audioStream: StreamInfo
-    ) async {
+    private func upgradeToAdaptivePlayback(playback: VideoPlayback) async {
         do {
+            guard let videoStream = try await bestAdaptiveVideoStream(for: playback),
+                  let audioStream = bestAdaptiveAudioStream(for: playback) else {
+                pendingAdaptiveStream = nil
+                return
+            }
+
+            pendingAdaptiveStream = videoStream
             let item = try await buildAdaptivePlayerItem(
                 videoStream: videoStream,
                 audioStream: audioStream
@@ -240,9 +244,101 @@ final class PlayerViewModel: ObservableObject {
 
             activeStream = videoStream
             isUsingAdaptivePlayback = true
+            pendingAdaptiveStream = nil
         } catch {
             // Keep the direct stream if the higher-quality path fails.
+            pendingAdaptiveStream = nil
         }
+    }
+
+    private func bestAdaptiveVideoStream(for playback: VideoPlayback) async throws -> StreamInfo? {
+        let candidates = adaptiveVideoCandidates(for: playback)
+        for candidate in candidates {
+            pendingAdaptiveStream = candidate
+            guard let asset = buildAsset(for: candidate) else { continue }
+            let isPlayable = try await asset.load(.isPlayable)
+            if isPlayable {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    private func bestAdaptiveAudioStream(for playback: VideoPlayback) -> StreamInfo? {
+        if let preferred = playback.preferredAudioStream {
+            return preferred
+        }
+
+        return playback.streams
+            .filter {
+                $0.hasAudio
+                    && !$0.hasVideo
+                    && ($0.container?.hasPrefix("m4a") == true || $0.container?.hasPrefix("mp4") == true)
+            }
+            .sorted(by: audioCandidateSort(lhs:rhs:))
+            .first
+    }
+
+    private func adaptiveVideoCandidates(for playback: VideoPlayback) -> [StreamInfo] {
+        let candidates = playback.streams.filter {
+            $0.hasVideo
+                && !$0.hasAudio
+                && ($0.container?.hasPrefix("mp4") == true)
+        }
+
+        let sorted = candidates.sorted(by: adaptiveVideoCandidateSort(lhs:rhs:))
+        if let preferred = playback.preferredVideoStream,
+           let preferredIndex = sorted.firstIndex(of: preferred) {
+            var reordered = sorted
+            reordered.remove(at: preferredIndex)
+            reordered.insert(preferred, at: 0)
+            return reordered
+        }
+        return sorted
+    }
+
+    private func adaptiveVideoCandidateSort(lhs: StreamInfo, rhs: StreamInfo) -> Bool {
+        let lhsScore = (
+            lhs.height ?? 0,
+            lhs.fps ?? 0,
+            lhs.bitrate ?? 0,
+            videoPlayabilityScore(for: lhs.videoCodec),
+            codecScore(for: lhs.videoCodec)
+        )
+        let rhsScore = (
+            rhs.height ?? 0,
+            rhs.fps ?? 0,
+            rhs.bitrate ?? 0,
+            videoPlayabilityScore(for: rhs.videoCodec),
+            codecScore(for: rhs.videoCodec)
+        )
+        return lhsScore > rhsScore
+    }
+
+    private func audioCandidateSort(lhs: StreamInfo, rhs: StreamInfo) -> Bool {
+        let lhsScore = (lhs.bitrate ?? 0, codecScore(for: lhs.audioCodec))
+        let rhsScore = (rhs.bitrate ?? 0, codecScore(for: rhs.audioCodec))
+        return lhsScore > rhsScore
+    }
+
+    private func videoPlayabilityScore(for codec: String?) -> Int {
+        guard let codec else { return 0 }
+        if codec.hasPrefix("avc1") { return 4 }
+        if codec.hasPrefix("hvc1") || codec.hasPrefix("hev1") { return 3 }
+        if codec.hasPrefix("av01") { return 2 }
+        if codec.hasPrefix("vp9") { return 1 }
+        return 0
+    }
+
+    private func codecScore(for codec: String?) -> Int {
+        guard let codec else { return 0 }
+        if codec.hasPrefix("avc1") { return 5 }
+        if codec.hasPrefix("hvc1") || codec.hasPrefix("hev1") { return 4 }
+        if codec.hasPrefix("av01") { return 3 }
+        if codec.hasPrefix("vp9") { return 2 }
+        if codec.hasPrefix("mp4a") { return 4 }
+        if codec.hasPrefix("opus") { return 3 }
+        return 1
     }
 
     private func buildAdaptivePlayerItem(

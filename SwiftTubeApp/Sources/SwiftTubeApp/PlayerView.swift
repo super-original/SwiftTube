@@ -77,8 +77,11 @@ private extension PlayerScreen {
 
     var playbackBadgeText: String? {
         if viewModel.isUsingAdaptivePlayback,
-           let label = playback?.preferredVideoStream?.qualityLabel {
+           let label = viewModel.activeStream?.qualityLabel ?? playback?.preferredVideoStream?.qualityLabel {
             return "Adaptive \(label)"
+        }
+        if let label = viewModel.pendingAdaptiveStream?.qualityLabel {
+            return "Preparing \(label)"
         }
         return viewModel.activeStream?.qualityLabel
             ?? playback?.preferredMuxedStream?.qualityLabel
