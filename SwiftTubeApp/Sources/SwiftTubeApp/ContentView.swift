@@ -12,28 +12,38 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             backgroundView
-
-            VStack(spacing: 0) {
-                AppChrome(
-                    backendState: backend.state,
-                    canGoBack: navigation.canGoBack,
-                    canGoForward: navigation.canGoForward
-                ) {
-                    navigation.goBack()
-                } onForward: {
-                    navigation.goForward()
-                } onHome: {
-                    navigation.showHome()
-                } onRefresh: {
-                    viewModel.reload()
-                }
-
-                Divider()
-
-                currentScreen
-            }
+            currentScreen
         }
         .overlay(backendOverlay)
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button(action: navigation.goBack) {
+                    Label("Back", systemImage: "chevron.left")
+                }
+                .disabled(!navigation.canGoBack)
+
+                Button(action: navigation.goForward) {
+                    Label("Forward", systemImage: "chevron.right")
+                }
+                .disabled(!navigation.canGoForward)
+            }
+
+            ToolbarItem(placement: .principal) {
+                Button(action: navigation.showHome) {
+                    BrandToolbarLabel()
+                }
+                .buttonStyle(.plain)
+            }
+
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button(action: viewModel.reload) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(!backend.isRunning)
+
+                BackendToolbarStatus(state: backend.state)
+            }
+        }
         .task(id: backend.state) {
             if backend.isRunning {
                 viewModel.reload()
@@ -61,8 +71,6 @@ private extension ContentView {
     var homeScreen: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                headerView
-
                 if let notice = viewModel.notice {
                     NoticeBanner(text: notice)
                 }
@@ -70,24 +78,6 @@ private extension ContentView {
                 contentView
             }
             .padding(24)
-        }
-    }
-
-    var headerView: some View {
-        GroupBox {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Your feed, your player, no browser clutter.")
-                        .font(.largeTitle)
-                        .fontWeight(.semibold)
-                    Text("Fast local backend, richer watch pages, and room for your own UX.")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                StatusPill(state: backend.state)
-            }
-            .padding(.vertical, 6)
         }
     }
 
@@ -204,69 +194,25 @@ private extension ContentView {
     }
 }
 
-private struct AppChrome: View {
-    let backendState: BackendState
-    let canGoBack: Bool
-    let canGoForward: Bool
-    let onBack: () -> Void
-    let onForward: () -> Void
-    let onHome: () -> Void
-    let onRefresh: () -> Void
-
+private struct BrandToolbarLabel: View {
     var body: some View {
-        HStack(spacing: 14) {
-            chromeButton(systemImage: "chevron.left", enabled: canGoBack, action: onBack)
-            chromeButton(systemImage: "chevron.right", enabled: canGoForward, action: onForward)
-
-            Button(action: onHome) {
-                HStack(spacing: 12) {
-                    if let logo = BrandAssets.logo {
-                        Image(nsImage: logo)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 34, height: 24)
-                    }
-                    Text("SwiftTube")
-                        .font(.title3.weight(.semibold))
-                }
-                .foregroundStyle(.primary)
+        HStack(spacing: 8) {
+            if let logo = BrandAssets.logo {
+                Image(nsImage: logo)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 20)
             }
-            .buttonStyle(.plain)
 
-            Spacer()
-
-            Button(action: onRefresh) {
-                Label("Refresh", systemImage: "arrow.clockwise")
-                    .labelStyle(.iconOnly)
-                    .font(.headline)
-                    .frame(width: 34, height: 34)
-            }
-            .buttonStyle(.plain)
-
-            StatusPill(state: backendState)
+            Text("SwiftTube")
+                .font(.headline)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .background(.thinMaterial)
-    }
-
-    private func chromeButton(systemImage: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.headline.weight(.semibold))
-                .frame(width: 34, height: 34)
-        }
-        .buttonStyle(.plain)
-        .background(
-            Circle()
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
-        .opacity(enabled ? 1 : 0.45)
-        .disabled(!enabled)
+        .foregroundStyle(.primary)
+        .contentShape(Rectangle())
     }
 }
 
-private struct StatusPill: View {
+private struct BackendToolbarStatus: View {
     let state: BackendState
 
     private var label: String {
@@ -298,20 +244,9 @@ private struct StatusPill: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(color)
-                .frame(width: 8, height: 8)
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
+        Label(label, systemImage: "circle.fill")
+            .font(.caption)
+            .foregroundStyle(color, .secondary)
     }
 }
 

@@ -213,6 +213,7 @@ def extract_playback(video_id: str) -> PlaybackBundle:
         "extract_flat": False,
         "skip_download": True,
         "js_runtimes": {"node": {}},
+        "extractor_args": {"youtube": {"player_client": ["android"]}},
     }
 
     with YoutubeDL(opts) as ydl:

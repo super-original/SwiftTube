@@ -40,11 +40,9 @@ struct PlayerScreen: View {
                     .ignoresSafeArea()
             )
         }
-        .navigationTitle("")
-        .task {
+        .task(id: video.id) {
             viewModel.load()
         }
-        .textSelection(.enabled)
     }
 }
 
@@ -512,6 +510,7 @@ private struct RecommendationRow: View {
             RoundedRectangle(cornerRadius: 18)
                 .fill(Color(NSColor.controlBackgroundColor))
         )
+        .contentShape(Rectangle())
     }
 }
 
