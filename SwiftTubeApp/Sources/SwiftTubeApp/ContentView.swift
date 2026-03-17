@@ -4,6 +4,7 @@ struct ContentView: View {
     @StateObject private var viewModel = HomeViewModel()
     @EnvironmentObject private var backend: BackendManager
     @EnvironmentObject private var navigation: AppNavigationModel
+    @EnvironmentObject private var authSession: AuthSessionModel
 
     private let columns = [
         GridItem(.adaptive(minimum: 240), spacing: 20)
@@ -15,6 +16,10 @@ struct ContentView: View {
             currentScreen
         }
         .overlay(backendOverlay)
+        .sheet(isPresented: $authSession.isSheetPresented) {
+            AuthConnectionSheet()
+                .environmentObject(authSession)
+        }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Button(action: navigation.goBack) {
@@ -36,6 +41,13 @@ struct ContentView: View {
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    authSession.isSheetPresented = true
+                } label: {
+                    AuthToolbarLabel(status: authSession.status)
+                }
+                .disabled(!backend.isRunning)
+
                 Button(action: viewModel.reload) {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -46,8 +58,13 @@ struct ContentView: View {
         }
         .task(id: backend.state) {
             if backend.isRunning {
+                await authSession.loadStatus()
                 viewModel.reload()
             }
+        }
+        .task(id: authSession.contentRefreshID) {
+            guard backend.isRunning else { return }
+            viewModel.reload()
         }
     }
 }
@@ -252,6 +269,111 @@ private struct BackendToolbarStatus: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .foregroundStyle(color, .secondary)
+    }
+}
+
+private struct AuthToolbarLabel: View {
+    let status: AuthStatusResponse
+
+    var body: some View {
+        Label {
+            Text(status.authenticated ? (status.browserLabel ?? "YouTube") : "Connect YouTube")
+        } icon: {
+            Image(systemName: status.authenticated ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.plus")
+        }
+        .font(.caption)
+    }
+}
+
+private struct AuthConnectionSheet: View {
+    @EnvironmentObject private var authSession: AuthSessionModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Connect Your YouTube Session")
+                    .font(.title2.weight(.bold))
+                Text("SwiftTube uses the browser session you already have on this Mac. Your Google password never goes through the app.")
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(BrowserLoginOption.allCases) { browser in
+                    Button {
+                        Task {
+                            let connected = await authSession.connect(using: browser)
+                            if connected {
+                                dismiss()
+                            }
+                        }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(browser.title)
+                                .font(.headline)
+                            Text(browser.subtitle)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(authSession.isWorking)
+                }
+            }
+
+            if authSession.isWorking {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("Connecting your YouTube session...")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if authSession.status.authenticated {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Connected via \(authSession.status.browserLabel ?? "your browser")", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    if let message = authSession.status.message {
+                        Text(message)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color(NSColor.controlBackgroundColor))
+                )
+
+                Button("Disconnect") {
+                    Task {
+                        await authSession.disconnect()
+                    }
+                }
+                .disabled(authSession.isWorking)
+            }
+
+            if let errorMessage = authSession.errorMessage, !errorMessage.isEmpty {
+                Text(errorMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(.red)
+            }
+
+            Text("If the import fails, make sure you are signed into YouTube in that browser and then try again.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button("Close") {
+                    dismiss()
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 480)
     }
 }
 

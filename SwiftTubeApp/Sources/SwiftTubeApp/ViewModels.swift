@@ -130,6 +130,13 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func buildDirectPlayer(for playback: VideoPlayback) -> AVPlayer? {
+        if let stream = playback.preferredMuxedStream ?? playback.bestStream,
+           let asset = buildAsset(for: stream) {
+            let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+            player.automaticallyWaitsToMinimizeStalling = true
+            player.currentItem?.preferredForwardBufferDuration = 8
+            return player
+        }
         if let url = resolvedDirectPlaybackURL(for: playback) {
             let player = AVPlayer(url: url)
             player.automaticallyWaitsToMinimizeStalling = true
@@ -206,13 +213,10 @@ final class PlayerViewModel: ObservableObject {
         videoStream: StreamInfo,
         audioStream: StreamInfo
     ) async throws -> AVPlayerItem {
-        guard let videoURL = URL(string: videoStream.url),
-              let audioURL = URL(string: audioStream.url) else {
+        guard let videoAsset = buildAsset(for: videoStream),
+              let audioAsset = buildAsset(for: audioStream) else {
             throw URLError(.badURL)
         }
-
-        let videoAsset = AVURLAsset(url: videoURL)
-        let audioAsset = AVURLAsset(url: audioURL)
 
         let videoTracks = try await videoAsset.loadTracks(withMediaType: .video)
         let audioTracks = try await audioAsset.loadTracks(withMediaType: .audio)
@@ -258,6 +262,17 @@ final class PlayerViewModel: ObservableObject {
         let item = AVPlayerItem(asset: composition)
         item.preferredForwardBufferDuration = 12
         return item
+    }
+
+    private func buildAsset(for stream: StreamInfo) -> AVURLAsset? {
+        guard let url = URL(string: stream.url) else { return nil }
+        if let headers = stream.httpHeaders, !headers.isEmpty {
+            return AVURLAsset(
+                url: url,
+                options: ["AVURLAssetHTTPHeaderFieldsKey": headers]
+            )
+        }
+        return AVURLAsset(url: url)
     }
 
     private func minimumDuration(_ lhs: CMTime, _ rhs: CMTime) -> CMTime {

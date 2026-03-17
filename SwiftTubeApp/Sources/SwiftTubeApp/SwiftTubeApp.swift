@@ -4,6 +4,7 @@ import SwiftUI
 struct SwiftTubeApp: App {
     @StateObject private var backendManager = BackendManager()
     @StateObject private var navigationModel = AppNavigationModel()
+    @StateObject private var authSession = AuthSessionModel()
 
     var body: some Scene {
         WindowGroup {
@@ -11,6 +12,7 @@ struct SwiftTubeApp: App {
                 .frame(minWidth: 960, minHeight: 640)
                 .environmentObject(backendManager)
                 .environmentObject(navigationModel)
+                .environmentObject(authSession)
                 .onAppear {
                     backendManager.start()
                     BrandAssets.installApplicationIcon()

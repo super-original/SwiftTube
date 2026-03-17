@@ -96,6 +96,7 @@ final class BackendManager: ObservableObject {
             try startUvicorn(
                 venvURL: venvURL,
                 backendURL: backendTargetURL,
+                appSupportURL: appSupportURL,
                 instanceID: instanceID
             )
 
@@ -164,7 +165,12 @@ final class BackendManager: ObservableObject {
         }
     }
 
-    private func startUvicorn(venvURL: URL, backendURL: URL, instanceID: String) throws {
+    private func startUvicorn(
+        venvURL: URL,
+        backendURL: URL,
+        appSupportURL: URL,
+        instanceID: String
+    ) throws {
         let uvicornProcess = Process()
         uvicornProcess.executableURL = venvURL.appendingPathComponent("bin/python")
         uvicornProcess.arguments = [
@@ -176,6 +182,7 @@ final class BackendManager: ObservableObject {
         ]
         uvicornProcess.environment = ProcessInfo.processInfo.environment.merging([
             "PYTHONUNBUFFERED": "1",
+            "SWIFTTUBE_APP_SUPPORT_DIR": appSupportURL.path,
             Constants.instanceIDEnvironmentKey: instanceID,
         ]) { _, new in new }
 

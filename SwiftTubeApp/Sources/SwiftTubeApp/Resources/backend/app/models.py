@@ -32,6 +32,7 @@ class StreamInfo(BaseModel):
     formatId: Optional[str] = None
     mimeType: Optional[str] = None
     qualityLabel: Optional[str] = None
+    httpHeaders: dict[str, str] = Field(default_factory=dict)
     bitrate: Optional[int] = None
     width: Optional[int] = None
     height: Optional[int] = None
@@ -78,3 +79,14 @@ class VideoPlayback(BaseModel):
     preferredAudioStream: Optional[StreamInfo] = None
     bestStreamUrl: Optional[str] = None
     bestStream: Optional[StreamInfo] = None
+
+
+class AuthStatusResponse(BaseModel):
+    authenticated: bool = False
+    browser: Optional[str] = None
+    browserLabel: Optional[str] = None
+    message: Optional[str] = None
+
+
+class BrowserAuthRequest(BaseModel):
+    browser: str

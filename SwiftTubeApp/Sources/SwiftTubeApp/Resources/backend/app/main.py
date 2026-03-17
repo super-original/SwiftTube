@@ -9,7 +9,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from innertube import InnerTube
 from innertube.errors import RequestError
 
-from .models import RecommendationsResponse, VideoPlayback
+from .auth import BrowserAuthManager
+from .models import (
+    AuthStatusResponse,
+    BrowserAuthRequest,
+    RecommendationsResponse,
+    VideoPlayback,
+)
 from .parse import (
     extract_browse_ids_from_guide,
     extract_comments,
@@ -34,9 +40,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client_web = InnerTube("WEB")
-# WEB_PARENT_TOOLS currently returns a playable muxed stream without login.
-client_player = InnerTube("WEB_PARENT_TOOLS")
+public_client_web = InnerTube("WEB")
+public_client_player = InnerTube("WEB_PARENT_TOOLS")
+auth_manager = BrowserAuthManager()
+
+
+def _build_clients(use_auth: bool) -> tuple[InnerTube, InnerTube]:
+    if use_auth and auth_manager.is_authenticated:
+        return auth_manager.build_client("WEB"), auth_manager.build_client("WEB_PARENT_TOOLS")
+    return public_client_web, public_client_player
+
+
+def _load_recommendations(
+    client_web: InnerTube,
+    continuation: Optional[str],
+) -> tuple[list, Optional[str]]:
+    if continuation:
+        data = client_web.browse(continuation=continuation)
+    else:
+        data = client_web.browse(browse_id="FEwhat_to_watch")
+    return extract_video_items(data), extract_continuation_token(data)
 
 
 @app.get("/health")
@@ -44,27 +67,54 @@ def health() -> dict:
     return {"status": "ok", "instanceId": INSTANCE_ID}
 
 
+@app.get("/auth/status", response_model=AuthStatusResponse)
+def auth_status() -> AuthStatusResponse:
+    return AuthStatusResponse(**auth_manager.status_payload(validate=True))
+
+
+@app.post("/auth/browser", response_model=AuthStatusResponse)
+def connect_browser_auth(request: BrowserAuthRequest) -> AuthStatusResponse:
+    try:
+        payload = auth_manager.connect_browser(request.browser)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return AuthStatusResponse(**payload)
+
+
+@app.delete("/auth/session", response_model=AuthStatusResponse)
+def clear_auth_session() -> AuthStatusResponse:
+    return AuthStatusResponse(**auth_manager.clear())
+
+
 @app.get("/recommendations", response_model=RecommendationsResponse)
 def recommendations(
     continuation: Optional[str] = Query(default=None, min_length=1)
 ) -> RecommendationsResponse:
     note: Optional[str] = None
-    if continuation:
-        data = client_web.browse(continuation=continuation)
-    else:
-        data = client_web.browse(browse_id="FEwhat_to_watch")
+    using_auth = auth_manager.is_authenticated
+    client_web, _ = _build_clients(use_auth=using_auth)
 
-    items = extract_video_items(data)
-    token = extract_continuation_token(data)
+    try:
+        items, token = _load_recommendations(client_web, continuation)
+    except RequestError as exc:
+        if not using_auth:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        auth_manager.clear()
+        note = "Your saved YouTube session expired. Showing public picks instead."
+        try:
+            items, token = _load_recommendations(public_client_web, continuation)
+        except RequestError as fallback_exc:
+            raise HTTPException(status_code=502, detail=str(fallback_exc)) from fallback_exc
 
     if not items and not continuation:
-        guide = client_web.guide()
+        fallback_client = public_client_web if note else client_web
+        guide = fallback_client.guide()
         browse_ids = extract_browse_ids_from_guide(guide, limit=4)
         fallback_items = []
         seen = set()
         for browse_id in browse_ids:
             try:
-                fallback_data = client_web.browse(browse_id=browse_id)
+                fallback_data = fallback_client.browse(browse_id=browse_id)
                 for item in extract_video_items(fallback_data):
                     if item.id in seen:
                         continue
@@ -80,11 +130,15 @@ def recommendations(
     return RecommendationsResponse(items=items, continuation=token, note=note)
 
 
-@app.get("/video/{video_id}", response_model=VideoPlayback)
-def video_info(video_id: str) -> VideoPlayback:
+def _video_info(
+    video_id: str,
+    client_web: InnerTube,
+    client_player: InnerTube,
+    playback_auth: Optional[dict] = None,
+) -> VideoPlayback:
     with ThreadPoolExecutor(max_workers=3) as executor:
         watch_future = executor.submit(client_web.next, video_id=video_id)
-        playback_future = executor.submit(extract_playback, video_id)
+        playback_future = executor.submit(extract_playback, video_id, playback_auth)
         player_future = executor.submit(client_player.player, video_id)
 
         try:
@@ -199,3 +253,21 @@ def video_info(video_id: str) -> VideoPlayback:
         bestStreamUrl=playback_bundle.best_stream_url,
         bestStream=playback_bundle.best_stream or best,
     )
+
+
+@app.get("/video/{video_id}", response_model=VideoPlayback)
+def video_info(video_id: str) -> VideoPlayback:
+    using_auth = auth_manager.is_authenticated
+    if using_auth:
+        client_web, client_player = _build_clients(use_auth=True)
+        try:
+            return _video_info(
+                video_id,
+                client_web,
+                client_player,
+                auth_manager.playback_options(),
+            )
+        except RequestError:
+            auth_manager.clear()
+
+    return _video_info(video_id, public_client_web, public_client_player)

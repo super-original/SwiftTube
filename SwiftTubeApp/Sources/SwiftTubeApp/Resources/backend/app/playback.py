@@ -149,6 +149,11 @@ def _build_streams(formats: Iterable[dict[str, Any]]) -> List[StreamInfo]:
                 else None,
                 mimeType=_mime_type(format_data),
                 qualityLabel=_quality_label(format_data),
+                httpHeaders={
+                    key: value
+                    for key, value in (format_data.get("http_headers") or {}).items()
+                    if isinstance(key, str) and isinstance(value, str)
+                },
                 bitrate=bitrate,
                 width=format_data.get("width"),
                 height=format_data.get("height"),
@@ -205,17 +210,7 @@ def _best_audio_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
     return max(candidates, key=_stream_score)
 
 
-def extract_playback(video_id: str) -> PlaybackBundle:
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "extract_flat": False,
-        "skip_download": True,
-        "js_runtimes": {"node": {}},
-        "extractor_args": {"youtube": {"player_client": ["android"]}},
-    }
-
+def _extract_playback(video_id: str, opts: dict[str, Any]) -> PlaybackBundle:
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(
             f"https://www.youtube.com/watch?v={video_id}", download=False
@@ -232,3 +227,25 @@ def extract_playback(video_id: str) -> PlaybackBundle:
         preferred_video_stream=_best_video_stream(streams),
         preferred_audio_stream=_best_audio_stream(streams),
     )
+
+
+def extract_playback(video_id: str, auth_options: Optional[dict[str, Any]] = None) -> PlaybackBundle:
+    public_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "extract_flat": False,
+        "skip_download": True,
+        "js_runtimes": {"node": {}},
+        "extractor_args": {"youtube": {"player_client": ["android"]}},
+    }
+
+    if auth_options:
+        authenticated_opts = dict(public_opts)
+        authenticated_opts.update(auth_options)
+        try:
+            return _extract_playback(video_id, authenticated_opts)
+        except Exception:
+            pass
+
+    return _extract_playback(video_id, public_opts)

@@ -103,12 +103,116 @@ def row_text_parts(row: Any) -> List[str]:
     return results
 
 
+def extract_lockup_duration(lockup: Any) -> Optional[str]:
+    overlays = (
+        lockup.get("contentImage", {})
+        .get("thumbnailViewModel", {})
+        .get("overlays", [])
+    )
+    if not isinstance(overlays, list):
+        return None
+
+    for overlay in overlays:
+        if not isinstance(overlay, dict):
+            continue
+        badges = (
+            overlay.get("thumbnailBottomOverlayViewModel", {})
+            .get("badges", [])
+        )
+        if not isinstance(badges, list):
+            continue
+        for badge in badges:
+            if not isinstance(badge, dict):
+                continue
+            text = (
+                badge.get("thumbnailBadgeViewModel", {}).get("text")
+            )
+            if isinstance(text, str) and text:
+                return text
+    return None
+
+
+def parse_lockup_video_item(lockup: Any) -> Optional[VideoItem]:
+    if not isinstance(lockup, dict):
+        return None
+    if lockup.get("contentType") != "LOCKUP_CONTENT_TYPE_VIDEO":
+        return None
+
+    video_id = (
+        lockup.get("contentId")
+        or lockup.get("rendererContext", {})
+        .get("commandContext", {})
+        .get("onTap", {})
+        .get("innertubeCommand", {})
+        .get("watchEndpoint", {})
+        .get("videoId")
+    )
+    if not isinstance(video_id, str) or not video_id:
+        return None
+
+    metadata = lockup.get("metadata", {}).get("lockupMetadataViewModel", {})
+    title = (
+        metadata.get("title", {}).get("content")
+        or "Untitled"
+    )
+
+    rows = (
+        metadata.get("metadata", {})
+        .get("contentMetadataViewModel", {})
+        .get("metadataRows", [])
+    )
+    if not isinstance(rows, list):
+        rows = []
+
+    channel = None
+    view_count = None
+    published = None
+
+    if rows:
+        channel_parts = row_text_parts(rows[0])
+        if channel_parts:
+            channel = channel_parts[0]
+
+    if len(rows) > 1:
+        stats_parts = row_text_parts(rows[1])
+        if stats_parts:
+            view_count = stats_parts[0]
+        if len(stats_parts) > 1:
+            published = stats_parts[1]
+
+    thumbnails = build_source_thumbnails(
+        lockup.get("contentImage", {})
+        .get("thumbnailViewModel", {})
+        .get("image", {})
+    )
+
+    return VideoItem(
+        id=video_id,
+        title=title,
+        channel=channel,
+        viewCountText=view_count,
+        publishedTimeText=published,
+        durationText=extract_lockup_duration(lockup),
+        thumbnails=thumbnails,
+    )
+
+
 def extract_video_items(data: Any, limit: int = 120) -> List[VideoItem]:
     items: List[VideoItem] = []
     seen: set[str] = set()
     for node in iter_nodes(data):
         if not isinstance(node, dict):
             continue
+        if "lockupViewModel" in node:
+            item = parse_lockup_video_item(node.get("lockupViewModel"))
+            if item is None or item.id in seen:
+                continue
+            seen.add(item.id)
+            items.append(item)
+            if len(items) >= limit:
+                break
+            continue
+
         renderer = None
         if "videoRenderer" in node:
             renderer = node.get("videoRenderer")

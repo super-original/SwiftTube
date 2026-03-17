@@ -22,6 +22,7 @@ struct PlayerScreen: View {
     @StateObject private var viewModel: PlayerViewModel
     @State private var isDescriptionExpanded = false
     @EnvironmentObject private var navigation: AppNavigationModel
+    @EnvironmentObject private var authSession: AuthSessionModel
 
     init(video: VideoItem) {
         self.video = video
@@ -40,7 +41,7 @@ struct PlayerScreen: View {
                     .ignoresSafeArea()
             )
         }
-        .task(id: video.id) {
+        .task(id: "\(video.id)-\(authSession.contentRefreshID.uuidString)") {
             viewModel.load()
         }
     }

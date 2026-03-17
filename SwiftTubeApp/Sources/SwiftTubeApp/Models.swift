@@ -32,6 +32,7 @@ struct StreamInfo: Codable, Hashable {
     let formatId: String?
     let mimeType: String?
     let qualityLabel: String?
+    let httpHeaders: [String: String]?
     let bitrate: Int?
     let width: Int?
     let height: Int?
@@ -88,4 +89,18 @@ struct VideoPlayback: Codable {
         guard let channelAvatarUrl else { return nil }
         return URL(string: channelAvatarUrl)
     }
+}
+
+struct AuthStatusResponse: Codable, Equatable {
+    let authenticated: Bool
+    let browser: String?
+    let browserLabel: String?
+    let message: String?
+
+    static let signedOut = AuthStatusResponse(
+        authenticated: false,
+        browser: nil,
+        browserLabel: nil,
+        message: nil
+    )
 }
