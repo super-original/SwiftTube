@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, List, Optional
 
+import httpx
 from yt_dlp import YoutubeDL
+from yt_dlp.cookies import YoutubeDLCookieJar
 
 from .models import StreamInfo
 
@@ -116,6 +118,16 @@ def _is_direct_protocol(protocol: Any) -> bool:
     return protocol.startswith(("http", "https", "m3u8"))
 
 
+def _is_manifest_url(url: str) -> bool:
+    lowered = url.lower()
+    return (
+        "manifest.googlevideo.com" in lowered
+        or "/api/manifest/" in lowered
+        or lowered.endswith(".m3u8")
+        or "/playlist/index.m3u8" in lowered
+    )
+
+
 def _build_streams(formats: Iterable[dict[str, Any]]) -> List[StreamInfo]:
     streams: List[StreamInfo] = []
 
@@ -177,6 +189,7 @@ def _best_muxed_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
         if stream.hasAudio
         and stream.hasVideo
         and (stream.container or "").startswith(("mp4", "mov"))
+        and not _is_manifest_url(stream.url)
     ]
     if not candidates:
         return None
@@ -229,6 +242,83 @@ def _extract_playback(video_id: str, opts: dict[str, Any]) -> PlaybackBundle:
     )
 
 
+def _probe_client(
+    stream: StreamInfo,
+    auth_options: Optional[dict[str, Any]],
+) -> httpx.Client:
+    client = httpx.Client(
+        follow_redirects=True,
+        headers=stream.httpHeaders or {},
+        timeout=8.0,
+    )
+
+    cookie_file = auth_options.get("cookiefile") if auth_options else None
+    if isinstance(cookie_file, str) and cookie_file:
+        jar = YoutubeDLCookieJar(cookie_file)
+        jar.load(ignore_discard=True, ignore_expires=True)
+        for cookie in jar:
+            client.cookies.set(
+                cookie.name,
+                cookie.value,
+                domain=cookie.domain,
+                path=cookie.path,
+            )
+
+    return client
+
+
+def _stream_is_reachable(
+    stream: StreamInfo,
+    auth_options: Optional[dict[str, Any]],
+) -> bool:
+    if _is_manifest_url(stream.url):
+        return False
+
+    try:
+        with _probe_client(stream, auth_options) as client:
+            response = client.head(stream.url)
+            if 200 <= response.status_code < 300:
+                return True
+
+            # Some hosts don't answer HEAD cleanly, so fall back to a 1-byte range GET.
+            with client.stream(
+                "GET",
+                stream.url,
+                headers={"Range": "bytes=0-0"},
+            ) as fallback:
+                return 200 <= fallback.status_code < 300
+    except Exception:
+        return False
+
+
+def _validated_authenticated_bundle(
+    bundle: PlaybackBundle,
+    auth_options: dict[str, Any],
+) -> Optional[PlaybackBundle]:
+    candidates = sorted(
+        [
+            stream
+            for stream in bundle.streams
+            if stream.hasAudio
+            and stream.hasVideo
+            and not _is_manifest_url(stream.url)
+        ],
+        key=_stream_score,
+        reverse=True,
+    )
+
+    for candidate in candidates[:2]:
+        if _stream_is_reachable(candidate, auth_options):
+            return replace(
+                bundle,
+                preferred_muxed_stream=candidate,
+                preferred_video_stream=None,
+                preferred_audio_stream=None,
+            )
+
+    return None
+
+
 def extract_playback(video_id: str, auth_options: Optional[dict[str, Any]] = None) -> PlaybackBundle:
     public_opts = {
         "quiet": True,
@@ -244,7 +334,13 @@ def extract_playback(video_id: str, auth_options: Optional[dict[str, Any]] = Non
         authenticated_opts = dict(public_opts)
         authenticated_opts.update(auth_options)
         try:
-            return _extract_playback(video_id, authenticated_opts)
+            authenticated_bundle = _extract_playback(video_id, authenticated_opts)
+            validated_bundle = _validated_authenticated_bundle(
+                authenticated_bundle,
+                auth_options,
+            )
+            if validated_bundle is not None:
+                return validated_bundle
         except Exception:
             pass
 
