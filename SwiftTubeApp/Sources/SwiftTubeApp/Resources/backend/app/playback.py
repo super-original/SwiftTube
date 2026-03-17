@@ -9,13 +9,11 @@ from yt_dlp import YoutubeDL
 from yt_dlp.cookies import YoutubeDLCookieJar
 
 from .models import StreamInfo
+from .provider import build_authenticated_ytdlp_options
 
 
 _AUTH_PLAYBACK_FAILURE_TTL_SECONDS = 900
-_PROVIDER_AVAILABILITY_TTL_SECONDS = 30
-_DEFAULT_PO_TOKEN_PROVIDER_URL = "http://127.0.0.1:4416"
 _auth_playback_failures: dict[str, float] = {}
-_provider_status_cache: dict[str, tuple[float, bool]] = {}
 
 
 @dataclass
@@ -110,6 +108,20 @@ def _codec_score(codec: Optional[str]) -> int:
     return 1
 
 
+def _video_playability_score(codec: Optional[str]) -> int:
+    if not isinstance(codec, str):
+        return 0
+    if codec.startswith("avc1"):
+        return 4
+    if codec.startswith(("hvc1", "hev1")):
+        return 3
+    if codec.startswith("av01"):
+        return 1
+    if codec.startswith("vp9"):
+        return 0
+    return 0
+
+
 def _stream_score(stream: StreamInfo) -> tuple[int, int, int, int, int]:
     return (
         stream.height or 0,
@@ -117,6 +129,16 @@ def _stream_score(stream: StreamInfo) -> tuple[int, int, int, int, int]:
         stream.bitrate or 0,
         _codec_score(stream.videoCodec),
         _codec_score(stream.audioCodec),
+    )
+
+
+def _adaptive_video_score(stream: StreamInfo) -> tuple[int, int, int, int, int]:
+    return (
+        _video_playability_score(stream.videoCodec),
+        stream.height or 0,
+        stream.fps or 0,
+        stream.bitrate or 0,
+        _codec_score(stream.videoCodec),
     )
 
 
@@ -156,33 +178,10 @@ def _uses_po_token_provider(auth_options: dict[str, Any]) -> bool:
     return any(client in {"mweb", "web_music"} for client in clients if isinstance(client, str))
 
 
-def _provider_server_available(base_url: str = _DEFAULT_PO_TOKEN_PROVIDER_URL) -> bool:
-    now = time.time()
-    cached = _provider_status_cache.get(base_url)
-    if cached is not None and cached[0] > now:
-        return cached[1]
-
-    available = False
-    try:
-        response = httpx.get(f"{base_url}/ping", timeout=1.5)
-        available = 200 <= response.status_code < 300
-    except Exception:
-        available = False
-
-    _provider_status_cache[base_url] = (
-        now + _PROVIDER_AVAILABILITY_TTL_SECONDS,
-        available,
-    )
-    return available
-
-
 def _should_attempt_authenticated_playback(auth_options: dict[str, Any]) -> bool:
     key = _auth_cache_key(auth_options)
     failure_deadline = _auth_playback_failures.get(key)
     if failure_deadline is not None and failure_deadline > time.time():
-        return False
-
-    if _uses_po_token_provider(auth_options) and not _provider_server_available():
         return False
 
     return True
@@ -277,7 +276,9 @@ def _best_video_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
     ]
     if not candidates:
         return None
-    return max(candidates, key=_stream_score)
+    # Prefer AVFoundation-friendly codecs over raw resolution so the native player
+    # gets a stream it can actually render.
+    return max(candidates, key=_adaptive_video_score)
 
 
 def _best_audio_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
@@ -391,7 +392,7 @@ def _validated_authenticated_bundle(
             and not stream.hasAudio
             and (stream.container or "").startswith("mp4")
         ],
-        key=_stream_score,
+        key=_adaptive_video_score,
         reverse=True,
     )
     audio_candidates = sorted(
@@ -462,9 +463,12 @@ def extract_playback(video_id: str, auth_options: Optional[dict[str, Any]] = Non
     }
 
     if auth_options and _should_attempt_authenticated_playback(auth_options):
-        authenticated_opts = dict(public_opts)
-        authenticated_opts.update(auth_options)
         try:
+            authenticated_opts = dict(public_opts)
+            if _uses_po_token_provider(auth_options):
+                authenticated_opts.update(build_authenticated_ytdlp_options(auth_options))
+            else:
+                authenticated_opts.update(auth_options)
             authenticated_bundle = _extract_playback(video_id, authenticated_opts)
             validated_bundle = _validated_authenticated_bundle(
                 authenticated_bundle,

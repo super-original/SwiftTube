@@ -12,6 +12,7 @@ import httpx
 from innertube import InnerTube, api
 from yt_dlp.cookies import YoutubeDLCookieJar, extract_cookies_from_browser
 
+from .provider import prefetch_provider_install
 
 SUPPORTED_BROWSERS = {
     "chrome": "Chrome",
@@ -95,6 +96,7 @@ class BrowserAuthManager:
         if self._config is not None:
             try:
                 self._material = self._material_from_cookie_file(self._config)
+                prefetch_provider_install(str(self._cookie_path))
             except Exception:
                 self.clear()
 
@@ -148,6 +150,7 @@ class BrowserAuthManager:
         self._save_config(config)
         self._config = config
         self._material = material
+        prefetch_provider_install(str(self._cookie_path))
         return self.status_payload()
 
     def clear(self) -> dict:

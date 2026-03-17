@@ -19,6 +19,33 @@ final class BackendManager: ObservableObject {
         static let port = 4891
         static let startupTimeoutSeconds = 15
         static let instanceIDEnvironmentKey = "SWIFTTUBE_INSTANCE_ID"
+        static let minimumPreferredPythonMinorVersion = 10
+    }
+
+    private struct PythonRuntime: Comparable {
+        let executablePath: String
+        let major: Int
+        let minor: Int
+        let patch: Int
+
+        var versionString: String {
+            "\(major).\(minor).\(patch)"
+        }
+
+        var meetsPreferredVersion: Bool {
+            major > 3 || (major == 3 && minor >= Constants.minimumPreferredPythonMinorVersion)
+        }
+
+        static func < (lhs: PythonRuntime, rhs: PythonRuntime) -> Bool {
+            if lhs.major != rhs.major { return lhs.major < rhs.major }
+            if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
+            return lhs.patch < rhs.patch
+        }
+    }
+
+    private struct VenvBootstrapState: Codable {
+        let requirementsHash: String
+        let pythonVersion: String
     }
 
     @Published private(set) var state: BackendState = .idle
@@ -145,23 +172,44 @@ final class BackendManager: ObservableObject {
 
     private func ensureVenv(at venvURL: URL, requirementsURL: URL) async throws {
         let pythonPath = venvURL.appendingPathComponent("bin/python")
+        let preferredPython = try await selectPythonRuntime()
+
+        if FileManager.default.fileExists(atPath: pythonPath.path),
+           let existingRuntime = try? await pythonRuntime(at: pythonPath.path),
+           !existingRuntime.meetsPreferredVersion,
+           preferredPython.meetsPreferredVersion {
+            try FileManager.default.removeItem(at: venvURL)
+        }
+
         if !FileManager.default.fileExists(atPath: pythonPath.path) {
             try await runProcess(
-                launchPath: "/usr/bin/python3",
+                launchPath: preferredPython.executablePath,
                 arguments: ["-m", "venv", venvURL.path]
             )
         }
 
+        let activeRuntime = try await pythonRuntime(at: pythonPath.path)
         let requirementsHash = try sha256Hex(for: requirementsURL)
-        let hashURL = venvURL.appendingPathComponent("requirements.sha")
-        let storedHash = try? String(contentsOf: hashURL)
+        let stateURL = venvURL.appendingPathComponent("swifttube-bootstrap.json")
+        let storedState = try? decodeBootstrapState(from: stateURL)
 
-        if storedHash != requirementsHash {
+        if storedState?.requirementsHash != requirementsHash
+            || storedState?.pythonVersion != activeRuntime.versionString {
             try await runProcess(
-                launchPath: venvURL.appendingPathComponent("bin/pip").path,
-                arguments: ["install", "-r", requirementsURL.path]
+                launchPath: pythonPath.path,
+                arguments: ["-m", "pip", "install", "--upgrade", "pip"]
             )
-            try requirementsHash.write(to: hashURL, atomically: true, encoding: .utf8)
+            try await runProcess(
+                launchPath: pythonPath.path,
+                arguments: ["-m", "pip", "install", "--upgrade", "-r", requirementsURL.path]
+            )
+            try encodeBootstrapState(
+                VenvBootstrapState(
+                    requirementsHash: requirementsHash,
+                    pythonVersion: activeRuntime.versionString
+                ),
+                to: stateURL
+            )
         }
     }
 
@@ -396,6 +444,85 @@ final class BackendManager: ObservableObject {
         let data = try Data(contentsOf: url)
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func selectPythonRuntime() async throws -> PythonRuntime {
+        let environment = ProcessInfo.processInfo.environment
+        let candidatePaths = [
+            environment["SWIFTTUBE_PYTHON_PATH"],
+            "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3",
+            "/opt/homebrew/bin/python3",
+            "/opt/homebrew/opt/python@3.13/bin/python3.13",
+            "/opt/homebrew/opt/python@3.12/bin/python3.12",
+            "/opt/homebrew/opt/python@3.11/bin/python3.11",
+            "/usr/local/bin/python3",
+            "/usr/local/opt/python@3.13/bin/python3.13",
+            "/usr/local/opt/python@3.12/bin/python3.12",
+            "/usr/local/opt/python@3.11/bin/python3.11",
+            "/usr/bin/python3",
+        ].compactMap { $0 }
+
+        var seen = Set<String>()
+        var runtimes: [PythonRuntime] = []
+
+        for candidate in candidatePaths where seen.insert(candidate).inserted {
+            guard FileManager.default.isExecutableFile(atPath: candidate) else { continue }
+            if let runtime = try? await pythonRuntime(at: candidate) {
+                runtimes.append(runtime)
+            }
+        }
+
+        if let preferred = runtimes.filter(\.meetsPreferredVersion).max() {
+            return preferred
+        }
+        if let fallback = runtimes.max() {
+            return fallback
+        }
+
+        throw NSError(
+            domain: "SwiftTube",
+            code: 10,
+            userInfo: [NSLocalizedDescriptionKey: "No usable Python 3 runtime was found for the backend."]
+        )
+    }
+
+    private func pythonRuntime(at launchPath: String) async throws -> PythonRuntime {
+        let output = try await captureProcessOutput(
+            launchPath: launchPath,
+            arguments: [
+                "-c",
+                "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}')",
+            ]
+        )
+
+        let versionText = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let components = versionText.split(separator: ".").compactMap { Int($0) }
+        guard components.count == 3 else {
+            throw NSError(
+                domain: "SwiftTube",
+                code: 11,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to read Python version from \(launchPath)."]
+            )
+        }
+
+        return PythonRuntime(
+            executablePath: launchPath,
+            major: components[0],
+            minor: components[1],
+            patch: components[2]
+        )
+    }
+
+    private func decodeBootstrapState(from url: URL) throws -> VenvBootstrapState {
+        let data = try Data(contentsOf: url)
+        return try JSONDecoder().decode(VenvBootstrapState.self, from: data)
+    }
+
+    private func encodeBootstrapState(_ state: VenvBootstrapState, to url: URL) throws {
+        let data = try JSONEncoder().encode(state)
+        try data.write(to: url, options: .atomic)
     }
 }
 
