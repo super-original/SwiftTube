@@ -57,55 +57,102 @@ final class PlayerViewModel: ObservableObject {
     @Published var playback: VideoPlayback? = nil
     @Published var isLoading = true
     @Published var errorMessage: String? = nil
+    @Published private(set) var activeStream: StreamInfo? = nil
+    @Published private(set) var isUsingAdaptivePlayback = false
 
     let video: VideoItem
+    private var upgradeTask: Task<Void, Never>? = nil
 
     init(video: VideoItem) {
         self.video = video
     }
 
     func load() {
+        upgradeTask?.cancel()
         Task {
             await fetchPlayback()
         }
     }
 
+    func stop() {
+        upgradeTask?.cancel()
+        player?.pause()
+    }
+
     private func fetchPlayback() async {
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if player != nil || errorMessage != nil {
+                isLoading = false
+            }
+        }
 
         do {
             let playback = try await BackendClient.shared.fetchVideo(id: video.id)
             self.playback = playback
             self.player?.pause()
-            self.player = try await buildPlayer(for: playback)
+            self.player = nil
+            self.activeStream = nil
+            self.isUsingAdaptivePlayback = false
+
+            if let player = buildDirectPlayer(for: playback) {
+                self.player = player
+                self.activeStream = playback.preferredMuxedStream ?? playback.bestStream
+                self.errorMessage = nil
+                self.isLoading = false
+                player.play()
+
+                if playback.playbackStrategy == "adaptivePair",
+                   let videoStream = playback.preferredVideoStream,
+                   let audioStream = playback.preferredAudioStream {
+                    upgradeTask = Task { [weak self] in
+                        await self?.upgradeToAdaptivePlayback(
+                            playback: playback,
+                            videoStream: videoStream,
+                            audioStream: audioStream
+                        )
+                    }
+                }
+                return
+            }
+
+            self.player = try await buildAdaptivePlayer(for: playback)
+            self.activeStream = playback.preferredVideoStream ?? playback.bestStream
+            self.isUsingAdaptivePlayback = true
+            self.player?.play()
             errorMessage = nil
         } catch {
             player = nil
+            activeStream = nil
+            isUsingAdaptivePlayback = false
             errorMessage = "Failed to load video."
         }
     }
 
-    private func buildPlayer(for playback: VideoPlayback) async throws -> AVPlayer {
-        if playback.playbackStrategy == "adaptivePair",
-           let videoStream = playback.preferredVideoStream,
-           let audioStream = playback.preferredAudioStream,
-           let adaptiveItem = try? await buildAdaptivePlayerItem(
-                videoStream: videoStream,
-                audioStream: audioStream
-           ) {
-            let player = AVPlayer(playerItem: adaptiveItem)
-            player.automaticallyWaitsToMinimizeStalling = true
-            return player
-        }
-
+    private func buildDirectPlayer(for playback: VideoPlayback) -> AVPlayer? {
         if let url = resolvedDirectPlaybackURL(for: playback) {
             let player = AVPlayer(url: url)
             player.automaticallyWaitsToMinimizeStalling = true
+            player.currentItem?.preferredForwardBufferDuration = 8
             return player
         }
+        return nil
+    }
 
-        throw URLError(.badURL)
+    private func buildAdaptivePlayer(for playback: VideoPlayback) async throws -> AVPlayer {
+        guard let videoStream = playback.preferredVideoStream,
+              let audioStream = playback.preferredAudioStream else {
+            throw URLError(.badURL)
+        }
+
+        let item = try await buildAdaptivePlayerItem(
+            videoStream: videoStream,
+            audioStream: audioStream
+        )
+
+        let player = AVPlayer(playerItem: item)
+        player.automaticallyWaitsToMinimizeStalling = true
+        return player
     }
 
     private func resolvedDirectPlaybackURL(for playback: VideoPlayback) -> URL? {
@@ -118,6 +165,41 @@ final class PlayerViewModel: ObservableObject {
             return url
         }
         return nil
+    }
+
+    private func upgradeToAdaptivePlayback(
+        playback: VideoPlayback,
+        videoStream: StreamInfo,
+        audioStream: StreamInfo
+    ) async {
+        do {
+            let item = try await buildAdaptivePlayerItem(
+                videoStream: videoStream,
+                audioStream: audioStream
+            )
+
+            guard !Task.isCancelled else { return }
+
+            let previousTime = player?.currentTime() ?? .zero
+            let wasPlaying = player?.rate != 0
+
+            if let player {
+                player.replaceCurrentItem(with: item)
+                _ = await player.seek(
+                    to: previousTime,
+                    toleranceBefore: .zero,
+                    toleranceAfter: .zero
+                )
+                if wasPlaying || previousTime == .zero {
+                    player.play()
+                }
+            }
+
+            activeStream = videoStream
+            isUsingAdaptivePlayback = true
+        } catch {
+            // Keep the direct stream if the higher-quality path fails.
+        }
     }
 
     private func buildAdaptivePlayerItem(

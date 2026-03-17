@@ -21,6 +21,7 @@ struct PlayerScreen: View {
     let video: VideoItem
     @StateObject private var viewModel: PlayerViewModel
     @State private var isDescriptionExpanded = false
+    @EnvironmentObject private var navigation: AppNavigationModel
 
     init(video: VideoItem) {
         self.video = video
@@ -76,12 +77,13 @@ private extension PlayerScreen {
     }
 
     var playbackBadgeText: String? {
-        guard let playback else { return nil }
-        if playback.playbackStrategy == "adaptivePair",
-           let label = playback.preferredVideoStream?.qualityLabel {
+        if viewModel.isUsingAdaptivePlayback,
+           let label = playback?.preferredVideoStream?.qualityLabel {
             return "Adaptive \(label)"
         }
-        return playback.preferredMuxedStream?.qualityLabel ?? playback.bestStream?.qualityLabel
+        return viewModel.activeStream?.qualityLabel
+            ?? playback?.preferredMuxedStream?.qualityLabel
+            ?? playback?.bestStream?.qualityLabel
     }
 
     var metadataPills: [String] {
@@ -135,14 +137,20 @@ private extension PlayerScreen {
     }
 
     var playerSurface: some View {
-        ZStack(alignment: .topLeading) {
+        ZStack {
             RoundedRectangle(cornerRadius: 22)
                 .fill(Color.black.opacity(0.88))
 
             if viewModel.isLoading {
-                ProgressView("Loading video...")
-                    .tint(.white)
-                    .foregroundStyle(.white)
+                VStack(spacing: 14) {
+                    ProgressView()
+                        .scaleEffect(1.15)
+                    Text("Loading video...")
+                        .font(.headline)
+                }
+                .tint(.white)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 14) {
                     Image(systemName: "play.slash.fill")
@@ -160,19 +168,21 @@ private extension PlayerScreen {
                 PlayerView(player: player)
                     .clipShape(RoundedRectangle(cornerRadius: 22))
                     .onDisappear {
+                        viewModel.stop()
                         player.pause()
                     }
-            }
-
-            if let badge = playbackBadgeText {
-                QualityBadge(text: badge, isAdaptive: playback?.playbackStrategy == "adaptivePair")
-                    .padding(16)
             }
         }
         .frame(maxWidth: .infinity)
         .aspectRatio(16 / 9, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 22))
         .shadow(color: .black.opacity(0.18), radius: 22, y: 10)
+        .overlay(alignment: .topLeading) {
+            if let badge = playbackBadgeText {
+                QualityBadge(text: badge, isAdaptive: viewModel.isUsingAdaptivePlayback)
+                    .padding(16)
+            }
+        }
     }
 
     var headerSection: some View {
@@ -262,7 +272,9 @@ private extension PlayerScreen {
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(recommendations, id: \.id) { relatedVideo in
-                        NavigationLink(value: relatedVideo) {
+                        Button {
+                            navigation.showVideo(relatedVideo)
+                        } label: {
                             RecommendationRow(video: relatedVideo)
                         }
                         .buttonStyle(.plain)

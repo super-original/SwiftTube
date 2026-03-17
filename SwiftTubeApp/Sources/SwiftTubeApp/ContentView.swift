@@ -3,42 +3,34 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = HomeViewModel()
     @EnvironmentObject private var backend: BackendManager
+    @EnvironmentObject private var navigation: AppNavigationModel
 
     private let columns = [
         GridItem(.adaptive(minimum: 240), spacing: 20)
     ]
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                backgroundView
+        ZStack {
+            backgroundView
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        headerView
-
-                        if let notice = viewModel.notice {
-                            NoticeBanner(text: notice)
-                        }
-
-                        contentView
-                    }
-                    .padding(24)
+            VStack(spacing: 0) {
+                AppChrome(
+                    backendState: backend.state,
+                    canGoBack: navigation.canGoBack,
+                    canGoForward: navigation.canGoForward
+                ) {
+                    navigation.goBack()
+                } onForward: {
+                    navigation.goForward()
+                } onHome: {
+                    navigation.showHome()
+                } onRefresh: {
+                    viewModel.reload()
                 }
-            }
-            .navigationTitle("")
-            .toolbar {
-                ToolbarItemGroup(placement: .automatic) {
-                    Button {
-                        viewModel.reload()
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(!backend.isRunning)
-                }
-            }
-            .navigationDestination(for: VideoItem.self) { video in
-                PlayerScreen(video: video)
+
+                Divider()
+
+                currentScreen
             }
         }
         .overlay(backendOverlay)
@@ -53,17 +45,42 @@ struct ContentView: View {
 private extension ContentView {
     var backgroundView: some View {
         Color(NSColor.windowBackgroundColor)
-        .ignoresSafeArea()
+            .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    var currentScreen: some View {
+        switch navigation.currentRoute {
+        case .home:
+            homeScreen
+        case .video(let video):
+            PlayerScreen(video: video)
+        }
+    }
+
+    var homeScreen: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                headerView
+
+                if let notice = viewModel.notice {
+                    NoticeBanner(text: notice)
+                }
+
+                contentView
+            }
+            .padding(24)
+        }
     }
 
     var headerView: some View {
         GroupBox {
             HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("SwiftTube")
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Your feed, your player, no browser clutter.")
                         .font(.largeTitle)
                         .fontWeight(.semibold)
-                    Text("Incognito recommendations, minimal overhead.")
+                    Text("Fast local backend, richer watch pages, and room for your own UX.")
                         .font(.callout)
                         .foregroundColor(.secondary)
                 }
@@ -99,7 +116,9 @@ private extension ContentView {
         } else {
             LazyVGrid(columns: columns, spacing: 20) {
                 ForEach(viewModel.videos, id: \.id) { video in
-                    NavigationLink(value: video) {
+                    Button {
+                        navigation.showVideo(video)
+                    } label: {
                         VideoCard(video: video)
                     }
                     .buttonStyle(.plain)
@@ -182,6 +201,68 @@ private extension ContentView {
         case .running:
             EmptyView()
         }
+    }
+}
+
+private struct AppChrome: View {
+    let backendState: BackendState
+    let canGoBack: Bool
+    let canGoForward: Bool
+    let onBack: () -> Void
+    let onForward: () -> Void
+    let onHome: () -> Void
+    let onRefresh: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            chromeButton(systemImage: "chevron.left", enabled: canGoBack, action: onBack)
+            chromeButton(systemImage: "chevron.right", enabled: canGoForward, action: onForward)
+
+            Button(action: onHome) {
+                HStack(spacing: 12) {
+                    if let logo = BrandAssets.logo {
+                        Image(nsImage: logo)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 34, height: 24)
+                    }
+                    Text("SwiftTube")
+                        .font(.title3.weight(.semibold))
+                }
+                .foregroundStyle(.primary)
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            Button(action: onRefresh) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+                    .labelStyle(.iconOnly)
+                    .font(.headline)
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.plain)
+
+            StatusPill(state: backendState)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(.thinMaterial)
+    }
+
+    private func chromeButton(systemImage: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.headline.weight(.semibold))
+                .frame(width: 34, height: 34)
+        }
+        .buttonStyle(.plain)
+        .background(
+            Circle()
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .opacity(enabled ? 1 : 0.45)
+        .disabled(!enabled)
     }
 }
 

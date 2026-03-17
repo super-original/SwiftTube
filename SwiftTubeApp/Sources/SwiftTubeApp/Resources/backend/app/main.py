@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
@@ -79,23 +80,27 @@ def recommendations(
 
 @app.get("/video/{video_id}", response_model=VideoPlayback)
 def video_info(video_id: str) -> VideoPlayback:
-    watch_data = None
-    try:
-        watch_data = client_web.next(video_id=video_id)
-    except RequestError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        watch_future = executor.submit(client_web.next, video_id=video_id)
+        playback_future = executor.submit(extract_playback, video_id)
+        player_future = executor.submit(client_player.player, video_id)
 
-    playback_bundle = None
-    playback_error: Optional[Exception] = None
-    try:
-        playback_bundle = extract_playback(video_id)
-    except Exception as exc:  # pragma: no cover - fallback path
-        playback_error = exc
+        try:
+            watch_data = watch_future.result()
+        except RequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    try:
-        player_data = client_player.player(video_id)
-    except RequestError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        playback_bundle = None
+        playback_error: Optional[Exception] = None
+        try:
+            playback_bundle = playback_future.result()
+        except Exception as exc:  # pragma: no cover - fallback path
+            playback_error = exc
+
+        try:
+            player_data = player_future.result()
+        except RequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     watch_metadata = extract_watch_metadata(watch_data)
     related_videos = extract_related_videos(watch_data, current_video_id=video_id)
