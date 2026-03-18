@@ -481,7 +481,9 @@ private struct PlayerControlBar: View {
     @State private var isQualityPopoverPresented = false
 
     private let compactControlHeight: CGFloat = 38
-    private let nativeButtonLabelHeight: CGFloat = 22
+    private let circularButtonLabelSize: CGFloat = 30
+    private let qualityButtonWidth: CGFloat = 84
+    private let qualityButtonContentHeight: CGFloat = 22
     private let timeLabelWidth: CGFloat = 54
 
     var body: some View {
@@ -525,7 +527,7 @@ private struct PlayerControlBar: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
                     .contentTransition(.symbolEffect(.replace))
-                    .frame(width: 20, height: nativeButtonLabelHeight)
+                    .frame(width: 20, height: qualityButtonContentHeight)
                     .frame(minHeight: compactControlHeight)
                     .contentShape(Rectangle())
                     .animation(.snappy(duration: 0.11, extraBounce: 0), value: coordinator.volumeIconName)
@@ -610,20 +612,7 @@ private struct PlayerControlBar: View {
         Button {
             isQualityPopoverPresented.toggle()
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "dial.medium")
-                    .font(.system(size: 14, weight: .semibold))
-
-                Text(coordinator.qualityControlText)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
-            }
-            .frame(minWidth: 96, minHeight: nativeButtonLabelHeight)
-            .padding(.horizontal, 14)
+            qualityButtonLabel
         }
         .buttonStyle(.glass(.regular.interactive()))
         .buttonBorderShape(.capsule)
@@ -633,32 +622,7 @@ private struct PlayerControlBar: View {
             attachmentAnchor: .rect(.bounds),
             arrowEdge: .bottom
         ) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(coordinator.qualityOptions) { option in
-                        Button {
-                            coordinator.selectQuality(option)
-                            isQualityPopoverPresented = false
-                        } label: {
-                            qualityMenuRow(for: option)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(
-                                            option.id == coordinator.selectedQualityOptionID
-                                                ? Color.accentColor.opacity(0.14)
-                                                : Color.clear
-                                        )
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(8)
-            }
-            .frame(minWidth: 260)
+            qualityPopoverContent
         }
         .onChange(of: isQualityPopoverPresented) { _, isPresented in
             if isPresented {
@@ -669,6 +633,55 @@ private struct PlayerControlBar: View {
         }
         .accessibilityLabel("Quality")
         .accessibilityValue(coordinator.qualityControlText)
+    }
+
+    var qualityButtonLabel: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "dial.medium")
+                .font(.system(size: 13, weight: .semibold))
+
+            Text(coordinator.qualityControlText)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: qualityButtonWidth, height: qualityButtonContentHeight)
+    }
+
+    var qualityPopoverContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(coordinator.qualityOptions) { option in
+                    qualityMenuOptionButton(for: option)
+                }
+            }
+            .padding(8)
+        }
+        .frame(minWidth: 260)
+    }
+
+    func qualityMenuOptionButton(for option: QualityOption) -> some View {
+        Button {
+            coordinator.selectQuality(option)
+            isQualityPopoverPresented = false
+        } label: {
+            qualityMenuRow(for: option)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(
+                            option.id == coordinator.selectedQualityOptionID
+                                ? Color.accentColor.opacity(0.14)
+                                : Color.clear
+                        )
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     var theaterToggle: some View {
@@ -724,7 +737,7 @@ private struct PlayerControlBar: View {
             .font(.system(size: fontSize, weight: .semibold))
             .foregroundStyle(foregroundStyle)
             .contentTransition(.symbolEffect(.replace))
-            .frame(width: nativeButtonLabelHeight, height: nativeButtonLabelHeight)
+            .frame(width: circularButtonLabelSize, height: circularButtonLabelSize)
             .animation(.snappy(duration: 0.11, extraBounce: 0), value: symbol)
     }
 }
