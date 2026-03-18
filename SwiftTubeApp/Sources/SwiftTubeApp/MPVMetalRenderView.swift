@@ -21,6 +21,7 @@ final class MPVRenderContainerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        metalLayer.framebufferOnly = true
         metalLayer.backgroundColor = NSColor.black.cgColor
         layer = metalLayer
     }
@@ -54,18 +55,42 @@ final class MPVRenderViewController: NSViewController {
         (view as? MPVRenderContainerView)?.metalLayer
     }
 
-    func waitForRenderLayer() async -> MPVMetalLayer {
-        while currentMetalLayer == nil {
-            _ = view
+    var currentDrawableSize: CGSize {
+        currentMetalLayer?.drawableSize ?? .zero
+    }
+
+    var isDisplayAttached: Bool {
+        (view as? MPVRenderContainerView)?.window != nil
+    }
+
+    func renderSurfaceDescription() -> String {
+        let drawableSize = currentDrawableSize
+        return "attached=\(isDisplayAttached) drawable=\(Int(drawableSize.width))x\(Int(drawableSize.height))"
+    }
+
+    func waitForDisplayReady() async -> MPVMetalLayer {
+        _ = view
+        while true {
+            if let layer = readyLayerIfAvailable() {
+                return layer
+            }
             await Task.yield()
         }
-        return currentMetalLayer!
     }
 
     func configure(onLayoutChange: @escaping () -> Void) {
         _ = view
         guard let renderView = view as? MPVRenderContainerView else { return }
         renderView.onLayoutChange = onLayoutChange
+    }
+
+    private func readyLayerIfAvailable() -> MPVMetalLayer? {
+        guard let renderView = view as? MPVRenderContainerView else { return nil }
+        guard renderView.window != nil else { return nil }
+        guard renderView.metalLayer.drawableSize.width > 1, renderView.metalLayer.drawableSize.height > 1 else {
+            return nil
+        }
+        return renderView.metalLayer
     }
 }
 

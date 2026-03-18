@@ -28,8 +28,11 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
         PlaybackDebugLogger.log(
             "mpv prepare start video=\(request.video.url.absoluteString) audio=\(request.audio?.url.absoluteString ?? "nil") startTime=\(startTime) autoPlay=\(autoPlay)"
         )
-        let _ = await renderController.waitForRenderLayer()
-        let handle = try initializeIfNeeded()
+        let layer = await renderController.waitForDisplayReady()
+        PlaybackDebugLogger.log(
+            "mpv render surface ready \(renderController.renderSurfaceDescription())"
+        )
+        let handle = try initializeIfNeeded(layer: layer)
         didLoadFile = false
         try command(["loadfile", request.video.url.absoluteString, "replace", "-1"])
         try await waitUntilFileLoaded(handle)
@@ -94,7 +97,7 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
 }
 
 private extension MPVPlaybackEngine {
-    func initializeIfNeeded() throws -> OpaquePointer {
+    func initializeIfNeeded(layer: MPVMetalLayer) throws -> OpaquePointer {
         if let mpv {
             return mpv
         }
@@ -117,11 +120,11 @@ private extension MPVPlaybackEngine {
         try setOption("ytdl", value: "no")
         try setOption("sub-auto", value: "no")
         try setOption("audio-file-auto", value: "no")
-
-        if let layer = renderController.currentMetalLayer {
-            var layerReference = Int64(bitPattern: UInt64(UInt(bitPattern: Unmanaged.passUnretained(layer).toOpaque())))
-            try check(mpv_set_option(handle, "wid", MPV_FORMAT_INT64, &layerReference))
-        }
+        var layerReference = Int64(bitPattern: UInt64(UInt(bitPattern: Unmanaged.passUnretained(layer).toOpaque())))
+        try check(mpv_set_option(handle, "wid", MPV_FORMAT_INT64, &layerReference))
+        PlaybackDebugLogger.log(
+            "mpv set option wid=\(layerReference) \(renderController.renderSurfaceDescription())"
+        )
 
         let userAgentKeys = ["user-agent"]
         let referrerKeys = ["referer", "referrer"]
@@ -369,6 +372,9 @@ private extension MPVPlaybackEngine {
             "demux",
             "cache",
             "cplayer",
+            "vo",
+            "gpu",
+            "vulkan",
             "vd",
             "ad"
         ]
