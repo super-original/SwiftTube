@@ -372,14 +372,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         if selectedQualityOptionID == QualityOption.automaticID {
             return "Auto"
         }
-        return currentQualityOption?.title ?? "Quality"
+        return activeQualityOption?.title ?? "Quality"
     }
 
     var qualityControlText: String {
-        if selectedQualityOptionID == QualityOption.automaticID {
+        if qualityControlSelectionID == QualityOption.automaticID {
             return "Auto"
         }
-        return currentQualityOption?.title ?? "Quality"
+        return displayedQualityOption?.title ?? "Quality"
     }
 
     var isSwitchingQuality: Bool {
@@ -387,10 +387,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var qualityControlDetail: String? {
-        guard selectedQualityOptionID != QualityOption.automaticID else {
+        guard qualityControlSelectionID != QualityOption.automaticID else {
             return nil
         }
-        return currentQualityOption?.detail
+        return displayedQualityOption?.detail
+    }
+
+    var qualityControlSelectionID: String {
+        pendingQualityOptionID ?? selectedQualityOptionID
     }
 
     var subtitleControlText: String {
@@ -666,14 +670,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func selectQuality(_ option: QualityOption) {
         guard let playback = currentPlayback else { return }
-        guard option.id != selectedQualityOptionID || option.id == QualityOption.automaticID else {
+        guard option.id != qualityControlSelectionID else {
             endMenuInteraction()
             return
         }
 
         noteInteraction()
         let previousSelectionID = selectedQualityOptionID
-        selectedQualityOptionID = option.id
+        pendingQualityOptionID = option.id
 
         if applyManifestQualitySelectionIfPossible(option) {
             pendingQualityOptionID = nil
@@ -681,7 +685,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             return
         }
 
-        pendingQualityOptionID = option.id
         let subtitleSnapshot = currentSubtitleSnapshot()
         prepareTask?.cancel()
         prepareTask = Task { [weak self] in
@@ -737,8 +740,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         window?.toggleFullScreen(nil)
     }
 
-    private var currentQualityOption: QualityOption? {
+    private var activeQualityOption: QualityOption? {
         qualityOptions.first(where: { $0.id == selectedQualityOptionID })
+    }
+
+    private var displayedQualityOption: QualityOption? {
+        qualityOptions.first(where: { $0.id == qualityControlSelectionID })
     }
 
     private var currentSubtitleOption: SubtitleOption? {
@@ -842,6 +849,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             } else {
                 player.pause()
             }
+            selectedQualityOptionID = option.id
             currentTime = clampedTime
             scrubPosition = clampedTime
             pendingQualityOptionID = nil
@@ -908,6 +916,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         qualityOptions = [QualityOption.automatic] + resolvedManualOptions
         if qualityOptions.contains(where: { $0.id == selectedQualityOptionID }) == false {
             selectedQualityOptionID = QualityOption.automaticID
+        }
+        if let pendingQualityOptionID,
+           qualityOptions.contains(where: { $0.id == pendingQualityOptionID }) == false {
+            self.pendingQualityOptionID = nil
         }
         await qualityCoordinator.cache(
             options: qualityOptions,

@@ -196,6 +196,10 @@ struct PlayerScreen: View {
 }
 
 private extension PlayerScreen {
+    var standardPlayerColumnMaxWidth: CGFloat {
+        980
+    }
+
     var playback: VideoPlayback? {
         viewModel.playback
     }
@@ -274,14 +278,18 @@ private extension PlayerScreen {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: 24) {
                 mainColumn
+                    .frame(maxWidth: standardPlayerColumnMaxWidth, alignment: .leading)
                 recommendationsColumn
                     .frame(width: 360)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 24) {
                 mainColumn
+                    .frame(maxWidth: standardPlayerColumnMaxWidth, alignment: .leading)
                 recommendationsColumn
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -615,7 +623,7 @@ private struct PlayerControlBar: View {
 
     private let compactControlHeight: CGFloat = 38
     private let circularButtonLabelSize: CGFloat = 30
-    private let qualityButtonWidth: CGFloat = 82
+    private let qualityButtonMinWidth: CGFloat = 104
     private let volumeIconContentHeight: CGFloat = 22
     private let timeLabelWidth: CGFloat = 54
 
@@ -776,12 +784,15 @@ private struct PlayerControlBar: View {
             Text(coordinator.qualityControlText)
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
 
             Image(systemName: "chevron.down")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.secondary)
         }
-        .frame(width: qualityButtonWidth, height: circularButtonLabelSize)
+        .frame(minWidth: qualityButtonMinWidth)
+        .frame(height: circularButtonLabelSize)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     var qualityPopoverContent: some View {
@@ -808,7 +819,7 @@ private struct PlayerControlBar: View {
                 .background(
                     RoundedRectangle(cornerRadius: 12)
                         .fill(
-                            option.id == coordinator.selectedQualityOptionID
+                            option.id == coordinator.qualityControlSelectionID
                                 ? Color.accentColor.opacity(0.14)
                                 : Color.clear
                         )
@@ -846,8 +857,8 @@ private struct PlayerControlBar: View {
     @ViewBuilder
     func qualityMenuRow(for option: QualityOption) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: option.id == coordinator.selectedQualityOptionID ? "checkmark" : "circle")
-                .foregroundStyle(option.id == coordinator.selectedQualityOptionID ? Color.accentColor : .secondary)
+            Image(systemName: option.id == coordinator.qualityControlSelectionID ? "checkmark" : "circle")
+                .foregroundStyle(option.id == coordinator.qualityControlSelectionID ? Color.accentColor : .secondary)
 
             Text(option.title)
 
