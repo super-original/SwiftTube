@@ -90,6 +90,18 @@ private struct PlayerRenderStateView: View {
     }
 }
 
+private extension PlayerRenderState {
+    var avPlayer: AVPlayer? {
+        guard case .avFoundation(let player) = self else { return nil }
+        return player
+    }
+
+    var mpvEngine: MPVPlaybackEngine? {
+        guard case .mpv(let engine) = self else { return nil }
+        return engine
+    }
+}
+
 struct WindowAccessor: NSViewRepresentable {
     let onResolve: (NSWindow?) -> Void
 
@@ -496,21 +508,39 @@ private struct PlayerStageSurface: View {
     let immersive: Bool
     let retry: () -> Void
 
+    private var activeAVPlayer: AVPlayer? {
+        coordinator.activeRenderState?.avPlayer
+    }
+
+    private var pendingAVPlayer: AVPlayer? {
+        coordinator.pendingRenderState?.avPlayer
+    }
+
+    private var displayedMPVEngine: MPVPlaybackEngine? {
+        coordinator.activeRenderState?.mpvEngine ?? coordinator.pendingRenderState?.mpvEngine
+    }
+
     var body: some View {
         ZStack {
             Rectangle()
                 .fill(Color.black.opacity(0.94))
 
-            if let activeRenderState = coordinator.activeRenderState {
-                PlayerRenderStateView(renderState: activeRenderState) {
+            if let displayedMPVEngine {
+                MPVMetalRenderView(engine: displayedMPVEngine, onLayoutChange: {
                     coordinator.handlePlayerGeometryChange()
-                }
+                })
             }
 
-            if let pendingRenderState = coordinator.pendingRenderState {
-                PlayerRenderStateView(renderState: pendingRenderState) {
+            if let activeAVPlayer {
+                PlayerRenderView(player: activeAVPlayer, onLayoutChange: {
                     coordinator.handlePlayerGeometryChange()
-                }
+                })
+            }
+
+            if let pendingAVPlayer {
+                PlayerRenderView(player: pendingAVPlayer, onLayoutChange: {
+                    coordinator.handlePlayerGeometryChange()
+                })
                 .opacity(0.001)
                 .allowsHitTesting(false)
             }
