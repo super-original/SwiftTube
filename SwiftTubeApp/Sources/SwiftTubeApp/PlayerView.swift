@@ -478,6 +478,7 @@ private struct PlayerControlBar: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Namespace private var playPauseNamespace
+    @State private var isQualityPopoverPresented = false
 
     private let compactControlHeight: CGFloat = 38
     private let nativeButtonLabelHeight: CGFloat = 22
@@ -606,14 +607,8 @@ private struct PlayerControlBar: View {
     }
 
     var qualityMenu: some View {
-        Menu {
-            ForEach(coordinator.qualityOptions) { option in
-                Button {
-                    coordinator.selectQuality(option)
-                } label: {
-                    qualityMenuRow(for: option)
-                }
-            }
+        Button {
+            isQualityPopoverPresented.toggle()
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "dial.medium")
@@ -630,15 +625,48 @@ private struct PlayerControlBar: View {
             .frame(minWidth: 96, minHeight: nativeButtonLabelHeight)
             .padding(.horizontal, 14)
         }
-        .menuStyle(.button)
         .buttonStyle(.glass(.regular.interactive()))
         .buttonBorderShape(.capsule)
         .controlSize(.regular)
-        .simultaneousGesture(
-            TapGesture().onEnded {
-                coordinator.beginMenuInteraction()
+        .popover(
+            isPresented: $isQualityPopoverPresented,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(coordinator.qualityOptions) { option in
+                        Button {
+                            coordinator.selectQuality(option)
+                            isQualityPopoverPresented = false
+                        } label: {
+                            qualityMenuRow(for: option)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(
+                                            option.id == coordinator.selectedQualityOptionID
+                                                ? Color.accentColor.opacity(0.14)
+                                                : Color.clear
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(8)
             }
-        )
+            .frame(minWidth: 260)
+        }
+        .onChange(of: isQualityPopoverPresented) { _, isPresented in
+            if isPresented {
+                coordinator.beginMenuInteraction()
+            } else {
+                coordinator.endMenuInteraction()
+            }
+        }
         .accessibilityLabel("Quality")
         .accessibilityValue(coordinator.qualityControlText)
     }
