@@ -480,8 +480,7 @@ private struct PlayerControlBar: View {
     @Namespace private var playPauseNamespace
 
     private let compactControlHeight: CGFloat = 38
-    private let compactCornerRadius: CGFloat = 19
-    private let nativeButtonLabelHeight: CGFloat = 30
+    private let nativeButtonLabelHeight: CGFloat = 22
     private let timeLabelWidth: CGFloat = 54
 
     var body: some View {
@@ -506,14 +505,10 @@ private struct PlayerControlBar: View {
         Button {
             coordinator.togglePlayback()
         } label: {
-            iconButtonLabel(
-                symbol: coordinator.isPlaying ? "pause.fill" : "play.fill",
-                fontSize: 16,
-                minWidth: 48
-            )
+            circularButtonLabel(symbol: coordinator.isPlaying ? "pause.fill" : "play.fill", fontSize: 15)
         }
         .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.capsule)
+        .buttonBorderShape(.circle)
         .controlSize(.regular)
         .glassEffectID("playback-control", in: playPauseNamespace)
         .glassEffectTransition(.matchedGeometry)
@@ -521,19 +516,20 @@ private struct PlayerControlBar: View {
     }
 
     var volumeControl: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button {
                 coordinator.toggleMute()
             } label: {
-                iconButtonLabel(
-                    symbol: coordinator.volumeIconName,
-                    fontSize: 14,
-                    minWidth: 36
-                )
+                Image(systemName: coordinator.volumeIconName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(width: 20, height: nativeButtonLabelHeight)
+                    .frame(minHeight: compactControlHeight)
+                    .contentShape(Rectangle())
+                    .animation(.snappy(duration: 0.11, extraBounce: 0), value: coordinator.volumeIconName)
             }
-            .buttonStyle(.glass(.regular.interactive()))
-            .buttonBorderShape(.capsule)
-            .controlSize(.regular)
+            .buttonStyle(.plain)
             .accessibilityLabel(coordinator.volume <= 0.01 ? "Unmute" : "Mute")
 
             Slider(
@@ -549,12 +545,12 @@ private struct PlayerControlBar: View {
             .frame(width: 112)
             .accessibilityLabel("Volume")
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 14)
         .frame(minHeight: compactControlHeight)
         .playerControlSurface(
             reduceTransparency: reduceTransparency,
             glass: .regular,
-            shape: RoundedRectangle(cornerRadius: compactCornerRadius)
+            shape: Capsule()
         )
     }
 
@@ -587,7 +583,7 @@ private struct PlayerControlBar: View {
         .playerControlSurface(
             reduceTransparency: reduceTransparency,
             glass: .regular,
-            shape: RoundedRectangle(cornerRadius: compactCornerRadius)
+            shape: Capsule()
         )
     }
 
@@ -595,14 +591,14 @@ private struct PlayerControlBar: View {
         Button {
             coordinator.cycleSubtitles()
         } label: {
-            iconButtonLabel(
+            circularButtonLabel(
                 symbol: coordinator.subtitleSymbolName,
-                fontSize: 15,
+                fontSize: 14,
                 foregroundStyle: coordinator.hasSubtitleOptions ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
             )
         }
         .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.capsule)
+        .buttonBorderShape(.circle)
         .controlSize(.regular)
         .disabled(!coordinator.hasSubtitleOptions)
         .accessibilityLabel("Subtitles")
@@ -631,16 +627,13 @@ private struct PlayerControlBar: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
             }
-            .frame(minWidth: 92, minHeight: compactControlHeight)
+            .frame(minWidth: 96, minHeight: nativeButtonLabelHeight)
             .padding(.horizontal, 14)
-            .playerControlSurface(
-                reduceTransparency: reduceTransparency,
-                glass: .regular,
-                shape: RoundedRectangle(cornerRadius: compactCornerRadius)
-            )
         }
-        .menuStyle(.borderlessButton)
-        .buttonStyle(.plain)
+        .menuStyle(.button)
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.regular)
         .simultaneousGesture(
             TapGesture().onEnded {
                 coordinator.beginMenuInteraction()
@@ -654,10 +647,10 @@ private struct PlayerControlBar: View {
         Button {
             coordinator.toggleTheaterMode()
         } label: {
-            iconButtonLabel(symbol: coordinator.theaterSymbolName, fontSize: 15)
+            circularButtonLabel(symbol: coordinator.theaterSymbolName, fontSize: 14)
         }
         .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.capsule)
+        .buttonBorderShape(.circle)
         .controlSize(.regular)
         .accessibilityLabel("Theater Mode")
         .accessibilityValue(coordinator.isTheaterMode ? "On" : "Off")
@@ -667,10 +660,10 @@ private struct PlayerControlBar: View {
         Button {
             coordinator.toggleFullscreen()
         } label: {
-            iconButtonLabel(symbol: coordinator.fullscreenSymbolName, fontSize: 15)
+            circularButtonLabel(symbol: coordinator.fullscreenSymbolName, fontSize: 14)
         }
         .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.capsule)
+        .buttonBorderShape(.circle)
         .controlSize(.regular)
         .accessibilityLabel(coordinator.isFullscreen ? "Exit Fullscreen" : "Fullscreen")
         .accessibilityValue(coordinator.isFullscreen ? "On" : "Off")
@@ -694,10 +687,9 @@ private struct PlayerControlBar: View {
         .frame(minWidth: 220, alignment: .leading)
     }
 
-    func iconButtonLabel(
+    func circularButtonLabel(
         symbol: String,
         fontSize: CGFloat = 18,
-        minWidth: CGFloat = 38,
         foregroundStyle: AnyShapeStyle = AnyShapeStyle(.primary)
     ) -> some View {
         Image(systemName: symbol)
@@ -705,7 +697,6 @@ private struct PlayerControlBar: View {
             .foregroundStyle(foregroundStyle)
             .contentTransition(.symbolEffect(.replace))
             .frame(width: nativeButtonLabelHeight, height: nativeButtonLabelHeight)
-            .frame(minWidth: minWidth, minHeight: nativeButtonLabelHeight)
             .animation(.snappy(duration: 0.11, extraBounce: 0), value: symbol)
     }
 }
