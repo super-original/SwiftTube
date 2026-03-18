@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import threading
@@ -32,13 +33,14 @@ def build_authenticated_ytdlp_options(auth_options: dict[str, Any]) -> dict[str,
     youtube_args["player_client"] = ["mweb"]
 
     server_home = ensure_bgutil_provider(opts.get("cookiefile"))
+    node_path = _resolve_command_path("node")
     extractor_args["youtubepot-bgutilscript"] = {"server_home": [str(server_home)]}
     # Point the HTTP provider at a dead local port so yt-dlp immediately uses the script mode.
     extractor_args["youtubepot-bgutilhttp"] = {
         "base_url": [_DISABLED_HTTP_PROVIDER_URL]
     }
 
-    opts["js_runtimes"] = {"node": {}}
+    opts["js_runtimes"] = {"node": {"path": node_path}}
     opts["remote_components"] = ["ejs:github"]
     return opts
 
@@ -69,15 +71,15 @@ def ensure_bgutil_provider(cookie_file: Optional[str]) -> Path:
         temp_repo_dir = install_root / f".{_BGUTIL_PROVIDER_DIR_NAME}.tmp"
         shutil.rmtree(temp_repo_dir, ignore_errors=True)
 
-        _require_command("git")
-        _require_command("npm")
-        _require_command("npx")
-        _require_command("node")
+        git_path = _resolve_command_path("git")
+        npm_path = _resolve_command_path("npm")
+        npx_path = _resolve_command_path("npx")
+        _ = _resolve_command_path("node")
 
         try:
             _run(
                 [
-                    "git",
+                    git_path,
                     "clone",
                     "--depth",
                     "1",
@@ -88,10 +90,10 @@ def ensure_bgutil_provider(cookie_file: Optional[str]) -> Path:
                 ]
             )
             _run(
-                ["npm", "ci", "--no-audit", "--no-fund"],
+                [npm_path, "ci", "--no-audit", "--no-fund"],
                 cwd=temp_repo_dir / "server",
             )
-            _run(["npx", "tsc"], cwd=temp_repo_dir / "server")
+            _run([npx_path, "tsc"], cwd=temp_repo_dir / "server")
 
             shutil.rmtree(repo_dir, ignore_errors=True)
             temp_repo_dir.rename(repo_dir)
@@ -121,9 +123,69 @@ def _support_dir(cookie_file: Optional[str]) -> Path:
     return Path.home() / "Library" / "Application Support" / "SwiftTube"
 
 
-def _require_command(name: str) -> None:
-    if shutil.which(name) is None:
-        raise RuntimeError(f"Missing required command for HQ playback setup: {name}")
+def _resolve_command_path(name: str) -> str:
+    env_overrides = {
+        "git": "SWIFTTUBE_GIT_PATH",
+        "node": "SWIFTTUBE_NODE_PATH",
+        "npm": "SWIFTTUBE_NPM_PATH",
+        "npx": "SWIFTTUBE_NPX_PATH",
+    }
+    if override_name := env_overrides.get(name):
+        override = os.environ.get(override_name)
+        if override and Path(override).expanduser().is_file():
+            return str(Path(override).expanduser())
+
+    if found := shutil.which(name):
+        return found
+
+    common_candidates = {
+        "git": [
+            "/usr/bin/git",
+            "/opt/homebrew/bin/git",
+            "/usr/local/bin/git",
+        ],
+        "node": [
+            "/opt/homebrew/bin/node",
+            "/usr/local/bin/node",
+            *[str(path) for path in _nvm_binaries("node")],
+        ],
+        "npm": [
+            "/opt/homebrew/bin/npm",
+            "/usr/local/bin/npm",
+            *[str(path) for path in _nvm_binaries("npm")],
+        ],
+        "npx": [
+            "/opt/homebrew/bin/npx",
+            "/usr/local/bin/npx",
+            *[str(path) for path in _nvm_binaries("npx")],
+        ],
+    }
+    for candidate in common_candidates.get(name, []):
+        if Path(candidate).is_file():
+            return candidate
+
+    raise RuntimeError(f"Missing required command for HQ playback setup: {name}")
+
+
+def _nvm_binaries(name: str) -> list[Path]:
+    versions_root = Path.home() / ".nvm" / "versions" / "node"
+    if not versions_root.exists():
+        return []
+
+    candidates: list[tuple[tuple[int, ...], Path]] = []
+    for binary in versions_root.glob(f"*/bin/{name}"):
+        version_name = binary.parent.parent.name
+        version_tuple = _parse_semver(version_name)
+        candidates.append((version_tuple, binary))
+
+    return [path for _, path in sorted(candidates, reverse=True)]
+
+
+def _parse_semver(value: str) -> tuple[int, ...]:
+    match = re.findall(r"\d+", value)
+    if not match:
+        return (0,)
+    return tuple(int(part) for part in match)
 
 
 def _cleanup_old_provider_versions(install_root: Path, keep_name: str) -> None:
