@@ -1240,6 +1240,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func refreshDuration(using item: AVPlayerItem) async {
+        let forwardEndDuration = sanitizeSeconds(item.forwardPlaybackEndTime.seconds)
+        if forwardEndDuration > 0 {
+            duration = forwardEndDuration
+            scrubPosition = currentTime
+            PlaybackDebugLogger.log(
+                "refresh duration currentSource=\(debugDescription(for: currentSource)) forwardEnd=\(forwardEndDuration) storedDuration=\(duration)"
+            )
+            return
+        }
+
         guard let assetDuration = try? await item.asset.load(.duration) else {
             return
         }
@@ -1247,7 +1257,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         duration = sanitizeSeconds(assetDuration.seconds)
         scrubPosition = currentTime
         PlaybackDebugLogger.log(
-            "refresh duration currentSource=\(debugDescription(for: currentSource)) itemDuration=\(assetDuration.seconds) storedDuration=\(duration)"
+            "refresh duration currentSource=\(debugDescription(for: currentSource)) itemDuration=\(assetDuration.seconds) forwardEnd=\(item.forwardPlaybackEndTime.seconds) storedDuration=\(duration)"
         )
     }
 
@@ -1422,8 +1432,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         currentTime = seconds
         scrubPosition = seconds
 
-        if let itemDuration = player?.currentItem?.duration.seconds {
-            let resolvedDuration = sanitizeSeconds(itemDuration)
+        if let item = player?.currentItem {
+            let resolvedDuration = resolvedPlaybackDuration(for: item)
             if resolvedDuration > 0 {
                 duration = resolvedDuration
             }
@@ -2019,11 +2029,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         let videoTimeRange = try await videoTrack.load(.timeRange)
         let audioTimeRange = try await audioTrack.load(.timeRange)
-        let videoDuration = videoTimeRange.duration
-        let audioDuration = audioTimeRange.duration
-        let duration = minimumDuration(videoDuration, audioDuration)
+        let videoDurationHint = streamDurationHint(for: videoStream)
+        let audioDurationHint = streamDurationHint(for: audioStream)
+        let duration = resolvedAdaptiveDuration(
+            videoDurationHint: videoDurationHint,
+            audioDurationHint: audioDurationHint,
+            fallbackVideoDuration: videoTimeRange.duration,
+            fallbackAudioDuration: audioTimeRange.duration
+        )
         PlaybackDebugLogger.log(
-            "adaptive item build video=\(debugDescription(for: videoStream)) audio=\(debugDescription(for: audioStream)) videoTimeRange=\(debugDescription(for: videoTimeRange)) audioTimeRange=\(debugDescription(for: audioTimeRange)) chosenDuration=\(duration.seconds)"
+            "adaptive item build video=\(debugDescription(for: videoStream)) audio=\(debugDescription(for: audioStream)) videoHint=\(debugDescription(for: videoDurationHint)) audioHint=\(debugDescription(for: audioDurationHint)) videoTimeRange=\(debugDescription(for: videoTimeRange)) audioTimeRange=\(debugDescription(for: audioTimeRange)) chosenDuration=\(duration.seconds)"
         )
         let composition = AVMutableComposition()
 
@@ -2352,6 +2367,62 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         return lhs.isValid ? lhs : rhs
     }
 
+    private func minimumDuration(_ lhs: CMTime?, _ rhs: CMTime?) -> CMTime? {
+        switch (lhs, rhs) {
+        case let (.some(lhs), .some(rhs)):
+            return minimumDuration(lhs, rhs)
+        case let (.some(lhs), .none):
+            return lhs
+        case let (.none, .some(rhs)):
+            return rhs
+        case (.none, .none):
+            return nil
+        }
+    }
+
+    private func resolvedAdaptiveDuration(
+        videoDurationHint: CMTime?,
+        audioDurationHint: CMTime?,
+        fallbackVideoDuration: CMTime,
+        fallbackAudioDuration: CMTime
+    ) -> CMTime {
+        if let hintedDuration = minimumDuration(videoDurationHint, audioDurationHint) {
+            return hintedDuration
+        }
+
+        if let hintedVideoDuration = videoDurationHint {
+            return hintedVideoDuration
+        }
+
+        if let hintedAudioDuration = audioDurationHint {
+            return hintedAudioDuration
+        }
+
+        return minimumDuration(fallbackVideoDuration, fallbackAudioDuration)
+    }
+
+    private func streamDurationHint(for stream: StreamInfo) -> CMTime? {
+        guard let url = URL(string: stream.url),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let durationValue = components.queryItems?.first(where: { $0.name == "dur" })?.value,
+              let seconds = Double(durationValue) else {
+            return nil
+        }
+
+        let resolvedSeconds = sanitizeSeconds(seconds)
+        guard resolvedSeconds > 0 else { return nil }
+        return CMTime(seconds: resolvedSeconds, preferredTimescale: 1000)
+    }
+
+    private func resolvedPlaybackDuration(for item: AVPlayerItem) -> Double {
+        let forwardEnd = sanitizeSeconds(item.forwardPlaybackEndTime.seconds)
+        if forwardEnd > 0 {
+            return forwardEnd
+        }
+
+        return sanitizeSeconds(item.duration.seconds)
+    }
+
     private func qualityTitle(
         height: Double,
         width: Double,
@@ -2416,6 +2487,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private func debugDescription(for timeRange: CMTimeRange) -> String {
         "timeRange[start=\(timeRange.start.seconds),duration=\(timeRange.duration.seconds)]"
+    }
+
+    private func debugDescription(for time: CMTime?) -> String {
+        guard let time else { return "nil" }
+        return time.isValid ? "\(time.seconds)" : "invalid"
     }
 
     private func formatTime(_ seconds: Double) -> String {

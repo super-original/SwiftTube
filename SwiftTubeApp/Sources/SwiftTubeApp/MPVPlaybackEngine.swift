@@ -97,6 +97,7 @@ private extension MPVPlaybackEngine {
         }
 
         mpv = handle
+        try check(mpv_request_log_messages(handle, "debug"))
         PlaybackDebugLogger.log(
             "mpv initialize videoHeaders=\(request.video.headers.keys.sorted()) audioHeaders=\(request.audio?.headers.keys.sorted() ?? []) logPath=\(PlaybackDebugLogger.path)"
         )
@@ -116,24 +117,20 @@ private extension MPVPlaybackEngine {
             try check(mpv_set_option(handle, "wid", MPV_FORMAT_INT64, &layerReference))
         }
 
-        let userAgentKeys = ["User-Agent", "user-agent"]
-        let referrerKeys = ["Referer", "referer", "Referrer", "referrer"]
+        let userAgentKeys = ["user-agent"]
+        let referrerKeys = ["referer", "referrer"]
         let headers = request.video.headers
 
-        if let userAgent = userAgentKeys.compactMap({ headers[$0] }).first {
+        if let userAgent = value(forAnyOf: userAgentKeys, in: headers) {
             try setOption("user-agent", value: userAgent)
         }
 
-        if let referrer = referrerKeys.compactMap({ headers[$0] }).first {
+        if let referrer = value(forAnyOf: referrerKeys, in: headers) {
             try setOption("referrer", value: referrer)
         }
 
-        let headerFields = headers
-            .filter { entry in
-                userAgentKeys.contains(entry.key) == false && referrerKeys.contains(entry.key) == false
-            }
-            .map { "\($0.key): \($0.value)" }
-            .joined(separator: ",")
+        let reservedKeys = Set(userAgentKeys + referrerKeys)
+        let headerFields = mpvCustomHeaderFields(from: headers, reservedKeys: reservedKeys)
 
         if headerFields.isEmpty == false {
             try setOption("http-header-fields", value: headerFields)
@@ -214,7 +211,7 @@ private extension MPVPlaybackEngine {
                         let prefix = String(cString: logMessage.pointee.prefix)
                         let level = String(cString: logMessage.pointee.level)
                         let text = String(cString: logMessage.pointee.text).trimmingCharacters(in: .whitespacesAndNewlines)
-                        if level == "error" || level == "warn" || prefix == "ffmpeg" {
+                        if Self.shouldLogMPVMessage(prefix: prefix, level: level) {
                             PlaybackDebugLogger.log("mpv log [\(prefix)] [\(level)] \(text)")
                         }
                     }
@@ -270,5 +267,60 @@ private extension MPVPlaybackEngine {
         try cArguments.withUnsafeMutableBufferPointer { buffer in
             try check(mpv_command(mpv, buffer.baseAddress))
         }
+    }
+
+    func value(forAnyOf candidateKeys: [String], in headers: [String: String]) -> String? {
+        let loweredHeaders = Dictionary(
+            uniqueKeysWithValues: headers.map { ($0.key.lowercased(), $0.value) }
+        )
+        return candidateKeys.compactMap { loweredHeaders[$0] }.first
+    }
+
+    func mpvCustomHeaderFields(from headers: [String: String], reservedKeys: Set<String>) -> String {
+        let loweredHeaders = Dictionary(
+            uniqueKeysWithValues: headers.map { ($0.key.lowercased(), $0.value) }
+        )
+        let allowedKeys: Set<String> = [
+            "origin"
+        ]
+
+        let safeEntries = loweredHeaders
+            .filter { key, value in
+                guard reservedKeys.contains(key) == false else { return false }
+                guard allowedKeys.contains(key) else { return false }
+                return value.contains(",") == false
+                    && value.contains("\r") == false
+                    && value.contains("\n") == false
+            }
+            .sorted { $0.key < $1.key }
+
+        let skippedKeys = loweredHeaders.keys
+            .filter { reservedKeys.contains($0) == false && allowedKeys.contains($0) == false }
+            .sorted()
+
+        if skippedKeys.isEmpty == false {
+            PlaybackDebugLogger.log("mpv skip custom headers keys=\(skippedKeys)")
+        }
+
+        return safeEntries
+            .map { "\($0.key): \($0.value)" }
+            .joined(separator: ",")
+    }
+
+    nonisolated static func shouldLogMPVMessage(prefix: String, level: String) -> Bool {
+        if level == "error" || level == "warn" {
+            return true
+        }
+
+        let noisyPrefixes: Set<String> = [
+            "ffmpeg",
+            "stream",
+            "demux",
+            "cache",
+            "cplayer",
+            "vd",
+            "ad"
+        ]
+        return noisyPrefixes.contains(prefix)
     }
 }
