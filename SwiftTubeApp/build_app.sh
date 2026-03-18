@@ -9,9 +9,23 @@ RESOURCE_BUNDLE_NAME="SwiftTubeApp_SwiftTubeApp.bundle"
 ICON_SOURCE="$ROOT_DIR/AppIcon.icon"
 ICON_BUILD_DIR="$ROOT_DIR/Build/IconAssets"
 ACTOOL_BIN="$(xcrun --find actool)"
+VERSION_FILE="$ROOT_DIR/VERSION"
 
 cd "$ROOT_DIR"
 swift build
+
+if [[ ! -f "$VERSION_FILE" ]]; then
+    echo "Missing version file: $VERSION_FILE" >&2
+    exit 1
+fi
+
+APP_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
+if [[ -z "$APP_VERSION" ]]; then
+    echo "Version file is empty: $VERSION_FILE" >&2
+    exit 1
+fi
+
+BUILD_NUMBER="$(git -C "$ROOT_DIR" rev-list --count HEAD 2>/dev/null || echo 1)"
 
 if [[ ! -d "$ICON_SOURCE" ]]; then
     echo "Missing icon package: $ICON_SOURCE" >&2
@@ -36,7 +50,7 @@ mkdir -p "$ICON_BUILD_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
-cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
+cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -54,9 +68,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>$APP_VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$BUILD_NUMBER</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>

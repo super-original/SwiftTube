@@ -30,7 +30,9 @@ from .parse import (
 )
 from .playback import extract_playback
 
-app = FastAPI(title="SwiftTube Backend", version="0.1.0")
+APP_VERSION = os.environ.get("SWIFTTUBE_APP_VERSION", "0.0.0")
+
+app = FastAPI(title="SwiftTube Backend", version=APP_VERSION)
 INSTANCE_ID = os.environ.get("SWIFTTUBE_INSTANCE_ID")
 
 app.add_middleware(
@@ -65,7 +67,7 @@ def _load_recommendations(
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "instanceId": INSTANCE_ID}
+    return {"status": "ok", "instanceId": INSTANCE_ID, "version": APP_VERSION}
 
 
 @app.get("/auth/status", response_model=AuthStatusResponse)

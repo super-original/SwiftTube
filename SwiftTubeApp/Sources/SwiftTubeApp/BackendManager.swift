@@ -232,6 +232,7 @@ final class BackendManager: ObservableObject {
             "PYTHONUNBUFFERED": "1",
             "SWIFTTUBE_APP_SUPPORT_DIR": appSupportURL.path,
             Constants.instanceIDEnvironmentKey: instanceID,
+            "SWIFTTUBE_APP_VERSION": appVersion(),
         ]) { _, new in new }
 
         let pipe = Pipe()
@@ -444,6 +445,16 @@ final class BackendManager: ObservableObject {
         let data = try Data(contentsOf: url)
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func appVersion() -> String {
+        if let version = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString"
+        ) as? String, !version.isEmpty {
+            return version
+        }
+
+        return ProcessInfo.processInfo.environment["SWIFTTUBE_APP_VERSION"] ?? "0.0.0"
     }
 
     private func selectPythonRuntime() async throws -> PythonRuntime {
