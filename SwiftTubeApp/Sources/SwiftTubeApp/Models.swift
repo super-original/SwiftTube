@@ -1,12 +1,12 @@
 import Foundation
 
-struct Thumbnail: Codable, Hashable {
+struct Thumbnail: Codable, Hashable, Sendable {
     let url: String
     let width: Int?
     let height: Int?
 }
 
-struct VideoItem: Codable, Identifiable, Hashable {
+struct VideoItem: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let title: String
     let channel: String?
@@ -21,13 +21,13 @@ struct VideoItem: Codable, Identifiable, Hashable {
     }
 }
 
-struct RecommendationsResponse: Codable {
+struct RecommendationsResponse: Codable, Sendable {
     let items: [VideoItem]
     let continuation: String?
     let note: String?
 }
 
-struct StreamInfo: Codable, Hashable {
+struct StreamInfo: Codable, Hashable, Sendable {
     let url: String
     let formatId: String?
     let mimeType: String?
@@ -46,7 +46,7 @@ struct StreamInfo: Codable, Hashable {
     let streamKind: String
 }
 
-struct CommentItem: Codable, Hashable, Identifiable {
+struct CommentItem: Codable, Hashable, Identifiable, Sendable {
     let id: String
     let author: String
     let avatarUrl: String?
@@ -62,12 +62,12 @@ struct CommentItem: Codable, Hashable, Identifiable {
     }
 }
 
-struct CommentsResponse: Codable {
+struct CommentsResponse: Codable, Sendable {
     let comments: [CommentItem]
     let commentCountText: String?
 }
 
-struct VideoPlayback: Codable {
+struct VideoPlayback: Codable, Sendable {
     let id: String
     let title: String?
     let channel: String?
@@ -98,7 +98,7 @@ struct VideoPlayback: Codable {
     }
 }
 
-struct AuthStatusResponse: Codable, Equatable {
+struct AuthStatusResponse: Codable, Equatable, Sendable {
     let authenticated: Bool
     let browser: String?
     let browserLabel: String?

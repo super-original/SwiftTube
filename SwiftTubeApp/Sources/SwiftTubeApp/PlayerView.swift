@@ -4,6 +4,7 @@ import SwiftUI
 
 final class PassivePlayerContainerView: NSView {
     private let playerView = AVPlayerView()
+    var onLayoutChange: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -28,6 +29,11 @@ final class PassivePlayerContainerView: NSView {
         false
     }
 
+    override func layout() {
+        super.layout()
+        onLayoutChange?()
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }
@@ -43,17 +49,30 @@ final class PassivePlayerContainerView: NSView {
     }
 }
 
-struct PlayerRenderView: NSViewRepresentable {
-    let player: AVPlayer
-
-    func makeNSView(context: Context) -> PassivePlayerContainerView {
-        let view = PassivePlayerContainerView()
-        view.configure(player: player)
-        return view
+final class PlayerContainerViewController: NSViewController {
+    override func loadView() {
+        view = PassivePlayerContainerView()
     }
 
-    func updateNSView(_ nsView: PassivePlayerContainerView, context: Context) {
-        nsView.configure(player: player)
+    func configure(player: AVPlayer, onLayoutChange: @escaping () -> Void) {
+        guard let containerView = view as? PassivePlayerContainerView else { return }
+        containerView.onLayoutChange = onLayoutChange
+        containerView.configure(player: player)
+    }
+}
+
+struct PlayerRenderView: NSViewControllerRepresentable {
+    let player: AVPlayer
+    let onLayoutChange: () -> Void
+
+    func makeNSViewController(context: Context) -> PlayerContainerViewController {
+        let controller = PlayerContainerViewController()
+        controller.configure(player: player, onLayoutChange: onLayoutChange)
+        return controller
+    }
+
+    func updateNSViewController(_ controller: PlayerContainerViewController, context: Context) {
+        controller.configure(player: player, onLayoutChange: onLayoutChange)
     }
 }
 
@@ -68,17 +87,26 @@ struct WindowAccessor: NSViewRepresentable {
 
     func updateNSView(_ nsView: WindowResolverView, context: Context) {
         nsView.onResolve = onResolve
-        DispatchQueue.main.async {
-            onResolve(nsView.window)
-        }
     }
 }
 
 final class WindowResolverView: NSView {
     var onResolve: ((NSWindow?) -> Void)?
+    private weak var lastResolvedWindow: NSWindow?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        resolveWindowIfNeeded()
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        resolveWindowIfNeeded()
+    }
+
+    private func resolveWindowIfNeeded() {
+        guard lastResolvedWindow !== window else { return }
+        lastResolvedWindow = window
         onResolve?(window)
     }
 }
@@ -87,55 +115,43 @@ struct PlayerScreen: View {
     let video: VideoItem
 
     @StateObject private var viewModel: PlayerViewModel
-    @StateObject private var playbackCoordinator = PlayerPlaybackCoordinator()
+    @StateObject private var layoutState: PlayerLayoutState
+    @State private var playbackCoordinator: PlayerPlaybackCoordinator
     @State private var isDescriptionExpanded = false
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
 
     init(video: VideoItem) {
         self.video = video
+        let layoutState = PlayerLayoutState()
         _viewModel = StateObject(wrappedValue: PlayerViewModel(video: video))
+        _layoutState = StateObject(wrappedValue: layoutState)
+        _playbackCoordinator = State(initialValue: PlayerPlaybackCoordinator(layoutState: layoutState))
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: usesImmersiveLayout ? 24 : 0) {
-                    if usesImmersiveLayout {
-                        playerStage(
-                            viewportHeight: proxy.size.height,
-                            edgeToEdge: true
-                        )
-
-                        VStack(alignment: .leading, spacing: 24) {
-                            headerSection
-                            descriptionSection
-                            commentsSection
-                            recommendationsColumn
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 24)
-                    } else {
-                        contentLayout(
-                            for: proxy.size.width,
-                            viewportHeight: proxy.size.height
-                        )
-                        .padding(24)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            .background(
-                Color(NSColor.windowBackgroundColor)
-                    .ignoresSafeArea()
-            )
-            .background(
-                WindowAccessor { window in
-                    playbackCoordinator.setWindow(window)
-                }
-                .frame(width: 0, height: 0)
+        ScrollView {
+            scrollContent
+        }
+        .background(
+            Color(NSColor.windowBackgroundColor)
+                .ignoresSafeArea()
+        )
+        .safeAreaInset(edge: .top, spacing: 0) {
+            PlayerStageHost(
+                coordinator: playbackCoordinator,
+                isLoading: viewModel.isLoading,
+                errorMessage: viewModel.errorMessage,
+                immersive: usesImmersiveLayout,
+                retry: viewModel.load
             )
         }
+        .background(
+            WindowAccessor { window in
+                playbackCoordinator.setWindow(window)
+            }
+            .frame(width: 0, height: 0)
+        )
         .task(id: "\(video.id)-\(authSession.contentRefreshID.uuidString)") {
             viewModel.load()
         }
@@ -159,7 +175,7 @@ private extension PlayerScreen {
     }
 
     var usesImmersiveLayout: Bool {
-        playbackCoordinator.isTheaterMode || playbackCoordinator.isFullscreen
+        layoutState.isTheaterMode || layoutState.isFullscreen
     }
 
     var displayTitle: String {
@@ -202,123 +218,51 @@ private extension PlayerScreen {
         return items
     }
 
-    var blockingPlayerError: String? {
-        if playbackCoordinator.player == nil {
-            return viewModel.errorMessage ?? playbackCoordinator.errorMessage
-        }
-        return viewModel.errorMessage
-    }
-
-    @ViewBuilder
-    func contentLayout(for width: CGFloat, viewportHeight: CGFloat) -> some View {
-        let isWideLayout = width >= 1_280
-        let railWidth = min(max(width * 0.28, 320), 400)
-
-        if isWideLayout {
-            HStack(alignment: .top, spacing: 24) {
-                mainColumn(viewportHeight: viewportHeight)
-                recommendationsColumn
-                    .frame(width: railWidth)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 24) {
-                mainColumn(viewportHeight: viewportHeight)
-                recommendationsColumn
+    var scrollContent: some View {
+        VStack(alignment: .leading, spacing: usesImmersiveLayout ? 24 : 0) {
+            if usesImmersiveLayout {
+                immersiveContent
+            } else {
+                standardContent
+                    .padding(24)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    func mainColumn(viewportHeight: CGFloat) -> some View {
+    var immersiveContent: some View {
         VStack(alignment: .leading, spacing: 24) {
-            playerStage(
-                viewportHeight: viewportHeight,
-                edgeToEdge: false
-            )
+            headerSection
+            descriptionSection
+            commentsSection
+            recommendationsColumn
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 24)
+    }
+
+    var standardContent: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 24) {
+                mainColumn
+                recommendationsColumn
+                    .frame(width: 360)
+            }
+
+            VStack(alignment: .leading, spacing: 24) {
+                mainColumn
+                recommendationsColumn
+            }
+        }
+    }
+
+    var mainColumn: some View {
+        VStack(alignment: .leading, spacing: 24) {
             headerSection
             descriptionSection
             commentsSection
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    func playerStage(viewportHeight: CGFloat, edgeToEdge: Bool) -> some View {
-        let stage = ZStack {
-            Rectangle()
-                .fill(Color.black.opacity(0.94))
-
-            if let player = playbackCoordinator.player {
-                PlayerRenderView(player: player)
-                    .onDisappear {
-                        player.pause()
-                    }
-            }
-
-            if viewModel.isLoading, playbackCoordinator.player == nil {
-                playerLoadingOverlay
-            } else if let error = blockingPlayerError, playbackCoordinator.player == nil {
-                playerErrorOverlay(message: error)
-            } else if playbackCoordinator.isPreparing, playbackCoordinator.player != nil {
-                PlayerInlineLoadingOverlay()
-            }
-
-            if let player = playbackCoordinator.player {
-                PlayerChromeOverlay(
-                    coordinator: playbackCoordinator,
-                    player: player,
-                    edgeToEdge: edgeToEdge
-                )
-            }
-        }
-        .onHover { hovering in
-            playbackCoordinator.setHovering(hovering)
-        }
-        .onContinuousHover { phase in
-            if case .active = phase {
-                playbackCoordinator.handlePointerMovement()
-            }
-        }
-
-        if edgeToEdge {
-            stage
-                .frame(maxWidth: .infinity)
-                .frame(height: viewportHeight)
-        } else {
-            stage
-                .frame(maxWidth: .infinity)
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 22))
-                .shadow(color: .black.opacity(0.18), radius: 22, y: 10)
-        }
-    }
-
-    var playerLoadingOverlay: some View {
-        VStack(spacing: 14) {
-            ProgressView()
-                .scaleEffect(1.15)
-            Text("Loading video...")
-                .font(.headline)
-        }
-        .tint(.white)
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    func playerErrorOverlay(message: String) -> some View {
-        VStack(spacing: 14) {
-            Image(systemName: "play.slash.fill")
-                .font(.system(size: 30))
-                .foregroundStyle(.white.opacity(0.85))
-            Text(message)
-                .foregroundStyle(.white.opacity(0.9))
-                .multilineTextAlignment(.center)
-            Button("Retry") {
-                viewModel.load()
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     var headerSection: some View {
@@ -420,9 +364,136 @@ private extension PlayerScreen {
     }
 }
 
+private struct PlayerStageHost: View {
+    @ObservedObject var coordinator: PlayerPlaybackCoordinator
+    let isLoading: Bool
+    let errorMessage: String?
+    let immersive: Bool
+    let retry: () -> Void
+
+    private var displayedErrorMessage: String? {
+        errorMessage ?? coordinator.errorMessage
+    }
+
+    var body: some View {
+        let stage = PlayerStageSurface(
+            coordinator: coordinator,
+            isLoading: isLoading,
+            errorMessage: displayedErrorMessage,
+            immersive: immersive,
+            retry: retry
+        )
+
+        Group {
+            if immersive {
+                stage
+                    .frame(maxWidth: .infinity)
+            } else {
+                stage
+                    .clipShape(RoundedRectangle(cornerRadius: 22))
+                    .shadow(color: .black.opacity(0.18), radius: 22, y: 10)
+            }
+        }
+        .padding(.horizontal, immersive ? 0 : 24)
+        .padding(.top, immersive ? 0 : 24)
+        .padding(.bottom, immersive ? 24 : 0)
+        .background(
+            immersive
+                ? Color.black.opacity(0.96)
+                : Color.clear
+        )
+    }
+}
+
+private struct PlayerStageSurface: View {
+    @ObservedObject var coordinator: PlayerPlaybackCoordinator
+    let isLoading: Bool
+    let errorMessage: String?
+    let immersive: Bool
+    let retry: () -> Void
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(Color.black.opacity(0.94))
+
+            if let player = coordinator.player {
+                PlayerRenderView(player: player) {
+                    coordinator.handlePlayerGeometryChange()
+                }
+            }
+
+            if coordinator.shouldShowPlaybackErrorOverlay,
+               let errorMessage {
+                PlayerStageErrorOverlay(message: errorMessage, retry: retry)
+            } else if coordinator.shouldShowPlaybackLoadingOverlay {
+                if coordinator.player == nil {
+                    PlayerStageLoadingOverlay(text: isLoading ? "Loading video..." : coordinator.playbackLoadingText)
+                } else {
+                    PlayerInlineLoadingOverlay(text: coordinator.playbackLoadingText)
+                }
+            }
+
+            if let _ = coordinator.player {
+                PlayerChromeOverlay(
+                    coordinator: coordinator,
+                    edgeToEdge: immersive
+                )
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .onHover { hovering in
+            coordinator.setHovering(hovering)
+        }
+        .onContinuousHover { phase in
+            if case .active = phase {
+                coordinator.handlePointerMovement()
+            }
+        }
+    }
+}
+
+private struct PlayerStageLoadingOverlay: View {
+    let text: String
+
+    var body: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+                .scaleEffect(1.15)
+            Text(text)
+                .font(.headline)
+        }
+        .tint(.white)
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct PlayerStageErrorOverlay: View {
+    let message: String
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "play.slash.fill")
+                .font(.system(size: 30))
+                .foregroundStyle(.white.opacity(0.85))
+            Text(message)
+                .foregroundStyle(.white.opacity(0.9))
+                .multilineTextAlignment(.center)
+            Button("Retry") {
+                retry()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 private struct PlayerChromeOverlay: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
-    let player: AVPlayer
     let edgeToEdge: Bool
 
     var body: some View {
@@ -760,13 +831,15 @@ private struct PlayerStatusPill: View {
 }
 
 private struct PlayerInlineLoadingOverlay: View {
+    let text: String
+
     var body: some View {
         VStack {
             Spacer()
 
             HStack(spacing: 10) {
                 ProgressView()
-                Text("Updating player...")
+                Text(text)
                     .font(.subheadline.weight(.medium))
             }
             .padding(.horizontal, 16)

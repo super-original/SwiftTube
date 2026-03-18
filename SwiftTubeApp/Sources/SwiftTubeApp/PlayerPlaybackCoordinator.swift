@@ -3,10 +3,10 @@ import AVFoundation
 import AVKit
 import SwiftUI
 
-struct QualityOption: Identifiable, Hashable {
+struct QualityOption: Identifiable, Hashable, Sendable {
     static let automaticID = "quality-auto"
 
-    enum Selection: Hashable {
+    enum Selection: Hashable, Sendable {
         case automatic
         case manifestVariant(
             url: String,
@@ -30,7 +30,7 @@ struct QualityOption: Identifiable, Hashable {
     )
 }
 
-struct SubtitleOption: Identifiable, Hashable {
+struct SubtitleOption: Identifiable, Hashable, Sendable {
     static let offID = "subtitle-off"
 
     let id: String
@@ -50,32 +50,206 @@ struct SubtitleOption: Identifiable, Hashable {
     )
 }
 
-private struct PlaybackRestoreState {
+private struct PlaybackRestoreState: Sendable {
     let currentTime: Double
     let wasPlaying: Bool
 }
 
-private struct SubtitleSelectionSnapshot {
+private struct SubtitleSelectionSnapshot: Sendable {
     let title: String
     let localeIdentifier: String?
 }
 
-private struct SourceCandidate {
+private struct SourceCandidate: Sendable {
     let source: PlayerSourceDescriptor
     let height: Int
 }
 
-private struct ManifestSourceCandidate {
+private struct ManifestSourceCandidate: Sendable {
     let source: PlayerSourceDescriptor
     let maxHeight: Int
     let variantCount: Int
 }
 
-private enum PlayerSourceDescriptor {
+private enum PlayerSourceDescriptor: Sendable {
     case manifestAutomatic(StreamInfo)
     case manifestVariant(parent: StreamInfo, url: URL)
     case direct(StreamInfo)
     case adaptivePair(video: StreamInfo, audio: StreamInfo)
+}
+
+@MainActor
+final class PlayerLayoutState: ObservableObject {
+    @Published var isTheaterMode = false
+    @Published var isFullscreen = false
+}
+
+private actor QualityCoordinator {
+    private var playbackID: String? = nil
+    private var cachedSources: [String: PlayerSourceDescriptor] = [:]
+
+    func reset() {
+        playbackID = nil
+        cachedSources = [:]
+    }
+
+    func prime(
+        playback: VideoPlayback,
+        automaticSource: PlayerSourceDescriptor,
+        options: [QualityOption]
+    ) {
+        playbackID = playback.id
+        cachedSources = [QualityOption.automaticID: automaticSource]
+        cache(options: options, for: playback, automaticSource: automaticSource)
+    }
+
+    func cache(
+        options: [QualityOption],
+        for playback: VideoPlayback,
+        automaticSource: PlayerSourceDescriptor? = nil
+    ) {
+        if let playbackID, playbackID != playback.id {
+            return
+        }
+
+        if playbackID == nil {
+            playbackID = playback.id
+        }
+
+        let baseSource = automaticSource
+            ?? cachedSources[QualityOption.automaticID]
+            ?? Self.resolveInitialSource(for: playback)
+
+        guard let baseSource else { return }
+        cachedSources[QualityOption.automaticID] = baseSource
+
+        for option in options {
+            if let resolvedSource = Self.resolveSource(
+                for: option,
+                playback: playback,
+                automaticSource: baseSource
+            ) {
+                cachedSources[option.id] = resolvedSource
+            }
+        }
+    }
+
+    func source(
+        for option: QualityOption,
+        playback: VideoPlayback,
+        automaticSource: PlayerSourceDescriptor
+    ) -> PlayerSourceDescriptor {
+        if playbackID != playback.id || cachedSources[QualityOption.automaticID] == nil {
+            prime(playback: playback, automaticSource: automaticSource, options: [])
+        }
+
+        if let cachedSource = cachedSources[option.id] {
+            return cachedSource
+        }
+
+        let resolvedSource = Self.resolveSource(
+            for: option,
+            playback: playback,
+            automaticSource: cachedSources[QualityOption.automaticID] ?? automaticSource
+        ) ?? automaticSource
+        cachedSources[option.id] = resolvedSource
+        return resolvedSource
+    }
+
+    private static func resolveInitialSource(for playback: VideoPlayback) -> PlayerSourceDescriptor? {
+        if let manifestStream = playback.preferredManifestStream {
+            return .manifestAutomatic(manifestStream)
+        }
+
+        if playback.playbackStrategy == "adaptivePair",
+           let videoStream = playback.preferredVideoStream,
+           let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
+            return .adaptivePair(video: videoStream, audio: audioStream)
+        }
+
+        if let muxedStream = playback.preferredMuxedStream {
+            return .direct(muxedStream)
+        }
+
+        if let videoStream = playback.preferredVideoStream,
+           let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
+            return .adaptivePair(video: videoStream, audio: audioStream)
+        }
+
+        if let bestStream = playback.bestStream {
+            if bestStream.hasAudio {
+                return .direct(bestStream)
+            }
+
+            if bestStream.hasVideo,
+               let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
+                return .adaptivePair(video: bestStream, audio: audioStream)
+            }
+        }
+
+        if let fallbackMuxedStream = playback.streams.first(where: { $0.hasVideo && $0.hasAudio }) {
+            return .direct(fallbackMuxedStream)
+        }
+
+        return nil
+    }
+
+    private static func resolveSource(
+        for option: QualityOption,
+        playback: VideoPlayback,
+        automaticSource: PlayerSourceDescriptor
+    ) -> PlayerSourceDescriptor? {
+        switch option.selection {
+        case .automatic:
+            return automaticSource
+        case .manifestVariant:
+            return playback.preferredManifestStream.map(PlayerSourceDescriptor.manifestAutomatic)
+        case .stream(let url):
+            guard let stream = playback.streams.first(where: { $0.url == url }) else {
+                return nil
+            }
+
+            if stream.hasAudio {
+                return .direct(stream)
+            }
+
+            guard let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) else {
+                return nil
+            }
+
+            return .adaptivePair(video: stream, audio: audioStream)
+        }
+    }
+
+    private static func bestAdaptiveAudioStream(for playback: VideoPlayback) -> StreamInfo? {
+        if let preferredAudioStream = playback.preferredAudioStream {
+            return preferredAudioStream
+        }
+
+        return playback.streams
+            .filter {
+                $0.hasAudio
+                    && !$0.hasVideo
+                    && ($0.container?.hasPrefix("m4a") == true || $0.container?.hasPrefix("mp4") == true)
+            }
+            .sorted { lhs, rhs in
+                let lhsScore = (lhs.bitrate ?? 0, codecScore(for: lhs.audioCodec))
+                let rhsScore = (rhs.bitrate ?? 0, codecScore(for: rhs.audioCodec))
+                return lhsScore > rhsScore
+            }
+            .first
+    }
+
+    private static func codecScore(for codec: String?) -> Int {
+        guard let codec else { return 0 }
+        if codec.hasPrefix("avc1") { return 5 }
+        if codec.hasPrefix("hvc1") || codec.hasPrefix("hev1") { return 4 }
+        if codec.hasPrefix("av01") { return 3 }
+        if codec.hasPrefix("vp9") { return 2 }
+        if codec.hasPrefix("mp4a") { return 4 }
+        if codec.hasPrefix("opus") { return 3 }
+        return 1
+    }
 }
 
 @MainActor
@@ -110,9 +284,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             applyVolume()
         }
     }
-    @Published var isTheaterMode = false
-    @Published private(set) var isFullscreen = false
 
+    private let layoutState: PlayerLayoutState
+    private let qualityCoordinator = QualityCoordinator()
     private var lastNonZeroVolume = 0.9
     private var isScrubbing = false
     private var isMenuInteractionActive = false
@@ -127,8 +301,22 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var menuInteractionTask: Task<Void, Never>? = nil
     private var timeObserverToken: Any?
     private var timeControlObservation: NSKeyValueObservation?
+    private var currentItemStatusObservation: NSKeyValueObservation?
+    private var currentItemLikelyToKeepUpObservation: NSKeyValueObservation?
+    private var currentItemBufferEmptyObservation: NSKeyValueObservation?
+    private var currentItemLoadedTimeRangesObservation: NSKeyValueObservation?
+    private var currentItemStatus: AVPlayerItem.Status = .unknown
+    private var isCurrentItemLikelyToKeepUp = false
+    private var isCurrentItemBufferEmpty = true
+    private var currentLoadedBufferDuration: Double = 0
+    private var geometryAssertionTask: Task<Void, Never>? = nil
     private var lastInteractionAt = Date()
     private var lastPointerMovementAt = Date.distantPast
+
+    init(layoutState: PlayerLayoutState = PlayerLayoutState()) {
+        self.layoutState = layoutState
+        super.init()
+    }
 
     var playbackBadgeText: String {
         if selectedQualityOptionID == QualityOption.automaticID {
@@ -169,15 +357,55 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var fullscreenSymbolName: String {
-        isFullscreen
+        layoutState.isFullscreen
             ? "arrow.down.right.and.arrow.up.left"
             : "arrow.up.left.and.arrow.down.right"
     }
 
     var theaterSymbolName: String {
-        isTheaterMode
+        layoutState.isTheaterMode
             ? "rectangle.compress.vertical"
             : "rectangle.expand.vertical"
+    }
+
+    var isTheaterMode: Bool {
+        layoutState.isTheaterMode
+    }
+
+    var isFullscreen: Bool {
+        layoutState.isFullscreen
+    }
+
+    var shouldShowPlaybackLoadingOverlay: Bool {
+        guard let player, player.currentItem != nil else {
+            return true
+        }
+
+        if currentItemStatus != .readyToPlay {
+            return true
+        }
+
+        if player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+            return isCurrentItemBufferEmpty || !isCurrentItemLikelyToKeepUp || currentLoadedBufferDuration < 0.15
+        }
+
+        return false
+    }
+
+    var playbackLoadingText: String {
+        if currentItemStatus != .readyToPlay {
+            return "Loading video..."
+        }
+
+        if isPreparing {
+            return "Updating player..."
+        }
+
+        return "Buffering..."
+    }
+
+    var shouldShowPlaybackErrorOverlay: Bool {
+        errorMessage != nil && (player == nil || currentItemStatus == .failed)
     }
 
     var volumeIconName: String {
@@ -221,6 +449,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         prepareTask?.cancel()
         stopHideMonitor()
         menuInteractionTask?.cancel()
+        geometryAssertionTask?.cancel()
         errorMessage = nil
         isPreparing = false
         controlsVisible = true
@@ -236,11 +465,20 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         legibleMediaOptions = []
         currentSource = nil
         currentPlayback = nil
+        currentItemStatus = .unknown
+        isCurrentItemLikelyToKeepUp = false
+        isCurrentItemBufferEmpty = true
+        currentLoadedBufferDuration = 0
+        layoutState.isTheaterMode = false
         lastInteractionAt = Date()
         lastPointerMovementAt = .distantPast
         teardownPlayerObservers()
         player?.pause()
+        player?.replaceCurrentItem(with: nil)
         player = nil
+        Task {
+            await qualityCoordinator.reset()
+        }
     }
 
     func stop() {
@@ -249,7 +487,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func setWindow(_ window: NSWindow?) {
         if self.window === window {
-            isFullscreen = window?.styleMask.contains(.fullScreen) == true
+            layoutState.isFullscreen = window?.styleMask.contains(.fullScreen) == true
             return
         }
 
@@ -267,7 +505,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
 
         self.window = window
-        isFullscreen = window?.styleMask.contains(.fullScreen) == true
+        layoutState.isFullscreen = window?.styleMask.contains(.fullScreen) == true
 
         if let window {
             NotificationCenter.default.addObserver(
@@ -374,6 +612,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             return
         }
 
+        noteInteraction()
+        if applyManifestQualitySelectionIfPossible(option) {
+            endMenuInteraction()
+            return
+        }
+
         let restoreState = currentRestoreState()
         let subtitleSnapshot = currentSubtitleSnapshot()
         prepareTask?.cancel()
@@ -417,10 +661,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     func toggleTheaterMode() {
+        let wasPlaying = isPlaying
         withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
-            isTheaterMode.toggle()
+            layoutState.isTheaterMode.toggle()
         }
         noteInteraction()
+        scheduleGeometryRateAssertion(wasPlaying: wasPlaying)
     }
 
     func toggleFullscreen() {
@@ -443,6 +689,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         errorMessage = nil
         isPreparing = true
         controlsVisible = true
+        currentItemStatus = .unknown
+        isCurrentItemLikelyToKeepUp = false
+        isCurrentItemBufferEmpty = true
+        currentLoadedBufferDuration = 0
 
         do {
             let source = try await preferredSource(for: playback)
@@ -454,10 +704,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             selectedQualityOptionID = QualityOption.automaticID
 
             let player = ensurePlayer()
+            observeCurrentItem(item)
             player.replaceCurrentItem(with: item)
-            player.currentItem?.preferredForwardBufferDuration = 12
+            clearManifestQualityPreferences(on: item)
 
-            try await refreshPlaybackMetadata(
+            async let metadataRefresh: Void = refreshPlaybackMetadata(
                 for: item,
                 playback: playback,
                 preferredSubtitle: nil
@@ -466,8 +717,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             guard !Task.isCancelled else { return }
             currentTime = 0
             scrubPosition = 0
+            try await waitUntilReadyToPlay(item)
+            guard !Task.isCancelled else { return }
             player.play()
             startHideMonitorIfNeeded()
+            await metadataRefresh
+            await qualityCoordinator.prime(
+                playback: playback,
+                automaticSource: source,
+                options: qualityOptions
+            )
         } catch {
             if !Task.isCancelled {
                 errorMessage = "Failed to prepare video."
@@ -490,23 +749,29 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         isPreparing = true
 
         do {
-            let source = try await source(for: option, playback: playback)
+            let automaticSource = try await preferredSource(for: playback)
+            let source = await qualityCoordinator.source(
+                for: option,
+                playback: playback,
+                automaticSource: automaticSource
+            )
             let item = try await buildPlayerItem(for: source)
             guard !Task.isCancelled else { return }
 
             let player = ensurePlayer()
+            observeCurrentItem(item)
             player.replaceCurrentItem(with: item)
-            player.currentItem?.preferredForwardBufferDuration = 12
             currentSource = source
             selectedQualityOptionID = option.id
 
-            try await refreshPlaybackMetadata(
+            async let metadataRefresh: Void = refreshPlaybackMetadata(
                 for: item,
                 playback: playback,
                 preferredSubtitle: subtitleSnapshot
             )
 
-            let clampedTime = min(restoreState.currentTime, max(duration - 0.25, 0))
+            try await waitUntilReadyToPlay(item)
+            let clampedTime = max(restoreState.currentTime, 0)
             await seek(player: player, to: clampedTime)
 
             if restoreState.wasPlaying {
@@ -517,6 +782,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             }
             currentTime = clampedTime
             scrubPosition = clampedTime
+            isPreparing = false
+            endMenuInteraction()
+            await metadataRefresh
         } catch {
             if !Task.isCancelled {
                 errorMessage = "Failed to switch quality."
@@ -533,19 +801,26 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         for item: AVPlayerItem,
         playback: VideoPlayback,
         preferredSubtitle: SubtitleSelectionSnapshot?
-    ) async throws {
-        try await refreshDuration(using: item)
-        try await refreshQualityOptions(for: playback)
-        try await refreshSubtitleOptions(for: item, preferredSelection: preferredSubtitle)
+    ) async {
+        async let durationRefresh: Void = refreshDuration(using: item)
+        async let qualityRefresh: Void = refreshQualityOptions(for: playback)
+        async let subtitleRefresh: Void = refreshSubtitleOptionsSafely(
+            for: item,
+            preferredSelection: preferredSubtitle
+        )
+        _ = await (durationRefresh, qualityRefresh, subtitleRefresh)
     }
 
-    private func refreshDuration(using item: AVPlayerItem) async throws {
-        let assetDuration = try await item.asset.load(.duration)
+    private func refreshDuration(using item: AVPlayerItem) async {
+        guard let assetDuration = try? await item.asset.load(.duration) else {
+            return
+        }
+
         duration = sanitizeSeconds(assetDuration.seconds)
         scrubPosition = currentTime
     }
 
-    private func refreshQualityOptions(for playback: VideoPlayback) async throws {
+    private func refreshQualityOptions(for playback: VideoPlayback) async {
         switch currentSource {
         case .manifestAutomatic(let manifestStream), .manifestVariant(parent: let manifestStream, url: _):
             if let manifestAsset = buildAsset(for: manifestStream) {
@@ -556,6 +831,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                     if qualityOptions.contains(where: { $0.id == selectedQualityOptionID }) == false {
                         selectedQualityOptionID = QualityOption.automaticID
                     }
+                    await qualityCoordinator.cache(
+                        options: qualityOptions,
+                        for: playback,
+                        automaticSource: currentSource
+                    )
                     return
                 }
             }
@@ -567,6 +847,25 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         qualityOptions = [QualityOption.automatic] + directOptions
         if qualityOptions.contains(where: { $0.id == selectedQualityOptionID }) == false {
             selectedQualityOptionID = QualityOption.automaticID
+        }
+        await qualityCoordinator.cache(
+            options: qualityOptions,
+            for: playback,
+            automaticSource: currentSource
+        )
+    }
+
+    private func refreshSubtitleOptionsSafely(
+        for item: AVPlayerItem,
+        preferredSelection: SubtitleSelectionSnapshot?
+    ) async {
+        do {
+            try await refreshSubtitleOptions(for: item, preferredSelection: preferredSelection)
+        } catch {
+            legibleGroup = nil
+            legibleMediaOptions = []
+            subtitleOptions = []
+            selectedSubtitleOptionID = SubtitleOption.offID
         }
     }
 
@@ -610,7 +909,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
 
         let player = AVPlayer()
-        player.automaticallyWaitsToMinimizeStalling = true
+        player.automaticallyWaitsToMinimizeStalling = false
         player.volume = Float(volume)
         self.player = player
         setupPlayerObservers(for: player)
@@ -650,6 +949,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
         timeObserverToken = nil
         timeControlObservation = nil
+        teardownCurrentItemObservers()
 
         NotificationCenter.default.removeObserver(
             self,
@@ -670,16 +970,20 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     @objc private func handleWindowDidEnterFullScreen(_ notification: Notification) {
         guard notification.object as? NSWindow === window else { return }
+        let wasPlaying = isPlaying
         withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
-            isFullscreen = true
+            layoutState.isFullscreen = true
         }
+        scheduleGeometryRateAssertion(wasPlaying: wasPlaying)
     }
 
     @objc private func handleWindowDidExitFullScreen(_ notification: Notification) {
         guard notification.object as? NSWindow === window else { return }
+        let wasPlaying = isPlaying
         withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
-            isFullscreen = false
+            layoutState.isFullscreen = false
         }
+        scheduleGeometryRateAssertion(wasPlaying: wasPlaying)
     }
 
     private func handlePeriodicTimeUpdate(_ time: CMTime) {
@@ -708,6 +1012,182 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         if isHoveringStage == false {
             hideControlsIfAllowed()
+        }
+    }
+
+    func handlePlayerGeometryChange() {
+        scheduleGeometryRateAssertion(wasPlaying: isPlaying)
+    }
+
+    private func observeCurrentItem(_ item: AVPlayerItem) {
+        teardownCurrentItemObservers()
+        updateCurrentItemState(from: item)
+
+        currentItemStatusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] observedItem, _ in
+            Task { @MainActor in
+                self?.updateCurrentItemState(from: observedItem)
+            }
+        }
+
+        currentItemLikelyToKeepUpObservation = item.observe(\.isPlaybackLikelyToKeepUp, options: [.initial, .new]) {
+            [weak self] observedItem, _ in
+            Task { @MainActor in
+                self?.updateCurrentItemState(from: observedItem)
+            }
+        }
+
+        currentItemBufferEmptyObservation = item.observe(\.isPlaybackBufferEmpty, options: [.initial, .new]) {
+            [weak self] observedItem, _ in
+            Task { @MainActor in
+                self?.updateCurrentItemState(from: observedItem)
+            }
+        }
+
+        currentItemLoadedTimeRangesObservation = item.observe(\.loadedTimeRanges, options: [.initial, .new]) {
+            [weak self] observedItem, _ in
+            Task { @MainActor in
+                self?.updateCurrentItemState(from: observedItem)
+            }
+        }
+    }
+
+    private func teardownCurrentItemObservers() {
+        currentItemStatusObservation = nil
+        currentItemLikelyToKeepUpObservation = nil
+        currentItemBufferEmptyObservation = nil
+        currentItemLoadedTimeRangesObservation = nil
+        currentItemStatus = .unknown
+        isCurrentItemLikelyToKeepUp = false
+        isCurrentItemBufferEmpty = true
+        currentLoadedBufferDuration = 0
+    }
+
+    private func updateCurrentItemState(from item: AVPlayerItem) {
+        currentItemStatus = item.status
+        isCurrentItemLikelyToKeepUp = item.isPlaybackLikelyToKeepUp
+        isCurrentItemBufferEmpty = item.isPlaybackBufferEmpty
+        currentLoadedBufferDuration = loadedBufferDuration(for: item)
+
+        if item.status == .failed {
+            errorMessage = item.error?.localizedDescription ?? "Failed to prepare video."
+        }
+    }
+
+    private func loadedBufferDuration(for item: AVPlayerItem) -> Double {
+        let currentSeconds = sanitizeSeconds(item.currentTime().seconds)
+
+        return item.loadedTimeRanges
+            .compactMap { value in
+                let range = value.timeRangeValue
+                let start = range.start.seconds
+                let end = start + range.duration.seconds
+                guard end > currentSeconds else { return nil }
+                return sanitizeSeconds(end - currentSeconds)
+            }
+            .max() ?? 0
+    }
+
+    private func waitUntilReadyToPlay(_ item: AVPlayerItem) async throws {
+        switch item.status {
+        case .readyToPlay:
+            return
+        case .failed:
+            throw item.error ?? URLError(.cannotDecodeContentData)
+        case .unknown:
+            break
+        @unknown default:
+            break
+        }
+
+        final class ReadyObservationBox: @unchecked Sendable {
+            var observation: NSKeyValueObservation?
+            var didResume = false
+        }
+
+        let box = ReadyObservationBox()
+
+        try await withCheckedThrowingContinuation { continuation in
+            box.observation = item.observe(\.status, options: [.initial, .new]) { observedItem, _ in
+                guard !box.didResume else { return }
+
+                switch observedItem.status {
+                case .readyToPlay:
+                    box.didResume = true
+                    box.observation?.invalidate()
+                    box.observation = nil
+                    continuation.resume(returning: ())
+                case .failed:
+                    box.didResume = true
+                    box.observation?.invalidate()
+                    box.observation = nil
+                    continuation.resume(throwing: observedItem.error ?? URLError(.cannotDecodeContentData))
+                case .unknown:
+                    break
+                @unknown default:
+                    break
+                }
+            }
+        }
+    }
+
+    private func clearManifestQualityPreferences(on item: AVPlayerItem) {
+        item.preferredPeakBitRate = 0
+        item.preferredMaximumResolution = .zero
+    }
+
+    private func applyManifestQualitySelectionIfPossible(_ option: QualityOption) -> Bool {
+        guard isManifestSource(currentSource),
+              let currentItem = player?.currentItem else {
+            return false
+        }
+
+        switch option.selection {
+        case .automatic:
+            clearManifestQualityPreferences(on: currentItem)
+        case .manifestVariant(_, let peakBitRate, let width, let height):
+            currentItem.preferredPeakBitRate = peakBitRate
+            if width > 0 || height > 0 {
+                currentItem.preferredMaximumResolution = CGSize(width: width, height: height)
+            } else {
+                currentItem.preferredMaximumResolution = .zero
+            }
+        case .stream:
+            return false
+        }
+
+        selectedQualityOptionID = option.id
+        return true
+    }
+
+    private func isManifestSource(_ source: PlayerSourceDescriptor?) -> Bool {
+        switch source {
+        case .manifestAutomatic, .manifestVariant:
+            return true
+        case .direct, .adaptivePair, .none:
+            return false
+        }
+    }
+
+    private func scheduleGeometryRateAssertion(wasPlaying: Bool) {
+        guard wasPlaying else { return }
+
+        geometryAssertionTask?.cancel()
+        geometryAssertionTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard let self, !Task.isCancelled else { return }
+            guard let player = self.player else { return }
+
+            let isAtEnd = self.duration > 0 && self.currentTime >= self.duration - 0.25
+
+            #if DEBUG
+            assert(
+                player.rate > 0
+                    || player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+                    || self.isPreparing
+                    || isAtEnd,
+                "AVPlayer unexpectedly stopped during a geometry change."
+            )
+            #endif
         }
     }
 
@@ -860,12 +1340,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         switch option.selection {
         case .automatic:
             return try await preferredSource(for: playback)
-        case .manifestVariant(let url, _, _, _):
-            guard let manifestStream = playback.preferredManifestStream,
-                  let variantURL = URL(string: url) else {
+        case .manifestVariant:
+            guard let manifestStream = playback.preferredManifestStream else {
                 throw URLError(.badURL)
             }
-            return .manifestVariant(parent: manifestStream, url: variantURL)
+            return .manifestAutomatic(manifestStream)
         case .stream(let url):
             guard let stream = playback.streams.first(where: { $0.url == url }) else {
                 throw URLError(.fileDoesNotExist)
@@ -881,18 +1360,49 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func preferredSource(for playback: VideoPlayback) async throws -> PlayerSourceDescriptor {
-        let nonManifestCandidate = try await preferredNonManifestSource(for: playback)
-
-        if let nonManifestCandidate {
-            return nonManifestCandidate.source
-        }
-
-        let manifestCandidate = try await preferredManifestSource(for: playback)
-        if let manifestCandidate {
-            return manifestCandidate.source
+        if let resolvedSource = resolvedInitialSource(for: playback) {
+            return resolvedSource
         }
 
         throw URLError(.badURL)
+    }
+
+    private func resolvedInitialSource(for playback: VideoPlayback) -> PlayerSourceDescriptor? {
+        if let manifestStream = playback.preferredManifestStream {
+            return .manifestAutomatic(manifestStream)
+        }
+
+        if playback.playbackStrategy == "adaptivePair",
+           let videoStream = playback.preferredVideoStream,
+           let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
+            return .adaptivePair(video: videoStream, audio: audioStream)
+        }
+
+        if let muxedStream = playback.preferredMuxedStream {
+            return .direct(muxedStream)
+        }
+
+        if let videoStream = playback.preferredVideoStream,
+           let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
+            return .adaptivePair(video: videoStream, audio: audioStream)
+        }
+
+        if let bestStream = playback.bestStream {
+            if bestStream.hasAudio {
+                return .direct(bestStream)
+            }
+
+            if bestStream.hasVideo,
+               let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
+                return .adaptivePair(video: bestStream, audio: audioStream)
+            }
+        }
+
+        if let fallbackMuxedStream = playback.streams.first(where: { $0.hasVideo && $0.hasAudio }) {
+            return .direct(fallbackMuxedStream)
+        }
+
+        return nil
     }
 
     private func preferredManifestSource(
@@ -998,12 +1508,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 throw URLError(.badURL)
             }
             let item = AVPlayerItem(asset: asset)
-            item.preferredForwardBufferDuration = 12
+            item.preferredForwardBufferDuration = 2
             return item
         case .manifestVariant(let parent, let url):
             let asset = buildAsset(url: url, headers: parent.httpHeaders)
             let item = AVPlayerItem(asset: asset)
-            item.preferredForwardBufferDuration = 12
+            item.preferredForwardBufferDuration = 2
             item.preferredPeakBitRate = 0
             item.preferredMaximumResolution = .zero
             return item
@@ -1080,7 +1590,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         )
 
         let item = AVPlayerItem(asset: composition)
-        item.preferredForwardBufferDuration = 12
+        item.preferredForwardBufferDuration = 2
         return item
     }
 
