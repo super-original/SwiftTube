@@ -665,6 +665,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         controlsVisible = true
         currentTime = duration
         scrubPosition = duration
+        startHideMonitorIfNeeded()
     }
 
     @objc private func handleWindowDidEnterFullScreen(_ notification: Notification) {
@@ -697,15 +698,21 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private func handlePlaybackStateChange(_ status: AVPlayer.TimeControlStatus) {
         isPlaying = status == .playing
-        if isPlaying {
-            startHideMonitorIfNeeded()
-        } else {
+        guard player != nil else {
             stopHideMonitor()
             controlsVisible = true
+            return
+        }
+
+        startHideMonitorIfNeeded()
+
+        if isHoveringStage == false {
+            hideControlsIfAllowed()
         }
     }
 
     private func startHideMonitorIfNeeded() {
+        guard player != nil else { return }
         guard hideControlsTask == nil else { return }
 
         hideControlsTask = Task { [weak self] in
@@ -721,7 +728,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
                 let result = await MainActor.run { [weak self] () -> HideMonitorResult in
                     guard let self else { return .stop }
-                    guard self.isPlaying else { return .stop }
+                    guard self.player != nil else { return .stop }
+
+                    if self.isPreparing {
+                        return .keepWatching
+                    }
 
                     if self.isScrubbing || self.isMenuInteractionActive {
                         return .keepWatching
@@ -773,7 +784,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private func hideControlsIfAllowed() {
         stopHideMonitor()
-        guard isPlaying, !isScrubbing, !isMenuInteractionActive else { return }
+        guard player != nil else { return }
+        guard !isPreparing, !isScrubbing, !isMenuInteractionActive else { return }
         guard controlsVisible else { return }
 
         withAnimation(.easeOut(duration: Timing.visibilityAnimationDuration)) {

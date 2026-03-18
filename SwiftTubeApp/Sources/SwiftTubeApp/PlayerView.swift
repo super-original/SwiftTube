@@ -481,6 +481,7 @@ private struct PlayerControlBar: View {
 
     private let compactControlHeight: CGFloat = 38
     private let compactCornerRadius: CGFloat = 19
+    private let nativeButtonLabelHeight: CGFloat = 30
     private let timeLabelWidth: CGFloat = 54
 
     var body: some View {
@@ -631,12 +632,15 @@ private struct PlayerControlBar: View {
                     .foregroundStyle(.secondary)
             }
             .frame(minWidth: 92, minHeight: compactControlHeight)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 14)
+            .playerControlSurface(
+                reduceTransparency: reduceTransparency,
+                glass: .regular,
+                shape: RoundedRectangle(cornerRadius: compactCornerRadius)
+            )
         }
-        .menuStyle(.button)
-        .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.capsule)
-        .controlSize(.regular)
+        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
         .simultaneousGesture(
             TapGesture().onEnded {
                 coordinator.beginMenuInteraction()
@@ -700,8 +704,8 @@ private struct PlayerControlBar: View {
             .font(.system(size: fontSize, weight: .semibold))
             .foregroundStyle(foregroundStyle)
             .contentTransition(.symbolEffect(.replace))
-            .frame(width: compactControlHeight, height: compactControlHeight)
-            .frame(minWidth: minWidth, minHeight: compactControlHeight)
+            .frame(width: nativeButtonLabelHeight, height: nativeButtonLabelHeight)
+            .frame(minWidth: minWidth, minHeight: nativeButtonLabelHeight)
             .animation(.snappy(duration: 0.11, extraBounce: 0), value: symbol)
     }
 }
