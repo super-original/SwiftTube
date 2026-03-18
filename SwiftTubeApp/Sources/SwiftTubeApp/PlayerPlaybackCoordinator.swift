@@ -69,6 +69,11 @@ private enum PlayerSourceDescriptor {
 
 @MainActor
 final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
+    private enum Timing {
+        static let inactivityHideDelay: UInt64 = 3_000_000_000
+        static let unhoverHideDelay: UInt64 = 400_000_000
+    }
+
     @Published private(set) var player: AVPlayer? = nil
     @Published private(set) var isPreparing = false
     @Published private(set) var errorMessage: String? = nil
@@ -87,10 +92,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
     }
     @Published var isTheaterMode = false
+    @Published private(set) var isFullscreen = false
 
     private var lastNonZeroVolume = 0.9
     private var isScrubbing = false
     private var isMenuInteractionActive = false
+    private var isHoveringStage = false
     private var currentPlayback: VideoPlayback? = nil
     private var currentSource: PlayerSourceDescriptor? = nil
     private weak var window: NSWindow?
@@ -104,20 +111,23 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     var playbackBadgeText: String {
         if selectedQualityOptionID == QualityOption.automaticID {
-            if let label = activeSourceQualityLabel {
-                return "Auto \(label)"
-            }
             return "Auto"
         }
         return currentQualityOption?.title ?? "Quality"
     }
 
     var qualityControlText: String {
-        currentQualityOption?.title ?? "Quality"
+        if selectedQualityOptionID == QualityOption.automaticID {
+            return "Auto"
+        }
+        return currentQualityOption?.title ?? "Quality"
     }
 
     var qualityControlDetail: String? {
-        currentQualityOption?.detail
+        guard selectedQualityOptionID != QualityOption.automaticID else {
+            return nil
+        }
+        return currentQualityOption?.detail
     }
 
     var subtitleControlText: String {
@@ -132,12 +142,21 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var subtitleSymbolName: String {
-        if subtitleOptions.isEmpty {
-            return "captions.bubble.slash"
-        }
         return selectedSubtitleOptionID == SubtitleOption.offID
             ? "captions.bubble"
             : "captions.bubble.fill"
+    }
+
+    var fullscreenSymbolName: String {
+        isFullscreen
+            ? "arrow.down.right.and.arrow.up.left"
+            : "arrow.up.left.and.arrow.down.right"
+    }
+
+    var theaterSymbolName: String {
+        isTheaterMode
+            ? "rectangle.compress.vertical"
+            : "rectangle.expand.vertical"
     }
 
     var volumeIconName: String {
@@ -206,7 +225,41 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     func setWindow(_ window: NSWindow?) {
+        if self.window === window {
+            isFullscreen = window?.styleMask.contains(.fullScreen) == true
+            return
+        }
+
+        if let currentWindow = self.window {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSWindow.didEnterFullScreenNotification,
+                object: currentWindow
+            )
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSWindow.didExitFullScreenNotification,
+                object: currentWindow
+            )
+        }
+
         self.window = window
+        isFullscreen = window?.styleMask.contains(.fullScreen) == true
+
+        if let window {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleWindowDidEnterFullScreen(_:)),
+                name: NSWindow.didEnterFullScreenNotification,
+                object: window
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleWindowDidExitFullScreen(_:)),
+                name: NSWindow.didExitFullScreenNotification,
+                object: window
+            )
+        }
     }
 
     func togglePlayback() {
@@ -307,11 +360,24 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
     }
 
-    func handleHoverEntry() {
-        noteInteraction()
+    func setHovering(_ isHovering: Bool) {
+        isHoveringStage = isHovering
+
+        if isHovering {
+            noteInteraction()
+        } else {
+            scheduleAutoHideIfNeeded(delay: Timing.unhoverHideDelay)
+        }
     }
 
     func handlePointerMovement() {
+        noteInteraction()
+    }
+
+    func toggleTheaterMode() {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            isTheaterMode.toggle()
+        }
         noteInteraction()
     }
 
@@ -329,21 +395,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             return .off
         }
         return subtitleOptions.first(where: { $0.id == selectedSubtitleOptionID })
-    }
-
-    private var activeSourceQualityLabel: String? {
-        switch currentSource {
-        case .manifestAutomatic(let stream):
-            return stream.qualityLabel
-        case .manifestVariant:
-            return currentQualityOption?.title
-        case .direct(let stream):
-            return stream.qualityLabel
-        case .adaptivePair(let video, _):
-            return video.qualityLabel
-        case .none:
-            return nil
-        }
     }
 
     private func preparePlayback(_ playback: VideoPlayback) async {
@@ -570,6 +621,20 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         scrubPosition = duration
     }
 
+    @objc private func handleWindowDidEnterFullScreen(_ notification: Notification) {
+        guard notification.object as? NSWindow === window else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            isFullscreen = true
+        }
+    }
+
+    @objc private func handleWindowDidExitFullScreen(_ notification: Notification) {
+        guard notification.object as? NSWindow === window else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            isFullscreen = false
+        }
+    }
+
     private func handlePeriodicTimeUpdate(_ time: CMTime) {
         let seconds = sanitizeSeconds(time.seconds)
         guard !isScrubbing else { return }
@@ -585,7 +650,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func handlePlaybackStateChange(_ status: AVPlayer.TimeControlStatus) {
-        isPlaying = status == .playing
+        withAnimation(.easeInOut(duration: 0.18)) {
+            isPlaying = status == .playing
+        }
         if isPlaying {
             scheduleAutoHideIfNeeded()
         } else {
@@ -594,12 +661,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
     }
 
-    private func scheduleAutoHideIfNeeded() {
+    private func scheduleAutoHideIfNeeded(delay: UInt64? = nil) {
         hideControlsTask?.cancel()
         guard isPlaying, !isScrubbing, !isMenuInteractionActive else { return }
+        let resolvedDelay = delay ?? (isHoveringStage ? Timing.inactivityHideDelay : Timing.unhoverHideDelay)
 
         hideControlsTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            try? await Task.sleep(nanoseconds: resolvedDelay)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self else { return }

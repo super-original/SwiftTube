@@ -1,11 +1,22 @@
 import AVKit
 import SwiftUI
 
+final class ScrollPassthroughPlayerView: AVPlayerView {
+    override func scrollWheel(with event: NSEvent) {
+        if let scrollView = enclosingScrollView {
+            scrollView.scrollWheel(with: event)
+            return
+        }
+
+        nextResponder?.scrollWheel(with: event)
+    }
+}
+
 struct PlayerRenderView: NSViewRepresentable {
     let player: AVPlayer
 
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = AVPlayerView()
+    func makeNSView(context: Context) -> ScrollPassthroughPlayerView {
+        let view = ScrollPassthroughPlayerView()
         view.controlsStyle = .none
         view.videoGravity = .resizeAspect
         view.showsFullScreenToggleButton = false
@@ -13,7 +24,7 @@ struct PlayerRenderView: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: AVPlayerView, context: Context) {
+    func updateNSView(_ nsView: ScrollPassthroughPlayerView, context: Context) {
         if nsView.player !== player {
             nsView.player = player
         }
@@ -65,8 +76,8 @@ struct PlayerScreen: View {
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: playbackCoordinator.isTheaterMode ? 24 : 0) {
-                    if playbackCoordinator.isTheaterMode {
+                VStack(alignment: .leading, spacing: usesImmersiveLayout ? 24 : 0) {
+                    if usesImmersiveLayout {
                         playerStage(
                             viewportHeight: proxy.size.height,
                             edgeToEdge: true
@@ -121,6 +132,10 @@ struct PlayerScreen: View {
 private extension PlayerScreen {
     var playback: VideoPlayback? {
         viewModel.playback
+    }
+
+    var usesImmersiveLayout: Bool {
+        playbackCoordinator.isTheaterMode || playbackCoordinator.isFullscreen
     }
 
     var displayTitle: String {
@@ -232,9 +247,7 @@ private extension PlayerScreen {
             }
         }
         .onHover { hovering in
-            if hovering {
-                playbackCoordinator.handleHoverEntry()
-            }
+            playbackCoordinator.setHovering(hovering)
         }
         .onContinuousHover { phase in
             if case .active = phase {
@@ -474,32 +487,19 @@ private struct PlayerControlBar: View {
         } label: {
             ZStack {
                 if coordinator.isPlaying {
-                    controlIcon(symbol: "pause.fill")
-                        .frame(minWidth: 44, minHeight: 44)
-                        .padding(.horizontal, 8)
-                        .playerControlSurface(
-                            reduceTransparency: reduceTransparency,
-                            glass: .regular.interactive(),
-                            shape: Capsule()
-                        )
+                    iconButtonLabel(symbol: "pause.fill")
                         .glassEffectID("playback-control", in: playPauseNamespace)
                         .glassEffectTransition(.matchedGeometry)
                 } else {
-                    controlIcon(symbol: "play.fill")
-                        .frame(minWidth: 44, minHeight: 44)
-                        .padding(.horizontal, 8)
-                        .playerControlSurface(
-                            reduceTransparency: reduceTransparency,
-                            glass: .regular.interactive(),
-                            shape: Capsule()
-                        )
+                    iconButtonLabel(symbol: "play.fill")
                         .glassEffectID("playback-control", in: playPauseNamespace)
                         .glassEffectTransition(.matchedGeometry)
                 }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PlayerControlButtonStyle())
         .accessibilityLabel(coordinator.isPlaying ? "Pause" : "Play")
+        .animation(.easeInOut(duration: 0.18), value: coordinator.isPlaying)
     }
 
     var volumeControl: some View {
@@ -507,17 +507,9 @@ private struct PlayerControlBar: View {
             Button {
                 coordinator.toggleMute()
             } label: {
-                Image(systemName: coordinator.volumeIconName)
-                    .font(.system(size: 14, weight: .semibold))
-                    .contentTransition(.symbolEffect(.replace))
-                    .frame(minWidth: 44, minHeight: 44)
+                iconButtonLabel(symbol: coordinator.volumeIconName, fontSize: 14)
             }
-            .buttonStyle(.plain)
-            .playerControlSurface(
-                reduceTransparency: reduceTransparency,
-                glass: .regular.interactive(),
-                shape: Capsule()
-            )
+            .buttonStyle(PlayerControlButtonStyle())
             .accessibilityLabel(coordinator.volume <= 0.01 ? "Unmute" : "Mute")
 
             Slider(
@@ -581,18 +573,9 @@ private struct PlayerControlBar: View {
         Button {
             coordinator.cycleSubtitles()
         } label: {
-            Image(systemName: coordinator.subtitleSymbolName)
-                .font(.system(size: 16, weight: .semibold))
-                .contentTransition(.symbolEffect(.replace))
-                .frame(minWidth: 44, minHeight: 44)
-                .padding(.horizontal, 8)
-                .playerControlSurface(
-                    reduceTransparency: reduceTransparency,
-                    glass: .regular.interactive(),
-                    shape: Capsule()
-                )
+            iconButtonLabel(symbol: coordinator.subtitleSymbolName, fontSize: 16)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PlayerControlButtonStyle())
         .disabled(!coordinator.hasSubtitleOptions)
         .opacity(coordinator.hasSubtitleOptions ? 1 : 0.55)
         .accessibilityLabel("Subtitles")
@@ -632,13 +615,19 @@ private struct PlayerControlBar: View {
             }
             .padding(.horizontal, 12)
             .frame(minHeight: 44)
-            .playerControlSurface(
-                reduceTransparency: reduceTransparency,
-                glass: .regular.interactive(),
-                shape: Capsule()
-            )
+            .contentShape(Capsule())
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .background {
+            Capsule()
+                .fill(Color.clear)
+                .playerControlSurface(
+                    reduceTransparency: reduceTransparency,
+                    glass: .regular.interactive(),
+                    shape: Capsule()
+                )
+        }
+        .clipShape(Capsule())
         .simultaneousGesture(
             TapGesture().onEnded {
                 coordinator.beginMenuInteraction()
@@ -649,27 +638,12 @@ private struct PlayerControlBar: View {
     }
 
     var theaterToggle: some View {
-        Toggle(
-            isOn: Binding(
-                get: { coordinator.isTheaterMode },
-                set: { isOn in
-                    coordinator.isTheaterMode = isOn
-                    coordinator.handlePointerMovement()
-                }
-            )
-        ) {
-            Image(systemName: coordinator.isTheaterMode ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
-                .font(.system(size: 16, weight: .semibold))
-                .contentTransition(.symbolEffect(.replace))
-                .frame(minWidth: 44, minHeight: 44)
-                .padding(.horizontal, 8)
-                .playerControlSurface(
-                    reduceTransparency: reduceTransparency,
-                    glass: .regular.interactive(),
-                    shape: Capsule()
-                )
+        Button {
+            coordinator.toggleTheaterMode()
+        } label: {
+            iconButtonLabel(symbol: coordinator.theaterSymbolName, fontSize: 16)
         }
-        .toggleStyle(.button)
+        .buttonStyle(PlayerControlButtonStyle())
         .accessibilityLabel("Theater Mode")
         .accessibilityValue(coordinator.isTheaterMode ? "On" : "Off")
     }
@@ -678,18 +652,11 @@ private struct PlayerControlBar: View {
         Button {
             coordinator.toggleFullscreen()
         } label: {
-            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 15, weight: .semibold))
-                .frame(minWidth: 44, minHeight: 44)
-                .padding(.horizontal, 8)
-                .playerControlSurface(
-                    reduceTransparency: reduceTransparency,
-                    glass: .regular.interactive(),
-                    shape: Capsule()
-                )
+            iconButtonLabel(symbol: coordinator.fullscreenSymbolName, fontSize: 15)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Fullscreen")
+        .buttonStyle(PlayerControlButtonStyle())
+        .accessibilityLabel(coordinator.isFullscreen ? "Exit Fullscreen" : "Fullscreen")
+        .accessibilityValue(coordinator.isFullscreen ? "On" : "Off")
     }
 
     @ViewBuilder
@@ -714,6 +681,29 @@ private struct PlayerControlBar: View {
         Image(systemName: symbol)
             .font(.system(size: 18, weight: .semibold))
             .contentTransition(.symbolEffect(.replace))
+    }
+
+    func iconButtonLabel(symbol: String, fontSize: CGFloat = 18) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: fontSize, weight: .semibold))
+            .contentTransition(.symbolEffect(.replace))
+            .frame(width: 44, height: 44)
+            .frame(minWidth: 60, minHeight: 44)
+            .contentShape(Capsule())
+            .playerControlSurface(
+                reduceTransparency: reduceTransparency,
+                glass: .regular.interactive(),
+                shape: Capsule()
+            )
+    }
+}
+
+private struct PlayerControlButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(configuration.isPressed ? 0.86 : 1)
+            .animation(.easeInOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
