@@ -895,6 +895,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             return
         }
 
+        PlaybackDebugLogger.log(
+            "quality select request option=\(debugDescription(for: option)) previous=\(selectedQualityOptionID) displayed=\(qualityControlSelectionID) backend=\(activeBackendKind.rawValue)"
+        )
         noteInteraction()
         let previousSelectionID = selectedQualityOptionID
         pendingQualityOptionID = option.id
@@ -1046,6 +1049,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         subtitleSnapshot: SubtitleSelectionSnapshot?
     ) async {
         errorMessage = nil
+        PlaybackDebugLogger.log(
+            "quality switch start option=\(debugDescription(for: option)) previous=\(previousSelectionID) subtitle=\(subtitleSnapshot?.title ?? "nil")"
+        )
 
         do {
             switch option.selection {
@@ -1064,6 +1070,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             }
         } catch {
             if !Task.isCancelled {
+                PlaybackDebugLogger.log(
+                    "quality switch failed option=\(debugDescription(for: option)) previous=\(previousSelectionID) error=\(error.localizedDescription)"
+                )
                 errorMessage = "Failed to switch quality."
                 selectedQualityOptionID = previousSelectionID
                 pendingQualityOptionID = nil
@@ -1071,6 +1080,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
 
         if !Task.isCancelled {
+            PlaybackDebugLogger.log(
+                "quality switch finished selected=\(selectedQualityOptionID) pending=\(pendingQualityOptionID ?? "nil") backend=\(activeBackendKind.rawValue)"
+            )
             pendingQualityOptionID = nil
             endMenuInteraction()
         }
@@ -1086,6 +1098,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             for: option,
             playback: playback,
             automaticSource: automaticSource
+        )
+        PlaybackDebugLogger.log(
+            "native switch source option=\(debugDescription(for: option)) automatic=\(debugDescription(for: automaticSource)) resolved=\(debugDescription(for: source))"
         )
         let item = try await buildPlayerItem(for: source)
         let engine = AVFoundationPlaybackEngine(item: item, volume: volume)
@@ -1134,6 +1149,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         scrubPosition = clampedTime
         pendingQualityOptionID = nil
         await metadataRefresh
+        PlaybackDebugLogger.log(
+            "native switch success option=\(debugDescription(for: option)) duration=\(duration) currentTime=\(currentTime)"
+        )
 
         if isHoveringStage {
             startHideMonitorIfNeeded()
@@ -1149,6 +1167,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         playback: VideoPlayback
     ) async throws {
         let request = try mpvRequest(for: selection)
+        PlaybackDebugLogger.log(
+            "mpv switch request option=\(debugDescription(for: option)) video=\(debugDescription(for: selection.stream)) audio=\(debugDescription(for: selection.audioStream))"
+        )
         let engine = MPVPlaybackEngine(request: request)
         pendingMPVEngine = engine
         pendingRenderState = .mpv(engine)
@@ -1192,6 +1213,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         pendingQualityOptionID = nil
         startPollingMPVState(using: engine)
         await refreshQualityOptions(for: playback)
+        PlaybackDebugLogger.log(
+            "mpv switch success option=\(debugDescription(for: option)) duration=\(duration) currentTime=\(currentTime) qualityOptions=\(qualityOptions.map(debugDescription(for:)).joined(separator: " | "))"
+        )
 
         if isHoveringStage {
             startHideMonitorIfNeeded()
@@ -1222,6 +1246,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         duration = sanitizeSeconds(assetDuration.seconds)
         scrubPosition = currentTime
+        PlaybackDebugLogger.log(
+            "refresh duration currentSource=\(debugDescription(for: currentSource)) itemDuration=\(assetDuration.seconds) storedDuration=\(duration)"
+        )
     }
 
     private func refreshQualityOptions(for playback: VideoPlayback) async {
@@ -1241,6 +1268,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         let resolvedManualOptions = directOptions.isEmpty ? manifestOptions : directOptions
 
         qualityOptions = [QualityOption.automatic] + resolvedManualOptions
+        PlaybackDebugLogger.log(
+            "quality options refreshed source=\(debugDescription(for: currentSource)) options=\(qualityOptions.map(debugDescription(for:)).joined(separator: " | ")) selected=\(selectedQualityOptionID) pending=\(pendingQualityOptionID ?? "nil")"
+        )
         if qualityOptions.contains(where: { $0.id == selectedQualityOptionID }) == false {
             selectedQualityOptionID = QualityOption.automaticID
         }
@@ -1992,6 +2022,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         let videoDuration = videoTimeRange.duration
         let audioDuration = audioTimeRange.duration
         let duration = minimumDuration(videoDuration, audioDuration)
+        PlaybackDebugLogger.log(
+            "adaptive item build video=\(debugDescription(for: videoStream)) audio=\(debugDescription(for: audioStream)) videoTimeRange=\(debugDescription(for: videoTimeRange)) audioTimeRange=\(debugDescription(for: audioTimeRange)) chosenDuration=\(duration.seconds)"
+        )
         let composition = AVMutableComposition()
 
         guard let compositionVideoTrack = composition.addMutableTrack(
@@ -2024,6 +2057,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         let item = AVPlayerItem(asset: composition)
         item.preferredForwardBufferDuration = 2
         item.forwardPlaybackEndTime = duration
+        if let compositionDuration = try? await composition.load(.duration) {
+            PlaybackDebugLogger.log(
+                "adaptive item ready compositionDuration=\(compositionDuration.seconds) forwardEnd=\(duration.seconds)"
+            )
+        }
         return item
     }
 
@@ -2344,6 +2382,40 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private func sanitizeSeconds(_ seconds: Double) -> Double {
         guard seconds.isFinite, seconds > 0 else { return 0 }
         return seconds
+    }
+
+    private func debugDescription(for option: QualityOption) -> String {
+        switch option.selection {
+        case .automatic:
+            return "option[id=\(option.id),title=\(option.title),automatic]"
+        case .manifestVariant(let url, let peakBitRate, let width, let height):
+            return "option[id=\(option.id),title=\(option.title),manifest=\(url),peak=\(peakBitRate),size=\(Int(width))x\(Int(height))]"
+        case .manual(let selection):
+            return "option[id=\(option.id),title=\(option.title),backend=\(selection.backend.rawValue),video=\(debugDescription(for: selection.stream)),audio=\(debugDescription(for: selection.audioStream))]"
+        }
+    }
+
+    private func debugDescription(for source: PlayerSourceDescriptor?) -> String {
+        guard let source else { return "source=nil" }
+        switch source {
+        case .manifestAutomatic(let stream):
+            return "source[manifestAutomatic \(debugDescription(for: stream))]"
+        case .manifestVariant(let parent, let url):
+            return "source[manifestVariant parent=\(debugDescription(for: parent)) url=\(url.absoluteString)]"
+        case .direct(let stream):
+            return "source[direct \(debugDescription(for: stream))]"
+        case .adaptivePair(let video, let audio):
+            return "source[adaptive video=\(debugDescription(for: video)) audio=\(debugDescription(for: audio))]"
+        }
+    }
+
+    private func debugDescription(for stream: StreamInfo?) -> String {
+        guard let stream else { return "stream=nil" }
+        return "stream[format=\(stream.formatId ?? "nil"),kind=\(stream.streamKind),quality=\(stream.qualityLabel ?? "nil"),container=\(stream.container ?? "nil"),vcodec=\(stream.videoCodec ?? "nil"),acodec=\(stream.audioCodec ?? "nil"),channels=\(stream.audioChannels.map(String.init) ?? "nil"),fps=\(stream.fps.map(String.init) ?? "nil"),bitrate=\(stream.bitrate.map(String.init) ?? "nil"),url=\(stream.url)]"
+    }
+
+    private func debugDescription(for timeRange: CMTimeRange) -> String {
+        "timeRange[start=\(timeRange.start.seconds),duration=\(timeRange.duration.seconds)]"
     }
 
     private func formatTime(_ seconds: Double) -> String {

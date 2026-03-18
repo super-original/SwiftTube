@@ -25,6 +25,9 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
     }
 
     func prepare(startTime: Double, autoPlay: Bool) async throws {
+        PlaybackDebugLogger.log(
+            "mpv prepare start video=\(request.video.url.absoluteString) audio=\(request.audio?.url.absoluteString ?? "nil") startTime=\(startTime) autoPlay=\(autoPlay)"
+        )
         let _ = await renderController.waitForRenderLayer()
         let handle = try initializeIfNeeded()
         didLoadFile = false
@@ -42,6 +45,9 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
         }
 
         updateCachedState()
+        PlaybackDebugLogger.log(
+            "mpv prepare ready duration=\(duration) currentTime=\(currentTime) isPlaying=\(isPlaying) isBuffering=\(isBuffering)"
+        )
     }
 
     func play() {
@@ -91,6 +97,9 @@ private extension MPVPlaybackEngine {
         }
 
         mpv = handle
+        PlaybackDebugLogger.log(
+            "mpv initialize videoHeaders=\(request.video.headers.keys.sorted()) audioHeaders=\(request.audio?.headers.keys.sorted() ?? []) logPath=\(PlaybackDebugLogger.path)"
+        )
 
         try setOption("vo", value: "gpu-next")
         try setOption("gpu-api", value: "vulkan")
@@ -141,6 +150,7 @@ private extension MPVPlaybackEngine {
 
     func destroyPlayer() {
         guard let mpv else { return }
+        PlaybackDebugLogger.log("mpv terminate")
         mpv_terminate_destroy(mpv)
         self.mpv = nil
         didLoadFile = false
@@ -148,6 +158,7 @@ private extension MPVPlaybackEngine {
 
     func setOption(_ name: String, value: String) throws {
         guard let mpv else { return }
+        PlaybackDebugLogger.log("mpv set option \(name)=\(value)")
         try check(mpv_set_option_string(mpv, name, value))
     }
 
@@ -160,6 +171,7 @@ private extension MPVPlaybackEngine {
     func check(_ status: Int32) throws {
         guard status >= 0 else {
             let message = String(cString: mpv_error_string(status))
+            PlaybackDebugLogger.log("mpv error status=\(status) message=\(message)")
             throw NSError(domain: "SwiftTube.MPV", code: Int(status), userInfo: [NSLocalizedDescriptionKey: message])
         }
     }
@@ -172,14 +184,40 @@ private extension MPVPlaybackEngine {
 
             while true {
                 guard let event = mpv_wait_event(handle, 0.1) else { continue }
+                let eventName = String(cString: mpv_event_name(event.pointee.event_id))
 
                 switch event.pointee.event_id {
                 case MPV_EVENT_FILE_LOADED:
+                    PlaybackDebugLogger.log("mpv event \(eventName)")
                     return
                 case MPV_EVENT_SHUTDOWN:
+                    PlaybackDebugLogger.log("mpv event \(eventName)")
                     throw NSError(domain: "SwiftTube.MPV", code: -10, userInfo: [NSLocalizedDescriptionKey: "mpv shut down during load."])
                 case MPV_EVENT_END_FILE:
+                    if let endFile = event.pointee.data?.assumingMemoryBound(to: mpv_event_end_file.self) {
+                        let endReason = endFile.pointee.reason
+                        let endError = endFile.pointee.error
+                        let endErrorMessage = String(cString: mpv_error_string(endError))
+                        PlaybackDebugLogger.log(
+                            "mpv event \(eventName) reason=\(endReason) error=\(endError) message=\(endErrorMessage)"
+                        )
+                        throw NSError(
+                            domain: "SwiftTube.MPV",
+                            code: Int(endError != 0 ? endError : -11),
+                            userInfo: [NSLocalizedDescriptionKey: "mpv ended the file before it became ready. reason=\(endReason) error=\(endErrorMessage)"]
+                        )
+                    }
+                    PlaybackDebugLogger.log("mpv event \(eventName)")
                     throw NSError(domain: "SwiftTube.MPV", code: -11, userInfo: [NSLocalizedDescriptionKey: "mpv ended the file before it became ready."])
+                case MPV_EVENT_LOG_MESSAGE:
+                    if let logMessage = event.pointee.data?.assumingMemoryBound(to: mpv_event_log_message.self) {
+                        let prefix = String(cString: logMessage.pointee.prefix)
+                        let level = String(cString: logMessage.pointee.level)
+                        let text = String(cString: logMessage.pointee.text).trimmingCharacters(in: .whitespacesAndNewlines)
+                        if level == "error" || level == "warn" || prefix == "ffmpeg" {
+                            PlaybackDebugLogger.log("mpv log [\(prefix)] [\(level)] \(text)")
+                        }
+                    }
                 default:
                     continue
                 }
@@ -216,6 +254,7 @@ private extension MPVPlaybackEngine {
         guard let mpv else {
             throw NSError(domain: "SwiftTube.MPV", code: -2, userInfo: [NSLocalizedDescriptionKey: "mpv is not initialized."])
         }
+        PlaybackDebugLogger.log("mpv command \(arguments)")
 
         var cArguments = arguments.map { argument -> UnsafePointer<CChar>? in
             guard let duplicated = strdup(argument) else { return nil }
