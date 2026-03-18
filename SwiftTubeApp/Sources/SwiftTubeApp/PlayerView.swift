@@ -479,8 +479,9 @@ private struct PlayerControlBar: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Namespace private var playPauseNamespace
 
-    private let compactControlHeight: CGFloat = 42
-    private let compactCornerRadius: CGFloat = 21
+    private let compactControlHeight: CGFloat = 38
+    private let compactCornerRadius: CGFloat = 19
+    private let timeLabelWidth: CGFloat = 54
 
     var body: some View {
         VStack(spacing: 10) {
@@ -506,16 +507,13 @@ private struct PlayerControlBar: View {
         } label: {
             iconButtonLabel(
                 symbol: coordinator.isPlaying ? "pause.fill" : "play.fill",
-                fontSize: 17,
-                minWidth: 54
+                fontSize: 16,
+                minWidth: 48
             )
         }
-        .buttonStyle(.plain)
-        .playerControlSurface(
-            reduceTransparency: reduceTransparency,
-            glass: .regular,
-            shape: RoundedRectangle(cornerRadius: compactCornerRadius)
-        )
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.regular)
         .glassEffectID("playback-control", in: playPauseNamespace)
         .glassEffectTransition(.matchedGeometry)
         .accessibilityLabel(coordinator.isPlaying ? "Pause" : "Play")
@@ -529,10 +527,12 @@ private struct PlayerControlBar: View {
                 iconButtonLabel(
                     symbol: coordinator.volumeIconName,
                     fontSize: 14,
-                    minWidth: 40
+                    minWidth: 36
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.glass(.regular.interactive()))
+            .buttonBorderShape(.capsule)
+            .controlSize(.regular)
             .accessibilityLabel(coordinator.volume <= 0.01 ? "Unmute" : "Mute")
 
             Slider(
@@ -545,10 +545,10 @@ private struct PlayerControlBar: View {
                 ),
                 in: 0...1
             )
-            .frame(width: 116)
+            .frame(width: 112)
             .accessibilityLabel("Volume")
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .frame(minHeight: compactControlHeight)
         .playerControlSurface(
             reduceTransparency: reduceTransparency,
@@ -558,7 +558,10 @@ private struct PlayerControlBar: View {
     }
 
     var scrubberControl: some View {
-        VStack(spacing: 6) {
+        HStack(spacing: 12) {
+            Text(coordinator.currentTimeText)
+                .frame(width: timeLabelWidth, alignment: .leading)
+
             Slider(
                 value: Binding(
                     get: { coordinator.scrubPosition },
@@ -572,20 +575,14 @@ private struct PlayerControlBar: View {
             .disabled(coordinator.duration <= 0)
             .accessibilityLabel("Playback position")
 
-            HStack {
-                Text(coordinator.currentTimeText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Text(coordinator.remainingTimeText)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .font(.caption.weight(.medium))
-            .monospacedDigit()
-            .foregroundStyle(.secondary)
+            Text(coordinator.remainingTimeText)
+                .frame(width: timeLabelWidth, alignment: .trailing)
         }
+        .font(.caption.weight(.medium))
+        .monospacedDigit()
+        .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, minHeight: compactControlHeight)
         .playerControlSurface(
             reduceTransparency: reduceTransparency,
             glass: .regular,
@@ -599,16 +596,13 @@ private struct PlayerControlBar: View {
         } label: {
             iconButtonLabel(
                 symbol: coordinator.subtitleSymbolName,
-                fontSize: 16,
+                fontSize: 15,
                 foregroundStyle: coordinator.hasSubtitleOptions ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
             )
         }
-        .buttonStyle(.plain)
-        .playerControlSurface(
-            reduceTransparency: reduceTransparency,
-            glass: .regular,
-            shape: RoundedRectangle(cornerRadius: compactCornerRadius)
-        )
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.regular)
         .disabled(!coordinator.hasSubtitleOptions)
         .accessibilityLabel("Subtitles")
         .accessibilityValue(coordinator.subtitleAccessibilityValue)
@@ -636,16 +630,13 @@ private struct PlayerControlBar: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
             }
-            .frame(minWidth: 96, minHeight: compactControlHeight)
-            .padding(.horizontal, 14)
-            .playerControlSurface(
-                reduceTransparency: reduceTransparency,
-                glass: .regular,
-                shape: RoundedRectangle(cornerRadius: compactCornerRadius)
-            )
+            .frame(minWidth: 92, minHeight: compactControlHeight)
+            .padding(.horizontal, 8)
         }
-        .menuStyle(.borderlessButton)
-        .buttonStyle(.plain)
+        .menuStyle(.button)
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.regular)
         .simultaneousGesture(
             TapGesture().onEnded {
                 coordinator.beginMenuInteraction()
@@ -659,14 +650,11 @@ private struct PlayerControlBar: View {
         Button {
             coordinator.toggleTheaterMode()
         } label: {
-            iconButtonLabel(symbol: coordinator.theaterSymbolName, fontSize: 16)
+            iconButtonLabel(symbol: coordinator.theaterSymbolName, fontSize: 15)
         }
-        .buttonStyle(.plain)
-        .playerControlSurface(
-            reduceTransparency: reduceTransparency,
-            glass: .regular,
-            shape: RoundedRectangle(cornerRadius: compactCornerRadius)
-        )
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.regular)
         .accessibilityLabel("Theater Mode")
         .accessibilityValue(coordinator.isTheaterMode ? "On" : "Off")
     }
@@ -677,12 +665,9 @@ private struct PlayerControlBar: View {
         } label: {
             iconButtonLabel(symbol: coordinator.fullscreenSymbolName, fontSize: 15)
         }
-        .buttonStyle(.plain)
-        .playerControlSurface(
-            reduceTransparency: reduceTransparency,
-            glass: .regular,
-            shape: RoundedRectangle(cornerRadius: compactCornerRadius)
-        )
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.regular)
         .accessibilityLabel(coordinator.isFullscreen ? "Exit Fullscreen" : "Fullscreen")
         .accessibilityValue(coordinator.isFullscreen ? "On" : "Off")
     }
@@ -708,7 +693,7 @@ private struct PlayerControlBar: View {
     func iconButtonLabel(
         symbol: String,
         fontSize: CGFloat = 18,
-        minWidth: CGFloat = 42,
+        minWidth: CGFloat = 38,
         foregroundStyle: AnyShapeStyle = AnyShapeStyle(.primary)
     ) -> some View {
         Image(systemName: symbol)
