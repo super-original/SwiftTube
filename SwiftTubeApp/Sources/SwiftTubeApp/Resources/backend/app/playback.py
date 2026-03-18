@@ -384,60 +384,23 @@ def _validated_authenticated_bundle(
             reachable_muxed_stream = candidate
             break
 
-    video_candidates = sorted(
-        [
-            stream
-            for stream in bundle.streams
-            if stream.hasVideo
-            and not stream.hasAudio
-            and (stream.container or "").startswith("mp4")
-        ],
-        key=_adaptive_video_score,
-        reverse=True,
-    )
-    audio_candidates = sorted(
-        [
-            stream
-            for stream in bundle.streams
-            if stream.hasAudio
-            and not stream.hasVideo
-            and (stream.container or "").startswith(("m4a", "mp4"))
-        ],
-        key=_stream_score,
-        reverse=True,
-    )
-
-    reachable_video_stream = next(
-        (
-            candidate
-            for candidate in video_candidates[:2]
-            if _stream_is_reachable(candidate, auth_options)
-        ),
-        None,
-    )
-    reachable_audio_stream = next(
-        (
-            candidate
-            for candidate in audio_candidates[:2]
-            if _stream_is_reachable(candidate, auth_options)
-        ),
-        None,
-    )
+    preferred_video_stream = _best_video_stream(bundle.streams)
+    preferred_audio_stream = _best_audio_stream(bundle.streams)
 
     if (
-        reachable_video_stream is not None
-        and reachable_audio_stream is not None
+        preferred_video_stream is not None
+        and preferred_audio_stream is not None
         and (
             reachable_muxed_stream is None
-            or (reachable_video_stream.height or 0)
+            or (preferred_video_stream.height or 0)
             > (reachable_muxed_stream.height or 0)
         )
     ):
         return replace(
             bundle,
             preferred_muxed_stream=reachable_muxed_stream,
-            preferred_video_stream=reachable_video_stream,
-            preferred_audio_stream=reachable_audio_stream,
+            preferred_video_stream=preferred_video_stream,
+            preferred_audio_stream=preferred_audio_stream,
         )
 
     if reachable_muxed_stream is not None:
