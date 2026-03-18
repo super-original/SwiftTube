@@ -138,13 +138,15 @@ struct PlayerScreen: View {
                 .ignoresSafeArea()
         )
         .safeAreaInset(edge: .top, spacing: 0) {
-            PlayerStageHost(
-                coordinator: playbackCoordinator,
-                isLoading: viewModel.isLoading,
-                errorMessage: viewModel.errorMessage,
-                immersive: usesImmersiveLayout,
-                retry: viewModel.load
-            )
+            if usesImmersiveLayout {
+                PlayerStageHost(
+                    coordinator: playbackCoordinator,
+                    isLoading: viewModel.isLoading,
+                    errorMessage: viewModel.errorMessage,
+                    immersive: true,
+                    retry: viewModel.load
+                )
+            }
         }
         .background(
             WindowAccessor { window in
@@ -258,11 +260,24 @@ private extension PlayerScreen {
 
     var mainColumn: some View {
         VStack(alignment: .leading, spacing: 24) {
+            standardPlayerStage
             headerSection
             descriptionSection
             commentsSection
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    var standardPlayerStage: some View {
+        PlayerStageSurface(
+            coordinator: playbackCoordinator,
+            isLoading: viewModel.isLoading,
+            errorMessage: viewModel.errorMessage ?? playbackCoordinator.errorMessage,
+            immersive: false,
+            retry: viewModel.load
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .shadow(color: .black.opacity(0.18), radius: 22, y: 10)
     }
 
     var headerSection: some View {
