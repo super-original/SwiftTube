@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-import time
 from typing import Any, Iterable, List, Optional
 
 import httpx
@@ -10,10 +9,6 @@ from yt_dlp.cookies import YoutubeDLCookieJar
 
 from .models import StreamInfo
 from .provider import build_authenticated_ytdlp_options
-
-
-_AUTH_PLAYBACK_FAILURE_TTL_SECONDS = 900
-_auth_playback_failures: dict[str, float] = {}
 
 
 @dataclass
@@ -158,17 +153,6 @@ def _is_manifest_url(url: str) -> bool:
     )
 
 
-def _auth_cache_key(auth_options: dict[str, Any]) -> str:
-    cookie_file = auth_options.get("cookiefile")
-    extractor_args = auth_options.get("extractor_args") or {}
-    youtube_args = extractor_args.get("youtube") if isinstance(extractor_args, dict) else {}
-    clients = youtube_args.get("player_client") if isinstance(youtube_args, dict) else []
-    if not isinstance(clients, list):
-        clients = []
-    client_key = ",".join(client for client in clients if isinstance(client, str))
-    return f"{cookie_file or ''}|{client_key}"
-
-
 def _uses_po_token_provider(auth_options: dict[str, Any]) -> bool:
     extractor_args = auth_options.get("extractor_args") or {}
     youtube_args = extractor_args.get("youtube") if isinstance(extractor_args, dict) else {}
@@ -179,22 +163,7 @@ def _uses_po_token_provider(auth_options: dict[str, Any]) -> bool:
 
 
 def _should_attempt_authenticated_playback(auth_options: dict[str, Any]) -> bool:
-    key = _auth_cache_key(auth_options)
-    failure_deadline = _auth_playback_failures.get(key)
-    if failure_deadline is not None and failure_deadline > time.time():
-        return False
-
     return True
-
-
-def _remember_authenticated_playback_failure(auth_options: dict[str, Any]) -> None:
-    _auth_playback_failures[_auth_cache_key(auth_options)] = (
-        time.time() + _AUTH_PLAYBACK_FAILURE_TTL_SECONDS
-    )
-
-
-def _clear_authenticated_playback_failure(auth_options: dict[str, Any]) -> None:
-    _auth_playback_failures.pop(_auth_cache_key(auth_options), None)
 
 
 def _build_streams(formats: Iterable[dict[str, Any]]) -> List[StreamInfo]:
@@ -438,10 +407,8 @@ def extract_playback(video_id: str, auth_options: Optional[dict[str, Any]] = Non
                 auth_options,
             )
             if validated_bundle is not None:
-                _clear_authenticated_playback_failure(auth_options)
                 return validated_bundle
         except Exception:
             pass
-        _remember_authenticated_playback_failure(auth_options)
 
     return _extract_playback(video_id, public_opts)
