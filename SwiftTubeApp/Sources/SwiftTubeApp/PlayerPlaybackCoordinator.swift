@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import AVKit
 import SwiftUI
+import VideoToolbox
 
 struct QualityOption: Identifiable, Hashable, Sendable {
     static let automaticID = "quality-auto"
@@ -89,13 +90,35 @@ private func playbackCodecScore(for codec: String?) -> Int {
     return 1
 }
 
+private enum AVFoundationPlaybackSupport {
+    static let supportsAV1: Bool = {
+        if #available(macOS 14.0, *) {
+            return VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)
+        }
+        return false
+    }()
+}
+
+private func isAVFoundationVideoCodecSupported(_ codec: String?) -> Bool {
+    guard let codec else { return false }
+    if codec.hasPrefix("avc1") { return true }
+    if codec.hasPrefix("hvc1") || codec.hasPrefix("hev1") { return true }
+    if codec.hasPrefix("av01") { return AVFoundationPlaybackSupport.supportsAV1 }
+    return false
+}
+
+private func isAVFoundationVideoContainerSupported(_ container: String?) -> Bool {
+    guard let container = container?.lowercased() else { return false }
+    return container.hasPrefix("mp4") || container.hasPrefix("mov") || container.hasPrefix("m4v")
+}
+
 private func isSupportedDirectStream(_ stream: StreamInfo) -> Bool {
     guard stream.hasVideo, stream.hasAudio, stream.streamKind != "manifest" else {
         return false
     }
 
-    let container = (stream.container ?? "").lowercased()
-    return container.hasPrefix("mp4") || container.hasPrefix("mov")
+    return isAVFoundationVideoContainerSupported(stream.container)
+        && isAVFoundationVideoCodecSupported(stream.videoCodec)
 }
 
 private func isSupportedVideoOnlyStream(_ stream: StreamInfo) -> Bool {
@@ -103,12 +126,8 @@ private func isSupportedVideoOnlyStream(_ stream: StreamInfo) -> Bool {
         return false
     }
 
-    let container = (stream.container ?? "").lowercased()
-    guard container.hasPrefix("mp4") else {
-        return false
-    }
-
-    return playbackCodecScore(for: stream.videoCodec) >= 3
+    return isAVFoundationVideoContainerSupported(stream.container)
+        && isAVFoundationVideoCodecSupported(stream.videoCodec)
 }
 
 private func preferredAdaptiveAudioStream(for playback: VideoPlayback) -> StreamInfo? {
@@ -1801,17 +1820,17 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private func adaptiveVideoCandidateSort(lhs: StreamInfo, rhs: StreamInfo) -> Bool {
         let lhsScore = (
+            videoPlayabilityScore(for: lhs.videoCodec),
             lhs.height ?? 0,
             lhs.fps ?? 0,
             lhs.bitrate ?? 0,
-            videoPlayabilityScore(for: lhs.videoCodec),
             codecScore(for: lhs.videoCodec)
         )
         let rhsScore = (
+            videoPlayabilityScore(for: rhs.videoCodec),
             rhs.height ?? 0,
             rhs.fps ?? 0,
             rhs.bitrate ?? 0,
-            videoPlayabilityScore(for: rhs.videoCodec),
             codecScore(for: rhs.videoCodec)
         )
         return lhsScore > rhsScore
@@ -1853,8 +1872,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         guard let codec else { return 0 }
         if codec.hasPrefix("avc1") { return 4 }
         if codec.hasPrefix("hvc1") || codec.hasPrefix("hev1") { return 3 }
-        if codec.hasPrefix("av01") { return 2 }
-        if codec.hasPrefix("vp9") { return 1 }
+        if codec.hasPrefix("av01") { return AVFoundationPlaybackSupport.supportsAV1 ? 2 : 0 }
+        if codec.hasPrefix("vp9") { return 0 }
         return 0
     }
 
