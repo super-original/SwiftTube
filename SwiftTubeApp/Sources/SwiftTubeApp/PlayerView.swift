@@ -482,8 +482,8 @@ private struct PlayerControlBar: View {
 
     private let compactControlHeight: CGFloat = 38
     private let circularButtonLabelSize: CGFloat = 30
-    private let qualityButtonWidth: CGFloat = 84
-    private let qualityButtonContentHeight: CGFloat = 22
+    private let qualityButtonWidth: CGFloat = 82
+    private let volumeIconContentHeight: CGFloat = 22
     private let timeLabelWidth: CGFloat = 54
 
     var body: some View {
@@ -527,7 +527,7 @@ private struct PlayerControlBar: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
                     .contentTransition(.symbolEffect(.replace))
-                    .frame(width: 20, height: qualityButtonContentHeight)
+                    .frame(width: 20, height: volumeIconContentHeight)
                     .frame(minHeight: compactControlHeight)
                     .contentShape(Rectangle())
                     .animation(.snappy(duration: 0.11, extraBounce: 0), value: coordinator.volumeIconName)
@@ -648,7 +648,7 @@ private struct PlayerControlBar: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.secondary)
         }
-        .frame(width: qualityButtonWidth, height: qualityButtonContentHeight)
+        .frame(width: qualityButtonWidth, height: circularButtonLabelSize)
     }
 
     var qualityPopoverContent: some View {
