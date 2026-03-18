@@ -172,8 +172,8 @@ private func adaptiveAudioPreference(for stream: StreamInfo) -> (Int, Int, Int, 
 
 private func compatibilityCodecPreference(for codec: String?) -> Int {
     guard let codec else { return 0 }
-    if codec.hasPrefix("av01") { return 3 }
-    if codec.hasPrefix("vp9") { return 2 }
+    if codec.hasPrefix("vp9") { return 3 }
+    if codec.hasPrefix("av01") { return 2 }
     if codec.hasPrefix("avc1") { return 1 }
     if codec.hasPrefix("hvc1") || codec.hasPrefix("hev1") { return 1 }
     return 0
@@ -1987,8 +1987,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             throw URLError(.cannotDecodeContentData)
         }
 
-        let videoDuration = try await videoTrack.load(.timeRange).duration
-        let audioDuration = try await audioTrack.load(.timeRange).duration
+        let videoTimeRange = try await videoTrack.load(.timeRange)
+        let audioTimeRange = try await audioTrack.load(.timeRange)
+        let videoDuration = videoTimeRange.duration
+        let audioDuration = audioTimeRange.duration
         let duration = minimumDuration(videoDuration, audioDuration)
         let composition = AVMutableComposition()
 
@@ -2000,7 +2002,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
 
         try compositionVideoTrack.insertTimeRange(
-            CMTimeRange(start: .zero, duration: duration),
+            CMTimeRange(start: videoTimeRange.start, duration: duration),
             of: videoTrack,
             at: .zero
         )
@@ -2014,7 +2016,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
 
         try compositionAudioTrack.insertTimeRange(
-            CMTimeRange(start: .zero, duration: duration),
+            CMTimeRange(start: audioTimeRange.start, duration: duration),
             of: audioTrack,
             at: .zero
         )

@@ -31,10 +31,6 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
         try command(["loadfile", request.video.url.absoluteString, "replace", "-1"])
         try await waitUntilFileLoaded(handle)
 
-        if let audio = request.audio {
-            try command(["audio-add", audio.url.absoluteString, "select"])
-        }
-
         if startTime > 0 {
             await seek(to: startTime)
         }
@@ -132,6 +128,10 @@ private extension MPVPlaybackEngine {
 
         if headerFields.isEmpty == false {
             try setOption("http-header-fields", value: headerFields)
+        }
+
+        if let audio = request.audio {
+            try setOption("audio-files", value: audio.url.absoluteString)
         }
 
         try check(mpv_initialize(handle))
