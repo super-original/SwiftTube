@@ -9,9 +9,15 @@ let package = Package(
     products: [
         .executable(name: "SwiftTubeApp", targets: ["SwiftTubeApp"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/mpvkit/MPVKit", from: "0.41.0")
+    ],
     targets: [
         .executableTarget(
             name: "SwiftTubeApp",
+            dependencies: [
+                .product(name: "MPVKit", package: "MPVKit")
+            ],
             path: "Sources/SwiftTubeApp",
             resources: [
                 .copy("Resources")
