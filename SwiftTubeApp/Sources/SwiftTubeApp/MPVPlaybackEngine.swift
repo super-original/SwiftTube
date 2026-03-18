@@ -13,6 +13,7 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
     private let request: MPVPlaybackRequest
     private var mpv: OpaquePointer?
     private var didLoadFile = false
+    private var eventPumpTask: Task<Void, Never>?
 
     private(set) var currentTime: Double = 0
     private(set) var duration: Double = 0
@@ -39,6 +40,7 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
         if let audio = request.audio {
             try await loadExternalAudio(audio, with: handle)
         }
+        startEventPump(using: handle)
 
         if startTime > 0 {
             await seek(to: startTime)
@@ -114,7 +116,8 @@ private extension MPVPlaybackEngine {
         try setOption("vo", value: "gpu-next")
         try setOption("gpu-api", value: "vulkan")
         try setOption("gpu-context", value: "moltenvk")
-        try setOption("hwdec", value: "videotoolbox")
+        try setOption("hwdec", value: "auto-safe")
+        try setOption("hwdec-software-fallback", value: "1")
         try setOption("osc", value: "no")
         try setOption("input-default-bindings", value: "no")
         try setOption("ytdl", value: "no")
@@ -151,6 +154,8 @@ private extension MPVPlaybackEngine {
     }
 
     func destroyPlayer() {
+        eventPumpTask?.cancel()
+        eventPumpTask = nil
         guard let mpv else { return }
         PlaybackDebugLogger.log("mpv terminate")
         mpv_terminate_destroy(mpv)
@@ -299,6 +304,48 @@ private extension MPVPlaybackEngine {
         }
         defer { mpv_free(cString) }
         return String(cString: cString)
+    }
+
+    func startEventPump(using handle: OpaquePointer) {
+        guard eventPumpTask == nil else { return }
+        let handleBits = UInt(bitPattern: handle)
+        eventPumpTask = Task.detached(priority: .userInitiated) {
+            let handle = OpaquePointer(bitPattern: handleBits)!
+
+            while Task.isCancelled == false {
+                guard let event = mpv_wait_event(handle, 0.1) else { continue }
+                switch event.pointee.event_id {
+                case MPV_EVENT_NONE:
+                    continue
+                case MPV_EVENT_LOG_MESSAGE:
+                    guard let logMessage = event.pointee.data?.assumingMemoryBound(to: mpv_event_log_message.self) else {
+                        continue
+                    }
+                    let prefix = String(cString: logMessage.pointee.prefix)
+                    let level = String(cString: logMessage.pointee.level)
+                    let text = String(cString: logMessage.pointee.text).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if Self.shouldLogMPVMessage(prefix: prefix, level: level) {
+                        PlaybackDebugLogger.log("mpv log [\(prefix)] [\(level)] \(text)")
+                    }
+                case MPV_EVENT_END_FILE:
+                    if let endFile = event.pointee.data?.assumingMemoryBound(to: mpv_event_end_file.self) {
+                        let endReason = endFile.pointee.reason
+                        let endError = endFile.pointee.error
+                        let endErrorMessage = String(cString: mpv_error_string(endError))
+                        PlaybackDebugLogger.log(
+                            "mpv event end-file reason=\(endReason) error=\(endError) message=\(endErrorMessage)"
+                        )
+                    } else {
+                        PlaybackDebugLogger.log("mpv event end-file")
+                    }
+                case MPV_EVENT_SHUTDOWN:
+                    PlaybackDebugLogger.log("mpv event shutdown")
+                    return
+                default:
+                    continue
+                }
+            }
+        }
     }
 
     func command(_ arguments: [String]) throws {
