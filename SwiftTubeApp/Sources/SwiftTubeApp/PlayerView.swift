@@ -1,35 +1,59 @@
+import AppKit
 import AVKit
 import SwiftUI
 
-final class ScrollPassthroughPlayerView: AVPlayerView {
-    override func scrollWheel(with event: NSEvent) {
-        if let scrollView = enclosingScrollView {
-            scrollView.scrollWheel(with: event)
-            return
-        }
+final class PassivePlayerContainerView: NSView {
+    private let playerView = AVPlayerView()
 
-        nextResponder?.scrollWheel(with: event)
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+
+        playerView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(playerView)
+
+        NSLayoutConstraint.activate([
+            playerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            playerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            playerView.topAnchor.constraint(equalTo: topAnchor),
+            playerView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var acceptsFirstResponder: Bool {
+        false
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    func configure(player: AVPlayer) {
+        if playerView.player !== player {
+            playerView.player = player
+        }
+        playerView.controlsStyle = .none
+        playerView.videoGravity = .resizeAspect
+        playerView.showsFullScreenToggleButton = false
+        playerView.allowsMagnification = false
     }
 }
 
 struct PlayerRenderView: NSViewRepresentable {
     let player: AVPlayer
 
-    func makeNSView(context: Context) -> ScrollPassthroughPlayerView {
-        let view = ScrollPassthroughPlayerView()
-        view.controlsStyle = .none
-        view.videoGravity = .resizeAspect
-        view.showsFullScreenToggleButton = false
-        view.player = player
+    func makeNSView(context: Context) -> PassivePlayerContainerView {
+        let view = PassivePlayerContainerView()
+        view.configure(player: player)
         return view
     }
 
-    func updateNSView(_ nsView: ScrollPassthroughPlayerView, context: Context) {
-        if nsView.player !== player {
-            nsView.player = player
-        }
-        nsView.controlsStyle = .none
-        nsView.showsFullScreenToggleButton = false
+    func updateNSView(_ nsView: PassivePlayerContainerView, context: Context) {
+        nsView.configure(player: player)
     }
 }
 
@@ -443,10 +467,10 @@ private struct PlayerChromeOverlay: View {
                         .padding(.horizontal, edgeToEdge ? 20 : 18)
                         .padding(.bottom, edgeToEdge ? 20 : 18)
                 }
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: coordinator.controlsVisible)
+        .animation(.easeOut(duration: 0.14), value: coordinator.controlsVisible)
     }
 }
 
@@ -485,13 +509,13 @@ private struct PlayerControlBar: View {
         Button {
             coordinator.togglePlayback()
         } label: {
-            iconButtonLabel(
-                symbol: coordinator.isPlaying ? "pause.fill" : "play.fill"
-            )
-            .glassEffectID("playback-control", in: playPauseNamespace)
-            .glassEffectTransition(.matchedGeometry)
+            iconButtonLabel(symbol: coordinator.isPlaying ? "pause.fill" : "play.fill")
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        .glassEffectID("playback-control", in: playPauseNamespace)
+        .glassEffectTransition(.matchedGeometry)
         .accessibilityLabel(coordinator.isPlaying ? "Pause" : "Play")
     }
 
@@ -500,9 +524,11 @@ private struct PlayerControlBar: View {
             Button {
                 coordinator.toggleMute()
             } label: {
-                iconButtonLabel(symbol: coordinator.volumeIconName, fontSize: 14)
+                iconButtonLabel(symbol: coordinator.volumeIconName, fontSize: 14, minWidth: 44)
             }
-            .buttonStyle(PlayerControlButtonStyle())
+            .buttonStyle(.glass(.regular.interactive()))
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
             .accessibilityLabel(coordinator.volume <= 0.01 ? "Unmute" : "Mute")
 
             Slider(
@@ -569,10 +595,12 @@ private struct PlayerControlBar: View {
             iconButtonLabel(
                 symbol: coordinator.subtitleSymbolName,
                 fontSize: 16,
-                isEnabled: coordinator.hasSubtitleOptions
+                foregroundStyle: coordinator.hasSubtitleOptions ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
             )
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
         .disabled(!coordinator.hasSubtitleOptions)
         .accessibilityLabel("Subtitles")
         .accessibilityValue(coordinator.subtitleAccessibilityValue)
@@ -588,35 +616,25 @@ private struct PlayerControlBar: View {
                 }
             }
         } label: {
-            PlayerInteractiveCapsule(
-                reduceTransparency: reduceTransparency,
-                glass: .regular.interactive(),
-                horizontalPadding: 12
-            ) {
-                HStack(spacing: 8) {
-                    Image(systemName: "dial.medium")
-                        .font(.system(size: 14, weight: .semibold))
+            HStack(spacing: 8) {
+                Image(systemName: "dial.medium")
+                    .font(.system(size: 14, weight: .semibold))
 
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(coordinator.qualityControlText)
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
+                Text(coordinator.qualityControlText)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
 
-                        if let detail = coordinator.qualityControlDetail {
-                            Text(detail)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
-                }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
             }
+            .frame(minWidth: 92, minHeight: 44)
+            .padding(.horizontal, 12)
         }
-        .buttonStyle(.plain)
+        .menuStyle(.button)
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
         .simultaneousGesture(
             TapGesture().onEnded {
                 coordinator.beginMenuInteraction()
@@ -632,7 +650,9 @@ private struct PlayerControlBar: View {
         } label: {
             iconButtonLabel(symbol: coordinator.theaterSymbolName, fontSize: 16)
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
         .accessibilityLabel("Theater Mode")
         .accessibilityValue(coordinator.isTheaterMode ? "On" : "Off")
     }
@@ -643,7 +663,9 @@ private struct PlayerControlBar: View {
         } label: {
             iconButtonLabel(symbol: coordinator.fullscreenSymbolName, fontSize: 15)
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
         .accessibilityLabel(coordinator.isFullscreen ? "Exit Fullscreen" : "Fullscreen")
         .accessibilityValue(coordinator.isFullscreen ? "On" : "Off")
     }
@@ -669,70 +691,16 @@ private struct PlayerControlBar: View {
     func iconButtonLabel(
         symbol: String,
         fontSize: CGFloat = 18,
-        isEnabled: Bool = true
+        minWidth: CGFloat = 60,
+        foregroundStyle: AnyShapeStyle = AnyShapeStyle(.primary)
     ) -> some View {
-        PlayerInteractiveCapsule(
-            reduceTransparency: reduceTransparency,
-            glass: .regular.interactive(),
-            isEnabled: isEnabled
-        ) {
-            Image(systemName: symbol)
-                .font(.system(size: fontSize, weight: .semibold))
-                .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
-                .contentTransition(.symbolEffect(.replace))
-                .frame(width: 44, height: 44)
-        }
-        .animation(.easeInOut(duration: 0.18), value: symbol)
-    }
-}
-
-private struct PlayerControlButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .opacity(configuration.isPressed ? 0.86 : 1)
-            .brightness(configuration.isPressed ? -0.04 : 0)
-            .animation(.easeInOut(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
-private struct PlayerInteractiveCapsule<Content: View>: View {
-    let reduceTransparency: Bool
-    let glass: Glass
-    var isEnabled = true
-    var horizontalPadding: CGFloat = 8
-    @ViewBuilder let content: Content
-
-    @State private var isHovered = false
-
-    var body: some View {
-        content
-            .padding(.horizontal, horizontalPadding)
-            .frame(minHeight: 44)
-            .contentShape(Capsule())
-            .opacity(isEnabled ? 1 : 0.64)
-            .playerControlSurface(
-                reduceTransparency: reduceTransparency,
-                glass: glass,
-                shape: Capsule()
-            )
-            .overlay {
-                Capsule()
-                    .stroke(
-                        Color.white.opacity(isHovered ? 0.2 : 0.08),
-                        lineWidth: 1
-                    )
-            }
-            .shadow(
-                color: .black.opacity(isHovered ? 0.22 : 0.1),
-                radius: isHovered ? 14 : 8,
-                y: 2
-            )
-            .scaleEffect(isHovered ? 1.012 : 1)
-            .animation(.easeInOut(duration: 0.12), value: isHovered)
-            .onHover { hovering in
-                isHovered = hovering
-            }
+        Image(systemName: symbol)
+            .font(.system(size: fontSize, weight: .semibold))
+            .foregroundStyle(foregroundStyle)
+            .contentTransition(.symbolEffect(.replace))
+            .frame(width: 44, height: 44)
+            .frame(minWidth: minWidth, minHeight: 44)
+            .animation(.snappy(duration: 0.11, extraBounce: 0), value: symbol)
     }
 }
 

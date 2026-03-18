@@ -81,8 +81,16 @@ private enum PlayerSourceDescriptor {
 @MainActor
 final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private enum Timing {
-        static let inactivityHideDelay: UInt64 = 3_000_000_000
-        static let unhoverHideDelay: UInt64 = 400_000_000
+        static let inactivityHideDelay: TimeInterval = 2.0
+        static let hideMonitorInterval: UInt64 = 150_000_000
+        static let interactionThrottle: TimeInterval = 0.12
+        static let visibilityAnimationDuration = 0.12
+    }
+
+    private enum HideMonitorResult {
+        case keepWatching
+        case hide
+        case stop
     }
 
     @Published private(set) var player: AVPlayer? = nil
@@ -119,6 +127,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var menuInteractionTask: Task<Void, Never>? = nil
     private var timeObserverToken: Any?
     private var timeControlObservation: NSKeyValueObservation?
+    private var lastInteractionAt = Date()
+    private var lastPointerMovementAt = Date.distantPast
 
     var playbackBadgeText: String {
         if selectedQualityOptionID == QualityOption.automaticID {
@@ -209,7 +219,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func reset() {
         prepareTask?.cancel()
-        hideControlsTask?.cancel()
+        stopHideMonitor()
         menuInteractionTask?.cancel()
         errorMessage = nil
         isPreparing = false
@@ -226,6 +236,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         legibleMediaOptions = []
         currentSource = nil
         currentPlayback = nil
+        lastInteractionAt = Date()
+        lastPointerMovementAt = .distantPast
         teardownPlayerObservers()
         player?.pause()
         player = nil
@@ -305,7 +317,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         if isEditing {
             scrubPosition = currentTime
-            hideControlsTask?.cancel()
+            stopHideMonitor()
             return
         }
 
@@ -348,7 +360,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func endMenuInteraction() {
         isMenuInteractionActive = false
-        scheduleAutoHideIfNeeded()
+        if isHoveringStage {
+            startHideMonitorIfNeeded()
+        } else {
+            hideControlsIfAllowed()
+        }
     }
 
     func selectQuality(_ option: QualityOption) {
@@ -377,16 +393,31 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         if isHovering {
             noteInteraction()
         } else {
-            scheduleAutoHideIfNeeded(delay: Timing.unhoverHideDelay)
+            lastPointerMovementAt = .distantPast
+            hideControlsIfAllowed()
         }
     }
 
     func handlePointerMovement() {
-        noteInteraction()
+        guard isHoveringStage else { return }
+
+        let now = Date()
+        if controlsVisible == false {
+            lastPointerMovementAt = now
+            noteInteraction(at: now)
+            return
+        }
+
+        guard now.timeIntervalSince(lastPointerMovementAt) >= Timing.interactionThrottle else {
+            return
+        }
+
+        lastPointerMovementAt = now
+        noteInteraction(at: now, animateVisibility: false)
     }
 
     func toggleTheaterMode() {
-        withAnimation(.easeInOut(duration: 0.18)) {
+        withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
             isTheaterMode.toggle()
         }
         noteInteraction()
@@ -436,7 +467,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             currentTime = 0
             scrubPosition = 0
             player.play()
-            scheduleAutoHideIfNeeded()
+            startHideMonitorIfNeeded()
         } catch {
             if !Task.isCancelled {
                 errorMessage = "Failed to prepare video."
@@ -638,14 +669,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     @objc private func handleWindowDidEnterFullScreen(_ notification: Notification) {
         guard notification.object as? NSWindow === window else { return }
-        withAnimation(.easeInOut(duration: 0.18)) {
+        withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
             isFullscreen = true
         }
     }
 
     @objc private func handleWindowDidExitFullScreen(_ notification: Notification) {
         guard notification.object as? NSWindow === window else { return }
-        withAnimation(.easeInOut(duration: 0.18)) {
+        withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
             isFullscreen = false
         }
     }
@@ -665,40 +696,95 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func handlePlaybackStateChange(_ status: AVPlayer.TimeControlStatus) {
-        withAnimation(.easeInOut(duration: 0.18)) {
-            isPlaying = status == .playing
-        }
+        isPlaying = status == .playing
         if isPlaying {
-            scheduleAutoHideIfNeeded()
+            startHideMonitorIfNeeded()
         } else {
-            hideControlsTask?.cancel()
+            stopHideMonitor()
             controlsVisible = true
         }
     }
 
-    private func scheduleAutoHideIfNeeded(delay: UInt64? = nil) {
-        hideControlsTask?.cancel()
-        guard isPlaying, !isScrubbing, !isMenuInteractionActive else { return }
-        let resolvedDelay = delay ?? (isHoveringStage ? Timing.inactivityHideDelay : Timing.unhoverHideDelay)
+    private func startHideMonitorIfNeeded() {
+        guard hideControlsTask == nil else { return }
 
         hideControlsTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: resolvedDelay)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self else { return }
-                guard self.isPlaying, !self.isScrubbing, !self.isMenuInteractionActive else { return }
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    self.controlsVisible = false
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.hideControlsTask = nil
+                }
+            }
+
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Timing.hideMonitorInterval)
+                guard !Task.isCancelled else { return }
+
+                let result = await MainActor.run { [weak self] () -> HideMonitorResult in
+                    guard let self else { return .stop }
+                    guard self.isPlaying else { return .stop }
+
+                    if self.isScrubbing || self.isMenuInteractionActive {
+                        return .keepWatching
+                    }
+
+                    guard self.isHoveringStage else {
+                        return .hide
+                    }
+
+                    let idleTime = Date().timeIntervalSince(self.lastInteractionAt)
+                    return idleTime >= Timing.inactivityHideDelay ? .hide : .keepWatching
+                }
+
+                switch result {
+                case .keepWatching:
+                    continue
+                case .hide:
+                    await MainActor.run { [weak self] in
+                        self?.hideControlsIfAllowed()
+                    }
+                    return
+                case .stop:
+                    return
                 }
             }
         }
     }
 
-    private func noteInteraction() {
-        withAnimation(.easeInOut(duration: 0.16)) {
+    private func noteInteraction(
+        at timestamp: Date = Date(),
+        animateVisibility: Bool = true
+    ) {
+        lastInteractionAt = timestamp
+
+        if controlsVisible == false {
+            if animateVisibility {
+                withAnimation(.easeOut(duration: Timing.visibilityAnimationDuration)) {
+                    controlsVisible = true
+                }
+            } else {
+                controlsVisible = true
+            }
+        } else {
             controlsVisible = true
         }
-        scheduleAutoHideIfNeeded()
+
+        startHideMonitorIfNeeded()
+    }
+
+    private func hideControlsIfAllowed() {
+        stopHideMonitor()
+        guard isPlaying, !isScrubbing, !isMenuInteractionActive else { return }
+        guard controlsVisible else { return }
+
+        withAnimation(.easeOut(duration: Timing.visibilityAnimationDuration)) {
+            controlsVisible = false
+        }
+    }
+
+    private func stopHideMonitor() {
+        let activeTask = hideControlsTask
+        hideControlsTask = nil
+        activeTask?.cancel()
     }
 
     private func applyVolume() {
@@ -741,7 +827,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             await seek(player: player, to: target)
             currentTime = target
             scrubPosition = target
-            scheduleAutoHideIfNeeded()
+            if isHoveringStage {
+                startHideMonitorIfNeeded()
+            } else {
+                hideControlsIfAllowed()
+            }
         }
     }
 
@@ -779,18 +869,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func preferredSource(for playback: VideoPlayback) async throws -> PlayerSourceDescriptor {
-        let manifestCandidate = try await preferredManifestSource(for: playback)
         let nonManifestCandidate = try await preferredNonManifestSource(for: playback)
 
         if let nonManifestCandidate {
-            if let manifestCandidate,
-               manifestCandidate.variantCount > 1,
-               manifestCandidate.maxHeight >= nonManifestCandidate.height {
-                return manifestCandidate.source
-            }
             return nonManifestCandidate.source
         }
 
+        let manifestCandidate = try await preferredManifestSource(for: playback)
         if let manifestCandidate {
             return manifestCandidate.source
         }
