@@ -60,6 +60,17 @@ private struct SubtitleSelectionSnapshot {
     let localeIdentifier: String?
 }
 
+private struct SourceCandidate {
+    let source: PlayerSourceDescriptor
+    let height: Int
+}
+
+private struct ManifestSourceCandidate {
+    let source: PlayerSourceDescriptor
+    let maxHeight: Int
+    let variantCount: Int
+}
+
 private enum PlayerSourceDescriptor {
     case manifestAutomatic(StreamInfo)
     case manifestVariant(parent: StreamInfo, url: URL)
@@ -504,17 +515,21 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func refreshQualityOptions(for playback: VideoPlayback) async throws {
-        if let manifestStream = playback.preferredManifestStream,
-           let manifestAsset = buildAsset(for: manifestStream) {
-            let variants = try? await manifestAsset.load(.variants)
-            let manifestOptions = buildManifestQualityOptions(from: variants ?? [])
-            if !manifestOptions.isEmpty {
-                qualityOptions = [QualityOption.automatic] + manifestOptions
-                if qualityOptions.contains(where: { $0.id == selectedQualityOptionID }) == false {
-                    selectedQualityOptionID = QualityOption.automaticID
+        switch currentSource {
+        case .manifestAutomatic(let manifestStream), .manifestVariant(parent: let manifestStream, url: _):
+            if let manifestAsset = buildAsset(for: manifestStream) {
+                let variants = try? await manifestAsset.load(.variants)
+                let manifestOptions = buildManifestQualityOptions(from: variants ?? [])
+                if !manifestOptions.isEmpty {
+                    qualityOptions = [QualityOption.automatic] + manifestOptions
+                    if qualityOptions.contains(where: { $0.id == selectedQualityOptionID }) == false {
+                        selectedQualityOptionID = QualityOption.automaticID
+                    }
+                    return
                 }
-                return
             }
+        case .direct, .adaptivePair, .none:
+            break
         }
 
         let directOptions = buildFallbackQualityOptions(for: playback)
@@ -764,34 +779,100 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func preferredSource(for playback: VideoPlayback) async throws -> PlayerSourceDescriptor {
-        if playback.playbackStrategy == "manifest",
-           let manifestStream = playback.preferredManifestStream,
-           try await isPlayable(stream: manifestStream) {
-            return .manifestAutomatic(manifestStream)
+        let manifestCandidate = try await preferredManifestSource(for: playback)
+        let nonManifestCandidate = try await preferredNonManifestSource(for: playback)
+
+        if let nonManifestCandidate {
+            if let manifestCandidate,
+               manifestCandidate.variantCount > 1,
+               manifestCandidate.maxHeight >= nonManifestCandidate.height {
+                return manifestCandidate.source
+            }
+            return nonManifestCandidate.source
         }
 
-        if let directStream = preferredDirectStream(for: playback),
-           try await isPlayable(stream: directStream) {
-            return .direct(directStream)
-        }
-
-        if let adaptiveSource = try await preferredAdaptiveSource(for: playback) {
-            return adaptiveSource
-        }
-
-        if let directStream = preferredDirectStream(for: playback) {
-            return .direct(directStream)
-        }
-
-        if let manifestStream = playback.preferredManifestStream {
-            return .manifestAutomatic(manifestStream)
-        }
-
-        if let adaptiveSource = try await preferredAdaptiveSource(for: playback) {
-            return adaptiveSource
+        if let manifestCandidate {
+            return manifestCandidate.source
         }
 
         throw URLError(.badURL)
+    }
+
+    private func preferredManifestSource(
+        for playback: VideoPlayback
+    ) async throws -> ManifestSourceCandidate? {
+        guard let manifestStream = playback.preferredManifestStream,
+              try await isPlayable(stream: manifestStream) else {
+            return nil
+        }
+
+        let maxHeight: Int
+        let variantCount: Int
+        if let manifestAsset = buildAsset(for: manifestStream),
+           let variants = try? await manifestAsset.load(.variants),
+           !variants.isEmpty {
+            maxHeight = variants
+                .compactMap { variant in
+                    let height = variant.videoAttributes?.presentationSize.height ?? 0
+                    return height > 0 ? Int(height.rounded()) : nil
+                }
+                .max() ?? (manifestStream.height ?? 0)
+            variantCount = variants.count
+        } else {
+            maxHeight = manifestStream.height ?? 0
+            variantCount = 0
+        }
+
+        return ManifestSourceCandidate(
+            source: .manifestAutomatic(manifestStream),
+            maxHeight: maxHeight,
+            variantCount: variantCount
+        )
+    }
+
+    private func preferredNonManifestSource(
+        for playback: VideoPlayback
+    ) async throws -> SourceCandidate? {
+        var candidates: [SourceCandidate] = []
+
+        if let directStream = preferredDirectStream(for: playback),
+           try await isPlayable(stream: directStream) {
+            candidates.append(
+                SourceCandidate(
+                    source: .direct(directStream),
+                    height: directStream.height ?? 0
+                )
+            )
+        }
+
+        if let adaptiveSource = try await preferredAdaptiveSource(for: playback) {
+            candidates.append(
+                SourceCandidate(
+                    source: adaptiveSource,
+                    height: sourceHeight(for: adaptiveSource)
+                )
+            )
+        }
+
+        if let bestCandidate = candidates.max(by: { $0.height < $1.height }) {
+            return bestCandidate
+        }
+
+        if let adaptiveSource = try await preferredAdaptiveSource(for: playback) {
+            return SourceCandidate(
+                source: adaptiveSource,
+                height: sourceHeight(for: adaptiveSource)
+            )
+        }
+
+        if let directStream = preferredDirectStream(for: playback) {
+            return SourceCandidate(
+                source: .direct(directStream),
+                height: directStream.height ?? 0
+            )
+        }
+
+        return nil
     }
 
     private func preferredDirectStream(for playback: VideoPlayback) -> StreamInfo? {
@@ -831,6 +912,24 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             return item
         case .adaptivePair(let video, let audio):
             return try await buildAdaptivePlayerItem(videoStream: video, audioStream: audio)
+        }
+    }
+
+    private func sourceHeight(for source: PlayerSourceDescriptor) -> Int {
+        switch source {
+        case .manifestAutomatic(let stream):
+            return stream.height ?? 0
+        case .manifestVariant(_, let url):
+            let path = url.absoluteString.lowercased()
+            if let resolutionFragment = path.split(separator: "/").first(where: { $0.hasSuffix("p") }),
+               let height = Int(resolutionFragment.dropLast()) {
+                return height
+            }
+            return 0
+        case .direct(let stream):
+            return stream.height ?? 0
+        case .adaptivePair(let video, _):
+            return video.height ?? 0
         }
     }
 

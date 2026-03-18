@@ -485,21 +485,14 @@ private struct PlayerControlBar: View {
         Button {
             coordinator.togglePlayback()
         } label: {
-            ZStack {
-                if coordinator.isPlaying {
-                    iconButtonLabel(symbol: "pause.fill")
-                        .glassEffectID("playback-control", in: playPauseNamespace)
-                        .glassEffectTransition(.matchedGeometry)
-                } else {
-                    iconButtonLabel(symbol: "play.fill")
-                        .glassEffectID("playback-control", in: playPauseNamespace)
-                        .glassEffectTransition(.matchedGeometry)
-                }
-            }
+            iconButtonLabel(
+                symbol: coordinator.isPlaying ? "pause.fill" : "play.fill"
+            )
+            .glassEffectID("playback-control", in: playPauseNamespace)
+            .glassEffectTransition(.matchedGeometry)
         }
         .buttonStyle(PlayerControlButtonStyle())
         .accessibilityLabel(coordinator.isPlaying ? "Pause" : "Play")
-        .animation(.easeInOut(duration: 0.18), value: coordinator.isPlaying)
     }
 
     var volumeControl: some View {
@@ -573,11 +566,14 @@ private struct PlayerControlBar: View {
         Button {
             coordinator.cycleSubtitles()
         } label: {
-            iconButtonLabel(symbol: coordinator.subtitleSymbolName, fontSize: 16)
+            iconButtonLabel(
+                symbol: coordinator.subtitleSymbolName,
+                fontSize: 16,
+                isEnabled: coordinator.hasSubtitleOptions
+            )
         }
         .buttonStyle(PlayerControlButtonStyle())
         .disabled(!coordinator.hasSubtitleOptions)
-        .opacity(coordinator.hasSubtitleOptions ? 1 : 0.55)
         .accessibilityLabel("Subtitles")
         .accessibilityValue(coordinator.subtitleAccessibilityValue)
     }
@@ -592,42 +588,35 @@ private struct PlayerControlBar: View {
                 }
             }
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "dial.medium")
-                    .font(.system(size: 14, weight: .semibold))
+            PlayerInteractiveCapsule(
+                reduceTransparency: reduceTransparency,
+                glass: .regular.interactive(),
+                horizontalPadding: 12
+            ) {
+                HStack(spacing: 8) {
+                    Image(systemName: "dial.medium")
+                        .font(.system(size: 14, weight: .semibold))
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(coordinator.qualityControlText)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-
-                    if let detail = coordinator.qualityControlDetail {
-                        Text(detail)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(coordinator.qualityControlText)
+                            .font(.subheadline.weight(.semibold))
                             .lineLimit(1)
-                    }
-                }
 
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
+                        if let detail = coordinator.qualityControlDetail {
+                            Text(detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
             }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 44)
-            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .background {
-            Capsule()
-                .fill(Color.clear)
-                .playerControlSurface(
-                    reduceTransparency: reduceTransparency,
-                    glass: .regular.interactive(),
-                    shape: Capsule()
-                )
-        }
-        .clipShape(Capsule())
         .simultaneousGesture(
             TapGesture().onEnded {
                 coordinator.beginMenuInteraction()
@@ -677,24 +666,23 @@ private struct PlayerControlBar: View {
         .frame(minWidth: 220, alignment: .leading)
     }
 
-    func controlIcon(symbol: String) -> some View {
-        Image(systemName: symbol)
-            .font(.system(size: 18, weight: .semibold))
-            .contentTransition(.symbolEffect(.replace))
-    }
-
-    func iconButtonLabel(symbol: String, fontSize: CGFloat = 18) -> some View {
-        Image(systemName: symbol)
-            .font(.system(size: fontSize, weight: .semibold))
-            .contentTransition(.symbolEffect(.replace))
-            .frame(width: 44, height: 44)
-            .frame(minWidth: 60, minHeight: 44)
-            .contentShape(Capsule())
-            .playerControlSurface(
-                reduceTransparency: reduceTransparency,
-                glass: .regular.interactive(),
-                shape: Capsule()
-            )
+    func iconButtonLabel(
+        symbol: String,
+        fontSize: CGFloat = 18,
+        isEnabled: Bool = true
+    ) -> some View {
+        PlayerInteractiveCapsule(
+            reduceTransparency: reduceTransparency,
+            glass: .regular.interactive(),
+            isEnabled: isEnabled
+        ) {
+            Image(systemName: symbol)
+                .font(.system(size: fontSize, weight: .semibold))
+                .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 44, height: 44)
+        }
+        .animation(.easeInOut(duration: 0.18), value: symbol)
     }
 }
 
@@ -703,7 +691,48 @@ private struct PlayerControlButtonStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .opacity(configuration.isPressed ? 0.86 : 1)
+            .brightness(configuration.isPressed ? -0.04 : 0)
             .animation(.easeInOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+private struct PlayerInteractiveCapsule<Content: View>: View {
+    let reduceTransparency: Bool
+    let glass: Glass
+    var isEnabled = true
+    var horizontalPadding: CGFloat = 8
+    @ViewBuilder let content: Content
+
+    @State private var isHovered = false
+
+    var body: some View {
+        content
+            .padding(.horizontal, horizontalPadding)
+            .frame(minHeight: 44)
+            .contentShape(Capsule())
+            .opacity(isEnabled ? 1 : 0.64)
+            .playerControlSurface(
+                reduceTransparency: reduceTransparency,
+                glass: glass,
+                shape: Capsule()
+            )
+            .overlay {
+                Capsule()
+                    .stroke(
+                        Color.white.opacity(isHovered ? 0.2 : 0.08),
+                        lineWidth: 1
+                    )
+            }
+            .shadow(
+                color: .black.opacity(isHovered ? 0.22 : 0.1),
+                radius: isHovered ? 14 : 8,
+                y: 2
+            )
+            .scaleEffect(isHovered ? 1.012 : 1)
+            .animation(.easeInOut(duration: 0.12), value: isHovered)
+            .onHover { hovering in
+                isHovered = hovering
+            }
     }
 }
 
