@@ -12,6 +12,7 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
     let renderController = MPVRenderViewController()
     private let request: MPVPlaybackRequest
     private var mpv: OpaquePointer?
+    private var didLoadFile = false
 
     private(set) var currentTime: Double = 0
     private(set) var duration: Double = 0
@@ -24,12 +25,17 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
     }
 
     func prepare(startTime: Double, autoPlay: Bool) async throws {
-        if mpv == nil {
-            try initializeIfNeeded()
+        let _ = await renderController.waitForRenderLayer()
+        let handle = try initializeIfNeeded()
+        try commandNode(["loadfile", request.video.url.absoluteString, "replace", "-1"])
+        try await waitUntilFileLoaded(handle)
+
+        if let audio = request.audio {
+            try commandNode(["audio-add", audio.url.absoluteString, "select"])
         }
 
         if startTime > 0 {
-            currentTime = startTime
+            await seek(to: startTime)
         }
 
         if autoPlay {
@@ -37,13 +43,17 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
         } else {
             pause()
         }
+
+        updateCachedState()
     }
 
     func play() {
+        setPaused(false)
         isPlaying = true
     }
 
     func pause() {
+        setPaused(true)
         isPlaying = false
     }
 
@@ -54,6 +64,12 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
 
     func seek(to seconds: Double) async {
         currentTime = max(seconds, 0)
+        do {
+            try commandNode(["seek", String(currentTime), "absolute", "exact"])
+            updateCachedState()
+        } catch {
+            return
+        }
     }
 
     func setVolume(_ volume: Double) {
@@ -61,11 +77,18 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
         var clampedVolume = max(0, min(volume, 1)) * 100
         mpv_set_property(mpv, MPVProperty.volume, MPV_FORMAT_DOUBLE, &clampedVolume)
     }
+
+    func snapshot() -> (currentTime: Double, duration: Double, isPlaying: Bool, isBuffering: Bool) {
+        updateCachedState()
+        return (currentTime, duration, isPlaying, isBuffering)
+    }
 }
 
 private extension MPVPlaybackEngine {
-    func initializeIfNeeded() throws {
-        guard mpv == nil else { return }
+    func initializeIfNeeded() throws -> OpaquePointer {
+        if let mpv {
+            return mpv
+        }
         guard let handle = mpv_create() else {
             throw NSError(domain: "SwiftTube.MPV", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create mpv context."])
         }
@@ -83,7 +106,7 @@ private extension MPVPlaybackEngine {
         try setOption("audio-file-auto", value: "no")
 
         if let layer = renderController.currentMetalLayer {
-            var layerReference = layer
+            var layerReference = Int64(bitPattern: UInt64(UInt(bitPattern: Unmanaged.passUnretained(layer).toOpaque())))
             try check(mpv_set_option(handle, "wid", MPV_FORMAT_INT64, &layerReference))
         }
 
@@ -111,12 +134,15 @@ private extension MPVPlaybackEngine {
         }
 
         try check(mpv_initialize(handle))
+        didLoadFile = false
+        return handle
     }
 
     func destroyPlayer() {
         guard let mpv else { return }
         mpv_terminate_destroy(mpv)
         self.mpv = nil
+        didLoadFile = false
     }
 
     func setOption(_ name: String, value: String) throws {
@@ -124,10 +150,101 @@ private extension MPVPlaybackEngine {
         try check(mpv_set_option_string(mpv, name, value))
     }
 
+    func setPaused(_ paused: Bool) {
+        guard let mpv else { return }
+        var value: Int32 = paused ? 1 : 0
+        mpv_set_property(mpv, MPVProperty.pause, MPV_FORMAT_FLAG, &value)
+    }
+
     func check(_ status: Int32) throws {
         guard status >= 0 else {
             let message = String(cString: mpv_error_string(status))
             throw NSError(domain: "SwiftTube.MPV", code: Int(status), userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
+    func waitUntilFileLoaded(_ handle: OpaquePointer) async throws {
+        let handleBits = UInt(bitPattern: handle)
+
+        try await Task.detached(priority: .userInitiated) {
+            let handle = OpaquePointer(bitPattern: handleBits)!
+
+            while true {
+                guard let event = mpv_wait_event(handle, 0.1) else { continue }
+
+                switch event.pointee.event_id {
+                case MPV_EVENT_FILE_LOADED:
+                    return
+                case MPV_EVENT_SHUTDOWN:
+                    throw NSError(domain: "SwiftTube.MPV", code: -10, userInfo: [NSLocalizedDescriptionKey: "mpv shut down during load."])
+                case MPV_EVENT_END_FILE:
+                    throw NSError(domain: "SwiftTube.MPV", code: -11, userInfo: [NSLocalizedDescriptionKey: "mpv ended the file before it became ready."])
+                default:
+                    continue
+                }
+            }
+        }.value
+
+        didLoadFile = true
+    }
+
+    func updateCachedState() {
+        guard let mpv, didLoadFile else { return }
+
+        currentTime = max(doubleProperty(MPVProperty.timePosition, from: mpv), 0)
+        duration = max(doubleProperty(MPVProperty.duration, from: mpv), 0)
+        isBuffering = flagProperty(MPVProperty.pausedForCache, from: mpv)
+        isPlaying = flagProperty(MPVProperty.pause, from: mpv) == false
+    }
+
+    func doubleProperty(_ name: String, from handle: OpaquePointer) -> Double {
+        var value = 0.0
+        let result = mpv_get_property(handle, name, MPV_FORMAT_DOUBLE, &value)
+        guard result >= 0, value.isFinite else { return 0 }
+        return value
+    }
+
+    func flagProperty(_ name: String, from handle: OpaquePointer) -> Bool {
+        var value: Int32 = 0
+        let result = mpv_get_property(handle, name, MPV_FORMAT_FLAG, &value)
+        guard result >= 0 else { return false }
+        return value != 0
+    }
+
+    func commandNode(_ arguments: [String]) throws {
+        guard let mpv else {
+            throw NSError(domain: "SwiftTube.MPV", code: -2, userInfo: [NSLocalizedDescriptionKey: "mpv is not initialized."])
+        }
+
+        let duplicatedStrings = arguments.map { strdup($0) }
+        defer {
+            duplicatedStrings.forEach { free($0) }
+        }
+
+        var nodes = duplicatedStrings.map { duplicated -> mpv_node in
+            var node = mpv_node()
+            node.format = MPV_FORMAT_STRING
+            node.u.string = duplicated
+            return node
+        }
+
+        var result = mpv_node()
+        defer {
+            mpv_free_node_contents(&result)
+        }
+
+        try nodes.withUnsafeMutableBufferPointer { buffer in
+            var list = mpv_node_list()
+            list.num = Int32(buffer.count)
+            list.values = buffer.baseAddress
+            list.keys = nil
+
+            return try withUnsafeMutablePointer(to: &list) { listPointer in
+                var command = mpv_node()
+                command.format = MPV_FORMAT_NODE_ARRAY
+                command.u.list = listPointer
+                return try check(mpv_command_node(mpv, &command, &result))
+            }
         }
     }
 }

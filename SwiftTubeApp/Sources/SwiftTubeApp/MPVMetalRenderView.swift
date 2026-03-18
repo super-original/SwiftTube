@@ -54,6 +54,14 @@ final class MPVRenderViewController: NSViewController {
         (view as? MPVRenderContainerView)?.metalLayer
     }
 
+    func waitForRenderLayer() async -> MPVMetalLayer {
+        while currentMetalLayer == nil {
+            _ = view
+            await Task.yield()
+        }
+        return currentMetalLayer!
+    }
+
     func configure(onLayoutChange: @escaping () -> Void) {
         _ = view
         guard let renderView = view as? MPVRenderContainerView else { return }

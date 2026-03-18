@@ -76,6 +76,20 @@ struct PlayerRenderView: NSViewControllerRepresentable {
     }
 }
 
+private struct PlayerRenderStateView: View {
+    let renderState: PlayerRenderState
+    let onLayoutChange: () -> Void
+
+    var body: some View {
+        switch renderState {
+        case .avFoundation(let player):
+            PlayerRenderView(player: player, onLayoutChange: onLayoutChange)
+        case .mpv(let engine):
+            MPVMetalRenderView(engine: engine, onLayoutChange: onLayoutChange)
+        }
+    }
+}
+
 struct WindowAccessor: NSViewRepresentable {
     let onResolve: (NSWindow?) -> Void
 
@@ -487,10 +501,18 @@ private struct PlayerStageSurface: View {
             Rectangle()
                 .fill(Color.black.opacity(0.94))
 
-            if let player = coordinator.player {
-                PlayerRenderView(player: player) {
+            if let activeRenderState = coordinator.activeRenderState {
+                PlayerRenderStateView(renderState: activeRenderState) {
                     coordinator.handlePlayerGeometryChange()
                 }
+            }
+
+            if let pendingRenderState = coordinator.pendingRenderState {
+                PlayerRenderStateView(renderState: pendingRenderState) {
+                    coordinator.handlePlayerGeometryChange()
+                }
+                .opacity(0.001)
+                .allowsHitTesting(false)
             }
 
             if coordinator.shouldShowPlaybackErrorOverlay,
@@ -504,7 +526,7 @@ private struct PlayerStageSurface: View {
                 }
             }
 
-            if let _ = coordinator.player {
+            if coordinator.activeRenderState != nil {
                 PlayerChromeOverlay(
                     coordinator: coordinator,
                     edgeToEdge: immersive

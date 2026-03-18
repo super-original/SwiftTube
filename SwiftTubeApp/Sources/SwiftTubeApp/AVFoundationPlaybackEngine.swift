@@ -26,7 +26,10 @@ final class AVFoundationPlaybackEngine: NSObject, PlaybackEngine {
 
     func prepare(startTime: Double, autoPlay: Bool) async throws {
         player.replaceCurrentItem(with: item)
-        duration = max(item.asset.duration.seconds, 0)
+        if let assetDuration = try? await item.asset.load(.duration) {
+            duration = max(assetDuration.seconds, 0)
+        }
+        try await waitUntilReadyToPlay(item)
 
         if startTime > 0 {
             await seek(to: startTime)
@@ -68,5 +71,50 @@ final class AVFoundationPlaybackEngine: NSObject, PlaybackEngine {
 
     func setVolume(_ volume: Double) {
         player.volume = Float(max(0, min(volume, 1)))
+    }
+}
+
+private extension AVFoundationPlaybackEngine {
+    func waitUntilReadyToPlay(_ item: AVPlayerItem) async throws {
+        switch item.status {
+        case .readyToPlay:
+            return
+        case .failed:
+            throw item.error ?? URLError(.cannotDecodeContentData)
+        case .unknown:
+            break
+        @unknown default:
+            break
+        }
+
+        final class ReadyObservationBox: @unchecked Sendable {
+            var observation: NSKeyValueObservation?
+            var didResume = false
+        }
+
+        let box = ReadyObservationBox()
+
+        try await withCheckedThrowingContinuation { continuation in
+            box.observation = item.observe(\.status, options: [.initial, .new]) { observedItem, _ in
+                guard box.didResume == false else { return }
+
+                switch observedItem.status {
+                case .readyToPlay:
+                    box.didResume = true
+                    box.observation?.invalidate()
+                    box.observation = nil
+                    continuation.resume()
+                case .failed:
+                    box.didResume = true
+                    box.observation?.invalidate()
+                    box.observation = nil
+                    continuation.resume(throwing: observedItem.error ?? URLError(.cannotDecodeContentData))
+                case .unknown:
+                    break
+                @unknown default:
+                    break
+                }
+            }
+        }
     }
 }
