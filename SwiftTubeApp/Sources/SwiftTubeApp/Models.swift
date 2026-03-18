@@ -37,6 +37,7 @@ struct StreamInfo: Codable, Hashable, Sendable {
     let width: Int?
     let height: Int?
     let fps: Int?
+    let audioChannels: Int?
     let audioCodec: String?
     let videoCodec: String?
     let container: String?

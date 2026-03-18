@@ -27,11 +27,12 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
     func prepare(startTime: Double, autoPlay: Bool) async throws {
         let _ = await renderController.waitForRenderLayer()
         let handle = try initializeIfNeeded()
-        try commandNode(["loadfile", request.video.url.absoluteString, "replace", "-1"])
+        didLoadFile = false
+        try command(["loadfile", request.video.url.absoluteString, "replace", "-1"])
         try await waitUntilFileLoaded(handle)
 
         if let audio = request.audio {
-            try commandNode(["audio-add", audio.url.absoluteString, "select"])
+            try command(["audio-add", audio.url.absoluteString, "select"])
         }
 
         if startTime > 0 {
@@ -65,7 +66,7 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
     func seek(to seconds: Double) async {
         currentTime = max(seconds, 0)
         do {
-            try commandNode(["seek", String(currentTime), "absolute", "exact"])
+            try command(["seek", String(currentTime), "absolute", "exact"])
             updateCachedState()
         } catch {
             return
@@ -211,40 +212,24 @@ private extension MPVPlaybackEngine {
         return value != 0
     }
 
-    func commandNode(_ arguments: [String]) throws {
+    func command(_ arguments: [String]) throws {
         guard let mpv else {
             throw NSError(domain: "SwiftTube.MPV", code: -2, userInfo: [NSLocalizedDescriptionKey: "mpv is not initialized."])
         }
 
-        let duplicatedStrings = arguments.map { strdup($0) }
+        var cArguments = arguments.map { argument -> UnsafePointer<CChar>? in
+            guard let duplicated = strdup(argument) else { return nil }
+            return UnsafePointer(duplicated)
+        }
+        cArguments.append(nil)
         defer {
-            duplicatedStrings.forEach { free($0) }
-        }
-
-        var nodes = duplicatedStrings.map { duplicated -> mpv_node in
-            var node = mpv_node()
-            node.format = MPV_FORMAT_STRING
-            node.u.string = duplicated
-            return node
-        }
-
-        var result = mpv_node()
-        defer {
-            mpv_free_node_contents(&result)
-        }
-
-        try nodes.withUnsafeMutableBufferPointer { buffer in
-            var list = mpv_node_list()
-            list.num = Int32(buffer.count)
-            list.values = buffer.baseAddress
-            list.keys = nil
-
-            return try withUnsafeMutablePointer(to: &list) { listPointer in
-                var command = mpv_node()
-                command.format = MPV_FORMAT_NODE_ARRAY
-                command.u.list = listPointer
-                return try check(mpv_command_node(mpv, &command, &result))
+            cArguments.forEach { pointer in
+                free(UnsafeMutablePointer(mutating: pointer))
             }
+        }
+
+        try cArguments.withUnsafeMutableBufferPointer { buffer in
+            try check(mpv_command(mpv, buffer.baseAddress))
         }
     }
 }

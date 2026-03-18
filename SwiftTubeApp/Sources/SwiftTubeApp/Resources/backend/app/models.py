@@ -37,6 +37,7 @@ class StreamInfo(BaseModel):
     width: Optional[int] = None
     height: Optional[int] = None
     fps: Optional[int] = None
+    audioChannels: Optional[int] = None
     audioCodec: Optional[str] = None
     videoCodec: Optional[str] = None
     container: Optional[str] = None

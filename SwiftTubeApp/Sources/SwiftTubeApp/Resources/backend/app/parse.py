@@ -337,6 +337,7 @@ def parse_streams(player_response: Dict[str, Any]) -> List[StreamInfo]:
                     width=entry.get("width"),
                     height=entry.get("height"),
                     fps=entry.get("fps"),
+                    audioChannels=entry.get("audioChannels"),
                     audioCodec=entry.get("audioQuality"),
                     videoCodec=entry.get("codecs"),
                     container=entry.get("container"),

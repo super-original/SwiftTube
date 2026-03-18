@@ -155,6 +155,27 @@ def _adaptive_video_score(stream: StreamInfo) -> tuple[int, int, int, int, int]:
     )
 
 
+def _audio_channel_preference(stream: StreamInfo) -> tuple[int, int]:
+    channels = stream.audioChannels or 0
+    if channels == 2:
+        return (3, 0)
+    if channels == 1:
+        return (2, 0)
+    if channels > 2:
+        return (1, -channels)
+    return (0, 0)
+
+
+def _adaptive_audio_score(stream: StreamInfo) -> tuple[int, int, int, int]:
+    channel_preference, channel_tiebreaker = _audio_channel_preference(stream)
+    return (
+        channel_preference,
+        _codec_score(stream.audioCodec),
+        channel_tiebreaker,
+        stream.bitrate or 0,
+    )
+
+
 def _is_direct_protocol(protocol: Any) -> bool:
     if not isinstance(protocol, str):
         return False
@@ -227,6 +248,7 @@ def _build_streams(formats: Iterable[dict[str, Any]]) -> List[StreamInfo]:
                 width=format_data.get("width"),
                 height=format_data.get("height"),
                 fps=format_data.get("fps"),
+                audioChannels=format_data.get("audio_channels"),
                 audioCodec=acodec,
                 videoCodec=vcodec,
                 container=format_data.get("container") or format_data.get("ext"),
@@ -303,7 +325,7 @@ def _best_audio_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
     ]
     if not candidates:
         return None
-    return max(candidates, key=_stream_score)
+    return max(candidates, key=_adaptive_audio_score)
 
 
 def _extract_playback(video_id: str, opts: dict[str, Any]) -> PlaybackBundle:

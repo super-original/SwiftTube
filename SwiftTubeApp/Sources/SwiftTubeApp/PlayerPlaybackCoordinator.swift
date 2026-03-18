@@ -142,6 +142,34 @@ private func playbackCodecScore(for codec: String?) -> Int {
     return 1
 }
 
+private func adaptiveAudioPreference(for stream: StreamInfo) -> (Int, Int, Int, Int) {
+    let channels = stream.audioChannels ?? 0
+    let channelPreference: Int
+    let channelTiebreaker: Int
+
+    switch channels {
+    case 2:
+        channelPreference = 3
+        channelTiebreaker = 0
+    case 1:
+        channelPreference = 2
+        channelTiebreaker = 0
+    case let value where value > 2:
+        channelPreference = 1
+        channelTiebreaker = -value
+    default:
+        channelPreference = 0
+        channelTiebreaker = 0
+    }
+
+    return (
+        channelPreference,
+        playbackCodecScore(for: stream.audioCodec),
+        channelTiebreaker,
+        stream.bitrate ?? 0
+    )
+}
+
 private func compatibilityCodecPreference(for codec: String?) -> Int {
     guard let codec else { return 0 }
     if codec.hasPrefix("av01") { return 3 }
@@ -235,8 +263,8 @@ private func preferredAdaptiveAudioStream(for playback: VideoPlayback) -> Stream
                 && ($0.container?.hasPrefix("m4a") == true || $0.container?.hasPrefix("mp4") == true)
         }
         .sorted { lhs, rhs in
-            let lhsScore = (lhs.bitrate ?? 0, playbackCodecScore(for: lhs.audioCodec))
-            let rhsScore = (rhs.bitrate ?? 0, playbackCodecScore(for: rhs.audioCodec))
+            let lhsScore = adaptiveAudioPreference(for: lhs)
+            let rhsScore = adaptiveAudioPreference(for: rhs)
             return lhsScore > rhsScore
         }
         .first
@@ -448,22 +476,11 @@ private actor QualityCoordinator {
                     && ($0.container?.hasPrefix("m4a") == true || $0.container?.hasPrefix("mp4") == true)
             }
             .sorted { lhs, rhs in
-                let lhsScore = (lhs.bitrate ?? 0, codecScore(for: lhs.audioCodec))
-                let rhsScore = (rhs.bitrate ?? 0, codecScore(for: rhs.audioCodec))
+                let lhsScore = adaptiveAudioPreference(for: lhs)
+                let rhsScore = adaptiveAudioPreference(for: rhs)
                 return lhsScore > rhsScore
             }
             .first
-    }
-
-    private static func codecScore(for codec: String?) -> Int {
-        guard let codec else { return 0 }
-        if codec.hasPrefix("avc1") { return 5 }
-        if codec.hasPrefix("hvc1") || codec.hasPrefix("hev1") { return 4 }
-        if codec.hasPrefix("av01") { return 3 }
-        if codec.hasPrefix("vp9") { return 2 }
-        if codec.hasPrefix("mp4a") { return 4 }
-        if codec.hasPrefix("opus") { return 3 }
-        return 1
     }
 }
 
@@ -1970,8 +1987,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             throw URLError(.cannotDecodeContentData)
         }
 
-        let videoDuration = try await videoAsset.load(.duration)
-        let audioDuration = try await audioAsset.load(.duration)
+        let videoDuration = try await videoTrack.load(.timeRange).duration
+        let audioDuration = try await audioTrack.load(.timeRange).duration
         let duration = minimumDuration(videoDuration, audioDuration)
         let composition = AVMutableComposition()
 
@@ -2004,6 +2021,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         let item = AVPlayerItem(asset: composition)
         item.preferredForwardBufferDuration = 2
+        item.forwardPlaybackEndTime = duration
         return item
     }
 
