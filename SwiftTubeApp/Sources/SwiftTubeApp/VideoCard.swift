@@ -58,6 +58,7 @@ struct VideoCard: View {
             .foregroundColor(.secondary)
         }
         .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(Color(NSColor.controlBackgroundColor))

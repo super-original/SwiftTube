@@ -20,7 +20,7 @@ struct CachedAsyncImage<Placeholder: View>: View {
     var body: some View {
         ZStack {
             if let image = loader.image {
-                Image(nsImage: image)
+                Image(decorative: image.cgImage, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
             } else {
@@ -30,7 +30,7 @@ struct CachedAsyncImage<Placeholder: View>: View {
         .onAppear {
             loader.load(from: url)
         }
-        .onChange(of: url) { newValue in
+        .onChange(of: url) { _, newValue in
             loader.load(from: newValue)
         }
     }

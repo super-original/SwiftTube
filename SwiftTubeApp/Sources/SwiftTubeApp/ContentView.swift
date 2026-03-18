@@ -7,7 +7,7 @@ struct ContentView: View {
     @EnvironmentObject private var authSession: AuthSessionModel
 
     private let columns = [
-        GridItem(.adaptive(minimum: 240), spacing: 20)
+        GridItem(.adaptive(minimum: 240), spacing: 20, alignment: .top)
     ]
 
     var body: some View {
@@ -122,7 +122,7 @@ private extension ContentView {
                 }
             }
         } else {
-            LazyVGrid(columns: columns, spacing: 20) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
                 ForEach(viewModel.videos, id: \.id) { video in
                     Button {
                         navigation.showVideo(video)
@@ -130,6 +130,7 @@ private extension ContentView {
                         VideoCard(video: video)
                     }
                     .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .onAppear {
                         viewModel.loadMoreIfNeeded(currentVideo: video)
                     }
@@ -144,9 +145,10 @@ private extension ContentView {
     }
 
     var placeholderGrid: some View {
-        LazyVGrid(columns: columns, spacing: 20) {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
             ForEach(0..<8, id: \.self) { _ in
                 PlaceholderCard()
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -443,6 +445,7 @@ private struct PlaceholderCard: View {
                 .padding(.trailing, 80)
         }
         .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(Color(NSColor.controlBackgroundColor))
