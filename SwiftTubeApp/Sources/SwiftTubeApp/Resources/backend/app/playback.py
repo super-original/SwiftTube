@@ -376,6 +376,10 @@ def _stream_is_reachable(
         return False
 
 
+def _bundle_has_video_streams(bundle: PlaybackBundle) -> bool:
+    return any(stream.hasVideo for stream in bundle.streams)
+
+
 def _validated_authenticated_bundle(
     bundle: PlaybackBundle,
     auth_options: dict[str, Any],
@@ -456,6 +460,43 @@ def _validated_authenticated_bundle(
 
 
 def extract_playback(video_id: str, auth_options: Optional[dict[str, Any]] = None) -> PlaybackBundle:
+    public_client_options = [
+        {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "extract_flat": False,
+            "skip_download": True,
+            "js_runtimes": {"node": {}},
+            "extractor_args": {"youtube": {"player_client": ["tv_embedded"]}},
+        },
+        {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "extract_flat": False,
+            "skip_download": True,
+            "js_runtimes": {"node": {}},
+            "extractor_args": {"youtube": {"player_client": ["android"]}},
+        },
+    ]
+
+    public_bundle: Optional[PlaybackBundle] = None
+    public_error: Optional[Exception] = None
+    for public_opts in public_client_options:
+        try:
+            candidate_bundle = _extract_playback(video_id, public_opts)
+            if public_bundle is None:
+                public_bundle = candidate_bundle
+            if _bundle_has_video_streams(candidate_bundle):
+                public_bundle = candidate_bundle
+                break
+        except Exception as exc:
+            public_error = exc
+
+    if public_bundle is not None and _bundle_has_video_streams(public_bundle):
+        return public_bundle
+
     public_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -463,7 +504,7 @@ def extract_playback(video_id: str, auth_options: Optional[dict[str, Any]] = Non
         "extract_flat": False,
         "skip_download": True,
         "js_runtimes": {"node": {}},
-        "extractor_args": {"youtube": {"player_client": ["android"]}},
+        "extractor_args": {"youtube": {"player_client": ["tv_embedded"]}},
     }
 
     if auth_options and _should_attempt_authenticated_playback(auth_options):
@@ -482,5 +523,11 @@ def extract_playback(video_id: str, auth_options: Optional[dict[str, Any]] = Non
                 return validated_bundle
         except Exception:
             pass
+
+    if public_bundle is not None:
+        return public_bundle
+
+    if public_error is not None:
+        raise public_error
 
     return _extract_playback(video_id, public_opts)

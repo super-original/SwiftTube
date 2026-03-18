@@ -609,6 +609,7 @@ private struct PlayerChromeOverlay: View {
 private struct PlayerControlBar: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Namespace private var playPauseNamespace
     @State private var isQualityPopoverPresented = false
 
     private let compactControlHeight: CGFloat = 38
@@ -640,14 +641,12 @@ private struct PlayerControlBar: View {
             coordinator.togglePlayback()
         } label: {
             circularButtonLabel(symbol: coordinator.isPlaying ? "pause.fill" : "play.fill", fontSize: 15)
-                .frame(minWidth: compactControlHeight, minHeight: compactControlHeight)
-                .playerControlSurface(
-                    reduceTransparency: reduceTransparency,
-                    glass: .regular,
-                    shape: Circle()
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.circle)
+        .controlSize(.regular)
+        .glassEffectID("playback-control", in: playPauseNamespace)
+        .glassEffectTransition(.matchedGeometry)
         .accessibilityLabel(coordinator.isPlaying ? "Pause" : "Play")
     }
 
@@ -659,9 +658,11 @@ private struct PlayerControlBar: View {
                 Image(systemName: coordinator.volumeIconName)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
+                    .contentTransition(.symbolEffect(.replace))
                     .frame(width: 20, height: volumeIconContentHeight)
                     .frame(minHeight: compactControlHeight)
                     .contentShape(Rectangle())
+                    .animation(.snappy(duration: 0.11, extraBounce: 0), value: coordinator.volumeIconName)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(coordinator.volume <= 0.01 ? "Unmute" : "Mute")
@@ -730,14 +731,10 @@ private struct PlayerControlBar: View {
                 fontSize: 14,
                 foregroundStyle: coordinator.hasSubtitleOptions ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
             )
-            .frame(minWidth: compactControlHeight, minHeight: compactControlHeight)
-            .playerControlSurface(
-                reduceTransparency: reduceTransparency,
-                glass: .regular,
-                shape: Circle()
-            )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.circle)
+        .controlSize(.regular)
         .disabled(!coordinator.hasSubtitleOptions)
         .accessibilityLabel("Subtitles")
         .accessibilityValue(coordinator.subtitleAccessibilityValue)
@@ -748,15 +745,10 @@ private struct PlayerControlBar: View {
             isQualityPopoverPresented.toggle()
         } label: {
             qualityButtonLabel
-                .frame(minHeight: compactControlHeight)
-                .padding(.horizontal, 8)
-                .playerControlSurface(
-                    reduceTransparency: reduceTransparency,
-                    glass: .regular,
-                    shape: Capsule()
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.regular)
         .popover(
             isPresented: $isQualityPopoverPresented,
             attachmentAnchor: .rect(.bounds),
@@ -829,14 +821,10 @@ private struct PlayerControlBar: View {
             coordinator.toggleTheaterMode()
         } label: {
             circularButtonLabel(symbol: coordinator.theaterSymbolName, fontSize: 14)
-                .frame(minWidth: compactControlHeight, minHeight: compactControlHeight)
-                .playerControlSurface(
-                    reduceTransparency: reduceTransparency,
-                    glass: .regular,
-                    shape: Circle()
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.circle)
+        .controlSize(.regular)
         .accessibilityLabel("Theater Mode")
         .accessibilityValue(coordinator.isTheaterMode ? "On" : "Off")
     }
@@ -846,14 +834,10 @@ private struct PlayerControlBar: View {
             coordinator.toggleFullscreen()
         } label: {
             circularButtonLabel(symbol: coordinator.fullscreenSymbolName, fontSize: 14)
-                .frame(minWidth: compactControlHeight, minHeight: compactControlHeight)
-                .playerControlSurface(
-                    reduceTransparency: reduceTransparency,
-                    glass: .regular,
-                    shape: Circle()
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.circle)
+        .controlSize(.regular)
         .accessibilityLabel(coordinator.isFullscreen ? "Exit Fullscreen" : "Fullscreen")
         .accessibilityValue(coordinator.isFullscreen ? "On" : "Off")
     }
@@ -884,7 +868,9 @@ private struct PlayerControlBar: View {
         Image(systemName: symbol)
             .font(.system(size: fontSize, weight: .semibold))
             .foregroundStyle(foregroundStyle)
+            .contentTransition(.symbolEffect(.replace))
             .frame(width: circularButtonLabelSize, height: circularButtonLabelSize)
+            .animation(.snappy(duration: 0.11, extraBounce: 0), value: symbol)
     }
 }
 

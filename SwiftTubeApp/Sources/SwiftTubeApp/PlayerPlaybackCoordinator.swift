@@ -78,6 +78,89 @@ private enum PlayerSourceDescriptor: Sendable {
     case adaptivePair(video: StreamInfo, audio: StreamInfo)
 }
 
+private func playbackCodecScore(for codec: String?) -> Int {
+    guard let codec else { return 0 }
+    if codec.hasPrefix("avc1") { return 5 }
+    if codec.hasPrefix("hvc1") || codec.hasPrefix("hev1") { return 4 }
+    if codec.hasPrefix("av01") { return 3 }
+    if codec.hasPrefix("vp9") { return 2 }
+    if codec.hasPrefix("mp4a") { return 4 }
+    if codec.hasPrefix("opus") { return 3 }
+    return 1
+}
+
+private func isSupportedDirectStream(_ stream: StreamInfo) -> Bool {
+    guard stream.hasVideo, stream.hasAudio, stream.streamKind != "manifest" else {
+        return false
+    }
+
+    let container = (stream.container ?? "").lowercased()
+    return container.hasPrefix("mp4") || container.hasPrefix("mov")
+}
+
+private func isSupportedVideoOnlyStream(_ stream: StreamInfo) -> Bool {
+    guard stream.hasVideo, !stream.hasAudio, stream.streamKind != "manifest" else {
+        return false
+    }
+
+    let container = (stream.container ?? "").lowercased()
+    guard container.hasPrefix("mp4") else {
+        return false
+    }
+
+    return playbackCodecScore(for: stream.videoCodec) >= 3
+}
+
+private func preferredAdaptiveAudioStream(for playback: VideoPlayback) -> StreamInfo? {
+    if let preferredAudioStream = playback.preferredAudioStream {
+        return preferredAudioStream
+    }
+
+    return playback.streams
+        .filter {
+            $0.hasAudio
+                && !$0.hasVideo
+                && ($0.container?.hasPrefix("m4a") == true || $0.container?.hasPrefix("mp4") == true)
+        }
+        .sorted { lhs, rhs in
+            let lhsScore = (lhs.bitrate ?? 0, playbackCodecScore(for: lhs.audioCodec))
+            let rhsScore = (rhs.bitrate ?? 0, playbackCodecScore(for: rhs.audioCodec))
+            return lhsScore > rhsScore
+        }
+        .first
+}
+
+private func automaticStartupSource(for playback: VideoPlayback) -> PlayerSourceDescriptor? {
+    if let manifestStream = playback.preferredManifestStream {
+        return .manifestAutomatic(manifestStream)
+    }
+
+    if let muxedStream = playback.preferredMuxedStream, isSupportedDirectStream(muxedStream) {
+        return .direct(muxedStream)
+    }
+
+    if let bestStream = playback.bestStream, isSupportedDirectStream(bestStream) {
+        return .direct(bestStream)
+    }
+
+    if let videoStream = playback.preferredVideoStream,
+       isSupportedVideoOnlyStream(videoStream),
+       let audioStream = preferredAdaptiveAudioStream(for: playback) {
+        return .adaptivePair(video: videoStream, audio: audioStream)
+    }
+
+    if let fallbackMuxedStream = playback.streams.first(where: isSupportedDirectStream) {
+        return .direct(fallbackMuxedStream)
+    }
+
+    if let fallbackVideoStream = playback.streams.first(where: isSupportedVideoOnlyStream),
+       let audioStream = preferredAdaptiveAudioStream(for: playback) {
+        return .adaptivePair(video: fallbackVideoStream, audio: audioStream)
+    }
+
+    return nil
+}
+
 @MainActor
 final class PlayerLayoutState: ObservableObject {
     @Published var isTheaterMode = false
@@ -157,41 +240,7 @@ private actor QualityCoordinator {
     }
 
     private static func resolveInitialSource(for playback: VideoPlayback) -> PlayerSourceDescriptor? {
-        if let manifestStream = playback.preferredManifestStream {
-            return .manifestAutomatic(manifestStream)
-        }
-
-        if playback.playbackStrategy == "adaptivePair",
-           let videoStream = playback.preferredVideoStream,
-           let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
-            return .adaptivePair(video: videoStream, audio: audioStream)
-        }
-
-        if let muxedStream = playback.preferredMuxedStream {
-            return .direct(muxedStream)
-        }
-
-        if let videoStream = playback.preferredVideoStream,
-           let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
-            return .adaptivePair(video: videoStream, audio: audioStream)
-        }
-
-        if let bestStream = playback.bestStream {
-            if bestStream.hasAudio {
-                return .direct(bestStream)
-            }
-
-            if bestStream.hasVideo,
-               let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
-                return .adaptivePair(video: bestStream, audio: audioStream)
-            }
-        }
-
-        if let fallbackMuxedStream = playback.streams.first(where: { $0.hasVideo && $0.hasAudio }) {
-            return .direct(fallbackMuxedStream)
-        }
-
-        return nil
+        automaticStartupSource(for: playback)
     }
 
     private static func resolveSource(
@@ -1360,41 +1409,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func resolvedInitialSource(for playback: VideoPlayback) -> PlayerSourceDescriptor? {
-        if let manifestStream = playback.preferredManifestStream {
-            return .manifestAutomatic(manifestStream)
-        }
-
-        if playback.playbackStrategy == "adaptivePair",
-           let videoStream = playback.preferredVideoStream,
-           let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
-            return .adaptivePair(video: videoStream, audio: audioStream)
-        }
-
-        if let muxedStream = playback.preferredMuxedStream {
-            return .direct(muxedStream)
-        }
-
-        if let videoStream = playback.preferredVideoStream,
-           let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
-            return .adaptivePair(video: videoStream, audio: audioStream)
-        }
-
-        if let bestStream = playback.bestStream {
-            if bestStream.hasAudio {
-                return .direct(bestStream)
-            }
-
-            if bestStream.hasVideo,
-               let audioStream = playback.preferredAudioStream ?? bestAdaptiveAudioStream(for: playback) {
-                return .adaptivePair(video: bestStream, audio: audioStream)
-            }
-        }
-
-        if let fallbackMuxedStream = playback.streams.first(where: { $0.hasVideo && $0.hasAudio }) {
-            return .direct(fallbackMuxedStream)
-        }
-
-        return nil
+        automaticStartupSource(for: playback)
     }
 
     private func preferredManifestSource(
@@ -1623,12 +1638,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         return playback.streams
             .filter { stream in
-                guard stream.streamKind != "manifest" else { return false }
-                guard stream.hasVideo else { return false }
                 if stream.hasAudio {
-                    return true
+                    return isSupportedDirectStream(stream)
                 }
-                return audioStream != nil
+                return audioStream != nil && isSupportedVideoOnlyStream(stream)
             }
             .sorted(by: fallbackQualitySort(lhs:rhs:))
             .compactMap { stream in
@@ -1748,18 +1761,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func bestAdaptiveAudioStream(for playback: VideoPlayback) -> StreamInfo? {
-        if let preferredAudioStream = playback.preferredAudioStream {
-            return preferredAudioStream
-        }
-
-        return playback.streams
-            .filter {
-                $0.hasAudio
-                    && !$0.hasVideo
-                    && ($0.container?.hasPrefix("m4a") == true || $0.container?.hasPrefix("mp4") == true)
-            }
-            .sorted(by: audioCandidateSort(lhs:rhs:))
-            .first
+        preferredAdaptiveAudioStream(for: playback)
     }
 
     private func adaptiveVideoCandidateSort(lhs: StreamInfo, rhs: StreamInfo) -> Bool {
@@ -1822,14 +1824,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func codecScore(for codec: String?) -> Int {
-        guard let codec else { return 0 }
-        if codec.hasPrefix("avc1") { return 5 }
-        if codec.hasPrefix("hvc1") || codec.hasPrefix("hev1") { return 4 }
-        if codec.hasPrefix("av01") { return 3 }
-        if codec.hasPrefix("vp9") { return 2 }
-        if codec.hasPrefix("mp4a") { return 4 }
-        if codec.hasPrefix("opus") { return 3 }
-        return 1
+        playbackCodecScore(for: codec)
     }
 
     private func buildAsset(for stream: StreamInfo) -> AVURLAsset? {
