@@ -733,12 +733,12 @@ private struct PlayerControlBar: View {
                 fontSize: 14,
                 foregroundStyle: coordinator.hasSubtitleOptions ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
             )
-            .frame(minWidth: compactControlHeight, minHeight: compactControlHeight)
-            .playerControlSurface(
-                reduceTransparency: reduceTransparency,
-                glass: .regular,
-                shape: Circle()
-            )
+                .frame(minWidth: compactControlHeight, minHeight: compactControlHeight)
+                .playerControlSurface(
+                    reduceTransparency: reduceTransparency,
+                    glass: .regular,
+                    shape: Circle()
+                )
         }
         .buttonStyle(.plain)
         .disabled(!coordinator.hasSubtitleOptions)
@@ -787,18 +787,9 @@ private struct PlayerControlBar: View {
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
 
-            Group {
-                if coordinator.isSwitchingQuality {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(.secondary)
-                } else {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: 10, height: 10)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
         }
         .frame(width: qualityButtonWidth, height: circularButtonLabelSize)
     }
@@ -873,15 +864,8 @@ private struct PlayerControlBar: View {
     @ViewBuilder
     func qualityMenuRow(for option: QualityOption) -> some View {
         HStack(spacing: 10) {
-            if coordinator.pendingQualityOptionID == option.id {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(.accentColor)
-                    .frame(width: 16, height: 16)
-            } else {
-                Image(systemName: option.id == coordinator.selectedQualityOptionID ? "checkmark" : "circle")
-                    .foregroundStyle(option.id == coordinator.selectedQualityOptionID ? Color.accentColor : .secondary)
-            }
+            Image(systemName: option.id == coordinator.selectedQualityOptionID ? "checkmark" : "circle")
+                .foregroundStyle(option.id == coordinator.selectedQualityOptionID ? Color.accentColor : .secondary)
 
             Text(option.title)
 
@@ -903,7 +887,9 @@ private struct PlayerControlBar: View {
         Image(systemName: symbol)
             .font(.system(size: fontSize, weight: .semibold))
             .foregroundStyle(foregroundStyle)
+            .contentTransition(.symbolEffect(.replace))
             .frame(width: circularButtonLabelSize, height: circularButtonLabelSize)
+            .animation(.snappy(duration: 0.11, extraBounce: 0), value: symbol)
     }
 }
 
