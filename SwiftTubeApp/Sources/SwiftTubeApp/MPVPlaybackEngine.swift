@@ -33,6 +33,9 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
         didLoadFile = false
         try command(["loadfile", request.video.url.absoluteString, "replace", "-1"])
         try await waitUntilFileLoaded(handle)
+        if let audio = request.audio {
+            try await loadExternalAudio(audio, with: handle)
+        }
 
         if startTime > 0 {
             await seek(to: startTime)
@@ -51,11 +54,13 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
     }
 
     func play() {
+        PlaybackDebugLogger.log("mpv play")
         setPaused(false)
         isPlaying = true
     }
 
     func pause() {
+        PlaybackDebugLogger.log("mpv pause")
         setPaused(true)
         isPlaying = false
     }
@@ -70,6 +75,7 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
         do {
             try command(["seek", String(currentTime), "absolute", "exact"])
             updateCachedState()
+            PlaybackDebugLogger.log("mpv seek applied currentTime=\(currentTime) duration=\(duration)")
         } catch {
             return
         }
@@ -134,10 +140,6 @@ private extension MPVPlaybackEngine {
 
         if headerFields.isEmpty == false {
             try setOption("http-header-fields", value: headerFields)
-        }
-
-        if let audio = request.audio {
-            try setOption("audio-files", value: audio.url.absoluteString)
         }
 
         try check(mpv_initialize(handle))
@@ -224,6 +226,40 @@ private extension MPVPlaybackEngine {
         didLoadFile = true
     }
 
+    func loadExternalAudio(_ audio: MediaStreamRequest, with handle: OpaquePointer) async throws {
+        PlaybackDebugLogger.log("mpv audio-add start url=\(audio.url.absoluteString)")
+        try command(["audio-add", audio.url.absoluteString, "select"])
+
+        let handleBits = UInt(bitPattern: handle)
+        await Task.detached(priority: .userInitiated) {
+            let handle = OpaquePointer(bitPattern: handleBits)!
+            let deadline = Date().addingTimeInterval(5)
+
+            while Date() < deadline {
+                let audioTrackID = Self.intProperty(MPVProperty.audioTrackID, from: handle) ?? 0
+                if audioTrackID > 0 {
+                    let codec = Self.stringProperty(MPVProperty.audioCodecName, from: handle) ?? "nil"
+                    let channels = Self.intProperty(MPVProperty.audioChannelCount, from: handle).map(String.init) ?? "nil"
+                    PlaybackDebugLogger.log("mpv audio-add ready aid=\(audioTrackID) codec=\(codec) channels=\(channels)")
+                    return
+                }
+
+                if let event = mpv_wait_event(handle, 0.1),
+                   event.pointee.event_id == MPV_EVENT_LOG_MESSAGE,
+                   let logMessage = event.pointee.data?.assumingMemoryBound(to: mpv_event_log_message.self) {
+                    let prefix = String(cString: logMessage.pointee.prefix)
+                    let level = String(cString: logMessage.pointee.level)
+                    let text = String(cString: logMessage.pointee.text).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if Self.shouldLogMPVMessage(prefix: prefix, level: level) {
+                        PlaybackDebugLogger.log("mpv log [\(prefix)] [\(level)] \(text)")
+                    }
+                }
+            }
+
+            PlaybackDebugLogger.log("mpv audio-add timed out waiting for aid")
+        }.value
+    }
+
     func updateCachedState() {
         guard let mpv, didLoadFile else { return }
 
@@ -245,6 +281,21 @@ private extension MPVPlaybackEngine {
         let result = mpv_get_property(handle, name, MPV_FORMAT_FLAG, &value)
         guard result >= 0 else { return false }
         return value != 0
+    }
+
+    nonisolated static func intProperty(_ name: String, from handle: OpaquePointer) -> Int64? {
+        var value: Int64 = 0
+        let result = mpv_get_property(handle, name, MPV_FORMAT_INT64, &value)
+        guard result >= 0 else { return nil }
+        return value
+    }
+
+    nonisolated static func stringProperty(_ name: String, from handle: OpaquePointer) -> String? {
+        guard let cString = mpv_get_property_string(handle, name) else {
+            return nil
+        }
+        defer { mpv_free(cString) }
+        return String(cString: cString)
     }
 
     func command(_ arguments: [String]) throws {
@@ -323,4 +374,5 @@ private extension MPVPlaybackEngine {
         ]
         return noisyPrefixes.contains(prefix)
     }
+
 }

@@ -6,5 +6,7 @@ enum MPVProperty {
     static let pause = "pause"
     static let pausedForCache = "paused-for-cache"
     static let volume = "volume"
+    static let audioTrackID = "aid"
+    static let audioCodecName = "audio-codec-name"
+    static let audioChannelCount = "audio-params/channel-count"
 }
-
