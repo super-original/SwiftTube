@@ -111,6 +111,14 @@ final class WindowResolverView: NSView {
     }
 }
 
+private struct StandardPlayerStageBoundsPreferenceKey: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
 struct PlayerScreen: View {
     let video: VideoItem
 
@@ -133,8 +141,9 @@ struct PlayerScreen: View {
         ScrollView {
             scrollContent
         }
+        .scrollDisabled(layoutState.isFullscreen)
         .background(
-            Color(NSColor.windowBackgroundColor)
+            (layoutState.isFullscreen ? Color.black : Color(NSColor.windowBackgroundColor))
                 .ignoresSafeArea()
         )
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -146,6 +155,21 @@ struct PlayerScreen: View {
                     immersive: true,
                     retry: viewModel.load
                 )
+            }
+        }
+        .overlayPreferenceValue(StandardPlayerStageBoundsPreferenceKey.self) { anchor in
+            GeometryReader { proxy in
+                if !usesImmersiveLayout,
+                   let anchor {
+                    let rect = proxy[anchor]
+                    StandardPlayerStageOverlay(
+                        coordinator: playbackCoordinator,
+                        isLoading: viewModel.isLoading,
+                        errorMessage: viewModel.errorMessage ?? playbackCoordinator.errorMessage,
+                        rect: rect,
+                        retry: viewModel.load
+                    )
+                }
             }
         }
         .background(
@@ -222,7 +246,10 @@ private extension PlayerScreen {
 
     var scrollContent: some View {
         VStack(alignment: .leading, spacing: usesImmersiveLayout ? 24 : 0) {
-            if usesImmersiveLayout {
+            if layoutState.isFullscreen {
+                Color.clear
+                    .frame(height: 0)
+            } else if usesImmersiveLayout {
                 immersiveContent
             } else {
                 standardContent
@@ -260,7 +287,7 @@ private extension PlayerScreen {
 
     var mainColumn: some View {
         VStack(alignment: .leading, spacing: 24) {
-            standardPlayerStage
+            standardPlayerStagePlaceholder
             headerSection
             descriptionSection
             commentsSection
@@ -268,16 +295,12 @@ private extension PlayerScreen {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    var standardPlayerStage: some View {
-        PlayerStageSurface(
-            coordinator: playbackCoordinator,
-            isLoading: viewModel.isLoading,
-            errorMessage: viewModel.errorMessage ?? playbackCoordinator.errorMessage,
-            immersive: false,
-            retry: viewModel.load
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 22))
-        .shadow(color: .black.opacity(0.18), radius: 22, y: 10)
+    var standardPlayerStagePlaceholder: some View {
+        RoundedRectangle(cornerRadius: 22)
+            .fill(Color.clear)
+            .frame(maxWidth: .infinity)
+            .aspectRatio(16 / 9, contentMode: .fit)
+            .anchorPreference(key: StandardPlayerStageBoundsPreferenceKey.self, value: .bounds) { $0 }
     }
 
     var headerSection: some View {
@@ -420,6 +443,30 @@ private struct PlayerStageHost: View {
     }
 }
 
+private struct StandardPlayerStageOverlay: View {
+    @ObservedObject var coordinator: PlayerPlaybackCoordinator
+    let isLoading: Bool
+    let errorMessage: String?
+    let rect: CGRect
+    let retry: () -> Void
+
+    var body: some View {
+        if rect.width > 1, rect.height > 1 {
+            PlayerStageSurface(
+                coordinator: coordinator,
+                isLoading: isLoading,
+                errorMessage: errorMessage,
+                immersive: false,
+                retry: retry
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 22))
+            .shadow(color: .black.opacity(0.18), radius: 22, y: 10)
+            .frame(width: rect.width, height: rect.height)
+            .position(x: rect.midX, y: rect.midY)
+        }
+    }
+}
+
 private struct PlayerStageSurface: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
     let isLoading: Bool
@@ -513,57 +560,55 @@ private struct PlayerChromeOverlay: View {
 
     var body: some View {
         ZStack {
-            if coordinator.controlsVisible {
-                VStack(spacing: 0) {
-                    LinearGradient(
-                        colors: [Color.black.opacity(0.55), .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 120)
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [Color.black.opacity(0.55), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 120)
 
-                    Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-                    LinearGradient(
-                        colors: [.clear, Color.black.opacity(0.72)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 170)
-                }
-                .allowsHitTesting(false)
+                LinearGradient(
+                    colors: [.clear, Color.black.opacity(0.72)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 170)
+            }
+            .allowsHitTesting(false)
 
-                VStack(spacing: 0) {
-                    HStack(spacing: 10) {
-                        PlayerStatusPill(text: coordinator.playbackBadgeText)
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    PlayerStatusPill(text: coordinator.playbackBadgeText)
 
-                        if coordinator.selectedSubtitleOptionID != SubtitleOption.offID,
-                           coordinator.hasSubtitleOptions {
-                            PlayerStatusPill(text: coordinator.subtitleControlText)
-                        }
-
-                        Spacer()
+                    if coordinator.selectedSubtitleOptionID != SubtitleOption.offID,
+                       coordinator.hasSubtitleOptions {
+                        PlayerStatusPill(text: coordinator.subtitleControlText)
                     }
-                    .padding(.horizontal, edgeToEdge ? 20 : 18)
-                    .padding(.top, edgeToEdge ? 20 : 18)
 
                     Spacer()
-
-                    PlayerControlBar(coordinator: coordinator)
-                        .padding(.horizontal, edgeToEdge ? 20 : 18)
-                        .padding(.bottom, edgeToEdge ? 20 : 18)
                 }
-                .transition(.opacity)
+                .padding(.horizontal, edgeToEdge ? 20 : 18)
+                .padding(.top, edgeToEdge ? 20 : 18)
+
+                Spacer()
+
+                PlayerControlBar(coordinator: coordinator)
+                    .padding(.horizontal, edgeToEdge ? 20 : 18)
+                    .padding(.bottom, edgeToEdge ? 20 : 18)
             }
         }
-        .animation(.easeOut(duration: 0.14), value: coordinator.controlsVisible)
+        .opacity(coordinator.controlsVisible ? 1 : 0)
+        .allowsHitTesting(coordinator.controlsVisible)
+        .animation(.linear(duration: 0.1), value: coordinator.controlsVisible)
     }
 }
 
 private struct PlayerControlBar: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Namespace private var playPauseNamespace
     @State private var isQualityPopoverPresented = false
 
     private let compactControlHeight: CGFloat = 38
@@ -595,12 +640,14 @@ private struct PlayerControlBar: View {
             coordinator.togglePlayback()
         } label: {
             circularButtonLabel(symbol: coordinator.isPlaying ? "pause.fill" : "play.fill", fontSize: 15)
+                .frame(minWidth: compactControlHeight, minHeight: compactControlHeight)
+                .playerControlSurface(
+                    reduceTransparency: reduceTransparency,
+                    glass: .regular,
+                    shape: Circle()
+                )
         }
-        .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.circle)
-        .controlSize(.regular)
-        .glassEffectID("playback-control", in: playPauseNamespace)
-        .glassEffectTransition(.matchedGeometry)
+        .buttonStyle(.plain)
         .accessibilityLabel(coordinator.isPlaying ? "Pause" : "Play")
     }
 
@@ -612,11 +659,9 @@ private struct PlayerControlBar: View {
                 Image(systemName: coordinator.volumeIconName)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
-                    .contentTransition(.symbolEffect(.replace))
                     .frame(width: 20, height: volumeIconContentHeight)
                     .frame(minHeight: compactControlHeight)
                     .contentShape(Rectangle())
-                    .animation(.snappy(duration: 0.11, extraBounce: 0), value: coordinator.volumeIconName)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(coordinator.volume <= 0.01 ? "Unmute" : "Mute")
@@ -685,10 +730,14 @@ private struct PlayerControlBar: View {
                 fontSize: 14,
                 foregroundStyle: coordinator.hasSubtitleOptions ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
             )
+            .frame(minWidth: compactControlHeight, minHeight: compactControlHeight)
+            .playerControlSurface(
+                reduceTransparency: reduceTransparency,
+                glass: .regular,
+                shape: Circle()
+            )
         }
-        .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.circle)
-        .controlSize(.regular)
+        .buttonStyle(.plain)
         .disabled(!coordinator.hasSubtitleOptions)
         .accessibilityLabel("Subtitles")
         .accessibilityValue(coordinator.subtitleAccessibilityValue)
@@ -699,10 +748,15 @@ private struct PlayerControlBar: View {
             isQualityPopoverPresented.toggle()
         } label: {
             qualityButtonLabel
+                .frame(minHeight: compactControlHeight)
+                .padding(.horizontal, 8)
+                .playerControlSurface(
+                    reduceTransparency: reduceTransparency,
+                    glass: .regular,
+                    shape: Capsule()
+                )
         }
-        .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.capsule)
-        .controlSize(.regular)
+        .buttonStyle(.plain)
         .popover(
             isPresented: $isQualityPopoverPresented,
             attachmentAnchor: .rect(.bounds),
@@ -775,10 +829,14 @@ private struct PlayerControlBar: View {
             coordinator.toggleTheaterMode()
         } label: {
             circularButtonLabel(symbol: coordinator.theaterSymbolName, fontSize: 14)
+                .frame(minWidth: compactControlHeight, minHeight: compactControlHeight)
+                .playerControlSurface(
+                    reduceTransparency: reduceTransparency,
+                    glass: .regular,
+                    shape: Circle()
+                )
         }
-        .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.circle)
-        .controlSize(.regular)
+        .buttonStyle(.plain)
         .accessibilityLabel("Theater Mode")
         .accessibilityValue(coordinator.isTheaterMode ? "On" : "Off")
     }
@@ -788,10 +846,14 @@ private struct PlayerControlBar: View {
             coordinator.toggleFullscreen()
         } label: {
             circularButtonLabel(symbol: coordinator.fullscreenSymbolName, fontSize: 14)
+                .frame(minWidth: compactControlHeight, minHeight: compactControlHeight)
+                .playerControlSurface(
+                    reduceTransparency: reduceTransparency,
+                    glass: .regular,
+                    shape: Circle()
+                )
         }
-        .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.circle)
-        .controlSize(.regular)
+        .buttonStyle(.plain)
         .accessibilityLabel(coordinator.isFullscreen ? "Exit Fullscreen" : "Fullscreen")
         .accessibilityValue(coordinator.isFullscreen ? "On" : "Off")
     }
@@ -822,9 +884,7 @@ private struct PlayerControlBar: View {
         Image(systemName: symbol)
             .font(.system(size: fontSize, weight: .semibold))
             .foregroundStyle(foregroundStyle)
-            .contentTransition(.symbolEffect(.replace))
             .frame(width: circularButtonLabelSize, height: circularButtonLabelSize)
-            .animation(.snappy(duration: 0.11, extraBounce: 0), value: symbol)
     }
 }
 
@@ -1108,17 +1168,13 @@ private extension View {
         glass: Glass,
         shape: S
     ) -> some View {
-        if reduceTransparency {
-            self
-                .background(
-                    shape
-                        .fill(Color.black.opacity(0.82))
-                        .overlay(
-                            shape.stroke(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                )
-        } else {
-            self.glassEffect(glass, in: shape)
-        }
+        self
+            .background(
+                shape
+                    .fill(Color.black.opacity(reduceTransparency ? 0.82 : 0.58))
+                    .overlay(
+                        shape.stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
     }
 }

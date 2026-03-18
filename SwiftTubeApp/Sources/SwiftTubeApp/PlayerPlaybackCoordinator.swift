@@ -257,8 +257,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private enum Timing {
         static let inactivityHideDelay: TimeInterval = 2.0
         static let hideMonitorInterval: UInt64 = 150_000_000
-        static let interactionThrottle: TimeInterval = 0.12
-        static let visibilityAnimationDuration = 0.12
+        static let interactionThrottle: TimeInterval = 0.16
+        static let visibilityAnimationDuration = 0.10
     }
 
     private enum HideMonitorResult {
@@ -821,30 +821,22 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func refreshQualityOptions(for playback: VideoPlayback) async {
+        var manifestOptions: [QualityOption] = []
+
         switch currentSource {
         case .manifestAutomatic(let manifestStream), .manifestVariant(parent: let manifestStream, url: _):
             if let manifestAsset = buildAsset(for: manifestStream) {
                 let variants = try? await manifestAsset.load(.variants)
-                let manifestOptions = buildManifestQualityOptions(from: variants ?? [])
-                if !manifestOptions.isEmpty {
-                    qualityOptions = [QualityOption.automatic] + manifestOptions
-                    if qualityOptions.contains(where: { $0.id == selectedQualityOptionID }) == false {
-                        selectedQualityOptionID = QualityOption.automaticID
-                    }
-                    await qualityCoordinator.cache(
-                        options: qualityOptions,
-                        for: playback,
-                        automaticSource: currentSource
-                    )
-                    return
-                }
+                manifestOptions = buildManifestQualityOptions(from: variants ?? [])
             }
         case .direct, .adaptivePair, .none:
             break
         }
 
         let directOptions = buildFallbackQualityOptions(for: playback)
-        qualityOptions = [QualityOption.automatic] + directOptions
+        let resolvedManualOptions = directOptions.isEmpty ? manifestOptions : directOptions
+
+        qualityOptions = [QualityOption.automatic] + resolvedManualOptions
         if qualityOptions.contains(where: { $0.id == selectedQualityOptionID }) == false {
             selectedQualityOptionID = QualityOption.automaticID
         }
@@ -923,14 +915,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 self?.handlePeriodicTimeUpdate(time)
             }
         }
 
         timeControlObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) {
             [weak self] observedPlayer, _ in
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 self?.handlePlaybackStateChange(observedPlayer.timeControlStatus)
             }
         }
@@ -1024,28 +1016,28 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         updateCurrentItemState(from: item)
 
         currentItemStatusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] observedItem, _ in
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 self?.updateCurrentItemState(from: observedItem)
             }
         }
 
         currentItemLikelyToKeepUpObservation = item.observe(\.isPlaybackLikelyToKeepUp, options: [.initial, .new]) {
             [weak self] observedItem, _ in
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 self?.updateCurrentItemState(from: observedItem)
             }
         }
 
         currentItemBufferEmptyObservation = item.observe(\.isPlaybackBufferEmpty, options: [.initial, .new]) {
             [weak self] observedItem, _ in
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 self?.updateCurrentItemState(from: observedItem)
             }
         }
 
         currentItemLoadedTimeRangesObservation = item.observe(\.loadedTimeRanges, options: [.initial, .new]) {
             [weak self] observedItem, _ in
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 self?.updateCurrentItemState(from: observedItem)
             }
         }
