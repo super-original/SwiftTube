@@ -529,6 +529,7 @@ private struct PlayerStageLoadingOverlay: View {
         .tint(.white)
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
     }
 }
 
@@ -667,7 +668,7 @@ private struct PlayerControlBar: View {
             .buttonStyle(.plain)
             .accessibilityLabel(coordinator.volume <= 0.01 ? "Unmute" : "Mute")
 
-            Slider(
+            PlayerGlassSlider(
                 value: Binding(
                     get: { coordinator.volume },
                     set: { newValue in
@@ -675,10 +676,10 @@ private struct PlayerControlBar: View {
                         coordinator.handlePointerMovement()
                     }
                 ),
-                in: 0...1
+                bounds: 0...1,
+                accessibilityLabel: "Volume"
             )
-            .frame(width: 112)
-            .accessibilityLabel("Volume")
+            .frame(width: 112, height: 22)
         }
         .padding(.horizontal, 14)
         .frame(minHeight: compactControlHeight)
@@ -694,18 +695,19 @@ private struct PlayerControlBar: View {
             Text(coordinator.currentTimeText)
                 .frame(width: timeLabelWidth, alignment: .leading)
 
-            Slider(
+            PlayerGlassSlider(
                 value: Binding(
                     get: { coordinator.scrubPosition },
                     set: { coordinator.updateScrubPosition($0) }
                 ),
-                in: 0...coordinator.scrubberUpperBound,
+                bounds: 0...coordinator.scrubberUpperBound,
                 onEditingChanged: { isEditing in
                     coordinator.setScrubbing(isEditing)
-                }
+                },
+                accessibilityLabel: "Playback position"
             )
             .disabled(coordinator.duration <= 0)
-            .accessibilityLabel("Playback position")
+            .frame(height: 22)
 
             Text(coordinator.remainingTimeText)
                 .frame(width: timeLabelWidth, alignment: .trailing)
@@ -776,9 +778,18 @@ private struct PlayerControlBar: View {
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
 
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.secondary)
+            Group {
+                if coordinator.isSwitchingQuality {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.secondary)
+                } else {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 10, height: 10)
         }
         .frame(width: qualityButtonWidth, height: circularButtonLabelSize)
     }
@@ -845,8 +856,15 @@ private struct PlayerControlBar: View {
     @ViewBuilder
     func qualityMenuRow(for option: QualityOption) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: option.id == coordinator.selectedQualityOptionID ? "checkmark" : "circle")
-                .foregroundStyle(option.id == coordinator.selectedQualityOptionID ? Color.accentColor : .secondary)
+            if coordinator.pendingQualityOptionID == option.id {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.accentColor)
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemName: option.id == coordinator.selectedQualityOptionID ? "checkmark" : "circle")
+                    .foregroundStyle(option.id == coordinator.selectedQualityOptionID ? Color.accentColor : .secondary)
+            }
 
             Text(option.title)
 
@@ -871,6 +889,118 @@ private struct PlayerControlBar: View {
             .contentTransition(.symbolEffect(.replace))
             .frame(width: circularButtonLabelSize, height: circularButtonLabelSize)
             .animation(.snappy(duration: 0.11, extraBounce: 0), value: symbol)
+    }
+}
+
+private struct PlayerGlassSlider: View {
+    @Binding var value: Double
+    let bounds: ClosedRange<Double>
+    var onEditingChanged: ((Bool) -> Void)? = nil
+    var accessibilityLabel: String
+
+    @State private var isEditing = false
+
+    private let thumbSize: CGFloat = 14
+    private let trackHeight: CGFloat = 5
+
+    var body: some View {
+        GeometryReader { proxy in
+            let availableWidth = max(proxy.size.width - thumbSize, 1)
+            let progress = normalizedValue
+            let thumbOffset = progress * availableWidth
+            let fillWidth = min(max(thumbOffset + (thumbSize / 2), thumbSize / 2), proxy.size.width)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(0.18))
+                    .frame(height: trackHeight)
+
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.98),
+                                Color.white.opacity(0.82)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: fillWidth, height: trackHeight)
+
+                Circle()
+                    .fill(Color.white.opacity(0.98))
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white.opacity(0.5), lineWidth: 0.7)
+                    )
+                    .shadow(color: .black.opacity(0.24), radius: 6, y: 2)
+                    .frame(width: thumbSize, height: thumbSize)
+                    .scaleEffect(isEditing ? 1.08 : 1)
+                    .offset(x: thumbOffset)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        if isEditing == false {
+                            isEditing = true
+                            onEditingChanged?(true)
+                        }
+                        updateValue(for: gesture.location.x, availableWidth: availableWidth)
+                    }
+                    .onEnded { gesture in
+                        updateValue(for: gesture.location.x, availableWidth: availableWidth)
+                        if isEditing {
+                            isEditing = false
+                            onEditingChanged?(false)
+                        }
+                    }
+            )
+        }
+        .frame(minHeight: thumbSize)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(Text(accessibilityValueText))
+        .accessibilityAdjustableAction { direction in
+            let step = (bounds.upperBound - bounds.lowerBound) / 20
+            guard step.isFinite, step > 0 else { return }
+            switch direction {
+            case .increment:
+                value = min(value + step, bounds.upperBound)
+            case .decrement:
+                value = max(value - step, bounds.lowerBound)
+            @unknown default:
+                break
+            }
+        }
+        .animation(.snappy(duration: 0.12, extraBounce: 0), value: isEditing)
+    }
+
+    private var normalizedValue: CGFloat {
+        guard bounds.upperBound > bounds.lowerBound else { return 0 }
+        let clamped = min(max(value, bounds.lowerBound), bounds.upperBound)
+        let progress = (clamped - bounds.lowerBound) / (bounds.upperBound - bounds.lowerBound)
+        return CGFloat(progress)
+    }
+
+    private var accessibilityValueText: String {
+        let clamped = min(max(value, bounds.lowerBound), bounds.upperBound)
+        if bounds.upperBound <= 1.001, bounds.lowerBound >= 0 {
+            return "\(Int((clamped * 100).rounded())) percent"
+        }
+        return String(format: "%.0f", clamped)
+    }
+
+    private func updateValue(for locationX: CGFloat, availableWidth: CGFloat) {
+        guard bounds.upperBound > bounds.lowerBound else {
+            value = bounds.lowerBound
+            return
+        }
+
+        let progress = min(max((locationX - (thumbSize / 2)) / availableWidth, 0), 1)
+        value = bounds.lowerBound + Double(progress) * (bounds.upperBound - bounds.lowerBound)
     }
 }
 
@@ -914,6 +1044,7 @@ private struct PlayerInlineLoadingOverlay: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .foregroundStyle(.white)
+        .allowsHitTesting(false)
     }
 }
 

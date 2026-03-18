@@ -317,7 +317,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     @Published private(set) var player: AVPlayer? = nil
-    @Published private(set) var isPreparing = false
+    @Published private(set) var isPreparingInitialPlayback = false
     @Published private(set) var errorMessage: String? = nil
     @Published private(set) var isPlaying = false
     @Published private(set) var controlsVisible = true
@@ -326,6 +326,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var scrubPosition: Double = 0
     @Published private(set) var qualityOptions: [QualityOption] = [QualityOption.automatic]
     @Published private(set) var selectedQualityOptionID = QualityOption.automaticID
+    @Published private(set) var pendingQualityOptionID: String? = nil
     @Published private(set) var subtitleOptions: [SubtitleOption] = []
     @Published private(set) var selectedSubtitleOptionID = SubtitleOption.offID
     @Published var volume: Double = 0.9 {
@@ -379,6 +380,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             return "Auto"
         }
         return currentQualityOption?.title ?? "Quality"
+    }
+
+    var isSwitchingQuality: Bool {
+        pendingQualityOptionID != nil
     }
 
     var qualityControlDetail: String? {
@@ -443,11 +448,15 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     var playbackLoadingText: String {
         if currentItemStatus != .readyToPlay {
-            return "Loading video..."
+            return isSwitchingQuality ? "Switching quality..." : "Loading video..."
         }
 
-        if isPreparing {
-            return "Updating player..."
+        if isSwitchingQuality {
+            return "Switching quality..."
+        }
+
+        if isPreparingInitialPlayback {
+            return "Loading video..."
         }
 
         return "Buffering..."
@@ -500,7 +509,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         menuInteractionTask?.cancel()
         geometryAssertionTask?.cancel()
         errorMessage = nil
-        isPreparing = false
+        isPreparingInitialPlayback = false
         controlsVisible = true
         isPlaying = false
         currentTime = 0
@@ -508,6 +517,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         scrubPosition = 0
         qualityOptions = [QualityOption.automatic]
         selectedQualityOptionID = QualityOption.automaticID
+        pendingQualityOptionID = nil
         subtitleOptions = []
         selectedSubtitleOptionID = SubtitleOption.offID
         legibleGroup = nil
@@ -662,19 +672,23 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
 
         noteInteraction()
+        let previousSelectionID = selectedQualityOptionID
+        selectedQualityOptionID = option.id
+
         if applyManifestQualitySelectionIfPossible(option) {
+            pendingQualityOptionID = nil
             endMenuInteraction()
             return
         }
 
-        let restoreState = currentRestoreState()
+        pendingQualityOptionID = option.id
         let subtitleSnapshot = currentSubtitleSnapshot()
         prepareTask?.cancel()
         prepareTask = Task { [weak self] in
             await self?.switchQuality(
                 to: option,
                 playback: playback,
-                restoreState: restoreState,
+                previousSelectionID: previousSelectionID,
                 subtitleSnapshot: subtitleSnapshot
             )
         }
@@ -736,7 +750,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private func preparePlayback(_ playback: VideoPlayback) async {
         errorMessage = nil
-        isPreparing = true
+        isPreparingInitialPlayback = true
+        pendingQualityOptionID = nil
         controlsVisible = true
         currentItemStatus = .unknown
         isCurrentItemLikelyToKeepUp = false
@@ -784,18 +799,17 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
 
         if !Task.isCancelled {
-            isPreparing = false
+            isPreparingInitialPlayback = false
         }
     }
 
     private func switchQuality(
         to option: QualityOption,
         playback: VideoPlayback,
-        restoreState: PlaybackRestoreState,
+        previousSelectionID: String,
         subtitleSnapshot: SubtitleSelectionSnapshot?
     ) async {
         errorMessage = nil
-        isPreparing = true
 
         do {
             let automaticSource = try await preferredSource(for: playback)
@@ -807,11 +821,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             let item = try await buildPlayerItem(for: source)
             guard !Task.isCancelled else { return }
 
+            let restoreState = currentRestoreState()
             let player = ensurePlayer()
             observeCurrentItem(item)
             player.replaceCurrentItem(with: item)
             currentSource = source
-            selectedQualityOptionID = option.id
 
             async let metadataRefresh: Void = refreshPlaybackMetadata(
                 for: item,
@@ -827,21 +841,27 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 player.play()
             } else {
                 player.pause()
-                controlsVisible = true
             }
             currentTime = clampedTime
             scrubPosition = clampedTime
-            isPreparing = false
+            pendingQualityOptionID = nil
+            if isHoveringStage {
+                startHideMonitorIfNeeded()
+            } else {
+                hideControlsIfAllowed()
+            }
             endMenuInteraction()
             await metadataRefresh
         } catch {
             if !Task.isCancelled {
                 errorMessage = "Failed to switch quality."
+                selectedQualityOptionID = previousSelectionID
+                pendingQualityOptionID = nil
             }
         }
 
         if !Task.isCancelled {
-            isPreparing = false
+            pendingQualityOptionID = nil
             endMenuInteraction()
         }
     }
@@ -1197,6 +1217,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
 
         selectedQualityOptionID = option.id
+        pendingQualityOptionID = nil
         return true
     }
 
@@ -1224,7 +1245,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             assert(
                 player.rate > 0
                     || player.timeControlStatus == .waitingToPlayAtSpecifiedRate
-                    || self.isPreparing
+                    || self.isPreparingInitialPlayback
+                    || self.isSwitchingQuality
                     || isAtEnd,
                 "AVPlayer unexpectedly stopped during a geometry change."
             )
@@ -1251,7 +1273,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                     guard let self else { return .stop }
                     guard self.player != nil else { return .stop }
 
-                    if self.isPreparing {
+                    if self.isPreparingInitialPlayback {
                         return .keepWatching
                     }
 
@@ -1306,7 +1328,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private func hideControlsIfAllowed() {
         stopHideMonitor()
         guard player != nil else { return }
-        guard !isPreparing, !isScrubbing, !isMenuInteractionActive else { return }
+        guard !isPreparingInitialPlayback, !isScrubbing, !isMenuInteractionActive else { return }
         guard controlsVisible else { return }
 
         withAnimation(.easeOut(duration: Timing.visibilityAnimationDuration)) {
@@ -1648,11 +1670,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 let title = qualityTitle(
                     height: Double(stream.height ?? 0),
                     width: Double(stream.width ?? 0),
-                    bitrate: Double(stream.bitrate ?? 0)
+                    bitrate: Double(stream.bitrate ?? 0),
+                    fps: stream.fps
                 )
-                let key = "\(title)-\(stream.hasAudio)"
-                guard seenKeys.insert(key).inserted else { return nil }
                 let detail = bitrateText(Double(stream.bitrate ?? 0))
+                let key = "\(title)-\(detail ?? "")"
+                guard seenKeys.insert(key).inserted else { return nil }
                 return QualityOption(
                     id: "stream-\(stream.url)",
                     title: title,
@@ -1850,9 +1873,18 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         return lhs.isValid ? lhs : rhs
     }
 
-    private func qualityTitle(height: Double, width: Double, bitrate: Double) -> String {
+    private func qualityTitle(
+        height: Double,
+        width: Double,
+        bitrate: Double,
+        fps: Int? = nil
+    ) -> String {
         if height > 0 {
-            return "\(Int(height.rounded()))p"
+            let label = "\(Int(height.rounded()))p"
+            if let fps, fps >= 50 {
+                return "\(label)60"
+            }
+            return label
         }
         if width > 0 {
             return "\(Int(width.rounded()))w"
