@@ -1,5 +1,6 @@
 import AppKit
 
+@MainActor
 final class ImageCache {
     static let shared = ImageCache()
 

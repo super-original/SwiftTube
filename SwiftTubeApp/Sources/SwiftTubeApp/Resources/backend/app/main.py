@@ -65,6 +65,21 @@ def _load_recommendations(
     return extract_video_items(data), extract_continuation_token(data)
 
 
+def _merge_streams(*stream_groups: list) -> list:
+    merged = []
+    seen = set()
+
+    for group in stream_groups:
+        for stream in group or []:
+            key = (stream.url, stream.formatId, stream.streamKind)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(stream)
+
+    return merged
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "instanceId": INSTANCE_ID, "version": APP_VERSION}
@@ -209,6 +224,7 @@ def _video_info(
             recommendations=related_videos,
             comments=[],
             playbackStrategy="direct",
+            preferredManifestStream=None,
             preferredMuxedStream=best,
             bestStreamUrl=best.url if best else None,
             bestStream=best,
@@ -217,7 +233,7 @@ def _video_info(
     if not playback_bundle.streams and not streams:
         raise HTTPException(status_code=404, detail="No playable streams found")
 
-    resolved_streams = playback_bundle.streams or streams
+    resolved_streams = _merge_streams(playback_bundle.streams, streams)
     resolved_muxed_stream = playback_bundle.preferred_muxed_stream or best
     resolved_strategy = (
         playback_bundle.playback_strategy if playback_bundle.streams else "direct"
@@ -241,6 +257,7 @@ def _video_info(
         recommendations=related_videos,
         comments=[],
         playbackStrategy=resolved_strategy,
+        preferredManifestStream=playback_bundle.preferred_manifest_stream,
         preferredMuxedStream=resolved_muxed_stream,
         preferredVideoStream=playback_bundle.preferred_video_stream,
         preferredAudioStream=playback_bundle.preferred_audio_stream,

@@ -118,7 +118,9 @@ final class PlayerViewModel: ObservableObject {
 
             if let player = buildDirectPlayer(for: playback) {
                 self.player = player
-                self.activeStream = playback.preferredMuxedStream ?? playback.bestStream
+                self.activeStream = playback.preferredManifestStream
+                    ?? playback.preferredMuxedStream
+                    ?? playback.bestStream
                 self.errorMessage = nil
                 self.isLoading = false
                 player.play()
@@ -169,7 +171,9 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func buildDirectPlayer(for playback: VideoPlayback) -> AVPlayer? {
-        if let stream = playback.preferredMuxedStream ?? playback.bestStream,
+        if let stream = playback.preferredManifestStream
+            ?? playback.preferredMuxedStream
+            ?? playback.bestStream,
            let asset = buildAsset(for: stream) {
             let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
             player.automaticallyWaitsToMinimizeStalling = true
@@ -206,6 +210,10 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func resolvedDirectPlaybackURL(for playback: VideoPlayback) -> URL? {
+        if let urlString = playback.preferredManifestStream?.url,
+           let url = URL(string: urlString) {
+            return url
+        }
         if let urlString = playback.preferredMuxedStream?.url,
            let url = URL(string: urlString) {
             return url

@@ -43,6 +43,7 @@ class StreamInfo(BaseModel):
     hasAudio: bool = False
     hasVideo: bool = False
     isAdaptive: bool = False
+    streamKind: str = "muxed"
 
 
 class CommentItem(BaseModel):
@@ -79,6 +80,7 @@ class VideoPlayback(BaseModel):
     recommendations: List[VideoItem] = Field(default_factory=list)
     comments: List[CommentItem] = Field(default_factory=list)
     playbackStrategy: str = "direct"
+    preferredManifestStream: Optional[StreamInfo] = None
     preferredMuxedStream: Optional[StreamInfo] = None
     preferredVideoStream: Optional[StreamInfo] = None
     preferredAudioStream: Optional[StreamInfo] = None

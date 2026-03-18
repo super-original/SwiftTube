@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 final class BackendClient {
     static let shared = BackendClient()
 

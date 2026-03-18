@@ -16,12 +16,15 @@ class PlaybackBundle:
     title: Optional[str]
     duration_text: Optional[str]
     streams: List[StreamInfo]
+    preferred_manifest_stream: Optional[StreamInfo]
     preferred_muxed_stream: Optional[StreamInfo]
     preferred_video_stream: Optional[StreamInfo]
     preferred_audio_stream: Optional[StreamInfo]
 
     @property
     def playback_strategy(self) -> str:
+        if self.preferred_manifest_stream is not None:
+            return "manifest"
         if (
             self.preferred_video_stream is not None
             and self.preferred_audio_stream is not None
@@ -36,7 +39,11 @@ class PlaybackBundle:
 
     @property
     def best_stream(self) -> Optional[StreamInfo]:
-        return self.preferred_muxed_stream or self.preferred_video_stream
+        return (
+            self.preferred_manifest_stream
+            or self.preferred_muxed_stream
+            or self.preferred_video_stream
+        )
 
     @property
     def best_stream_url(self) -> Optional[str]:
@@ -101,6 +108,17 @@ def _codec_score(codec: Optional[str]) -> int:
     if codec.startswith("opus"):
         return 3
     return 1
+
+
+def _manifest_stream_score(stream: StreamInfo) -> tuple[int, int, int, int, int, int]:
+    return (
+        1 if stream.hasAudio else 0,
+        1 if stream.hasVideo else 0,
+        stream.height or 0,
+        stream.fps or 0,
+        stream.bitrate or 0,
+        _codec_score(stream.videoCodec),
+    )
 
 
 def _video_playability_score(codec: Optional[str]) -> int:
@@ -190,6 +208,7 @@ def _build_streams(formats: Iterable[dict[str, Any]]) -> List[StreamInfo]:
             bitrate = int(bitrate * 1000)
         else:
             bitrate = None
+        stream_kind = _stream_kind(url, has_audio, has_video)
 
         streams.append(
             StreamInfo(
@@ -214,10 +233,34 @@ def _build_streams(formats: Iterable[dict[str, Any]]) -> List[StreamInfo]:
                 hasAudio=has_audio,
                 hasVideo=has_video,
                 isAdaptive=has_audio != has_video,
+                streamKind=stream_kind,
             )
         )
 
     return streams
+
+
+def _stream_kind(url: str, has_audio: bool, has_video: bool) -> str:
+    if _is_manifest_url(url):
+        return "manifest"
+    if has_video and has_audio:
+        return "muxed"
+    if has_video:
+        return "video"
+    if has_audio:
+        return "audio"
+    return "muxed"
+
+
+def _best_manifest_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
+    candidates = [
+        stream
+        for stream in streams
+        if stream.streamKind == "manifest" and stream.hasVideo
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=_manifest_stream_score)
 
 
 def _best_muxed_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
@@ -276,6 +319,7 @@ def _extract_playback(video_id: str, opts: dict[str, Any]) -> PlaybackBundle:
         title=info.get("title") if isinstance(info, dict) else None,
         duration_text=_format_duration(info.get("duration") if isinstance(info, dict) else None),
         streams=streams,
+        preferred_manifest_stream=_best_manifest_stream(streams),
         preferred_muxed_stream=_best_muxed_stream(streams),
         preferred_video_stream=_best_video_stream(streams),
         preferred_audio_stream=_best_audio_stream(streams),
@@ -311,11 +355,12 @@ def _stream_is_reachable(
     stream: StreamInfo,
     auth_options: Optional[dict[str, Any]],
 ) -> bool:
-    if _is_manifest_url(stream.url):
-        return False
-
     try:
         with _probe_client(stream, auth_options) as client:
+            if _is_manifest_url(stream.url):
+                response = client.get(stream.url)
+                return 200 <= response.status_code < 300 and "#EXTM3U" in response.text
+
             response = client.head(stream.url)
             if 200 <= response.status_code < 300:
                 return True
@@ -335,6 +380,22 @@ def _validated_authenticated_bundle(
     bundle: PlaybackBundle,
     auth_options: dict[str, Any],
 ) -> Optional[PlaybackBundle]:
+    manifest_candidates = sorted(
+        [
+            stream
+            for stream in bundle.streams
+            if stream.streamKind == "manifest" and stream.hasVideo
+        ],
+        key=_manifest_stream_score,
+        reverse=True,
+    )
+
+    reachable_manifest_stream = None
+    for candidate in manifest_candidates[:3]:
+        if _stream_is_reachable(candidate, auth_options):
+            reachable_manifest_stream = candidate
+            break
+
     muxed_candidates = sorted(
         [
             stream
@@ -356,6 +417,15 @@ def _validated_authenticated_bundle(
     preferred_video_stream = _best_video_stream(bundle.streams)
     preferred_audio_stream = _best_audio_stream(bundle.streams)
 
+    if reachable_manifest_stream is not None:
+        return replace(
+            bundle,
+            preferred_manifest_stream=reachable_manifest_stream,
+            preferred_muxed_stream=reachable_muxed_stream,
+            preferred_video_stream=preferred_video_stream,
+            preferred_audio_stream=preferred_audio_stream,
+        )
+
     if (
         preferred_video_stream is not None
         and preferred_audio_stream is not None
@@ -367,6 +437,7 @@ def _validated_authenticated_bundle(
     ):
         return replace(
             bundle,
+            preferred_manifest_stream=None,
             preferred_muxed_stream=reachable_muxed_stream,
             preferred_video_stream=preferred_video_stream,
             preferred_audio_stream=preferred_audio_stream,
@@ -375,6 +446,7 @@ def _validated_authenticated_bundle(
     if reachable_muxed_stream is not None:
         return replace(
             bundle,
+            preferred_manifest_stream=None,
             preferred_muxed_stream=reachable_muxed_stream,
             preferred_video_stream=None,
             preferred_audio_stream=None,

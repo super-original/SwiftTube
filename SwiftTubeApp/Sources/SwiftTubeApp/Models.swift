@@ -43,6 +43,7 @@ struct StreamInfo: Codable, Hashable {
     let hasAudio: Bool
     let hasVideo: Bool
     let isAdaptive: Bool
+    let streamKind: String
 }
 
 struct CommentItem: Codable, Hashable, Identifiable {
@@ -84,6 +85,7 @@ struct VideoPlayback: Codable {
     let recommendations: [VideoItem]
     let comments: [CommentItem]
     let playbackStrategy: String
+    let preferredManifestStream: StreamInfo?
     let preferredMuxedStream: StreamInfo?
     let preferredVideoStream: StreamInfo?
     let preferredAudioStream: StreamInfo?
