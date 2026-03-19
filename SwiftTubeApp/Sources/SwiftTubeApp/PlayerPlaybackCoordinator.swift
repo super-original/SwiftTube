@@ -531,9 +531,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var playbackBadgeText: String {
-        if let automaticMPVDisplayedQualityOption {
-            return automaticMPVDisplayedQualityOption.title
-        }
         if selectedQualityOptionID == QualityOption.automaticID {
             return "Auto"
         }
@@ -541,9 +538,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var qualityControlText: String {
-        if let automaticMPVDisplayedQualityOption {
-            return automaticMPVDisplayedQualityOption.title
-        }
         if qualityControlSelectionID == QualityOption.automaticID {
             return "Auto"
         }
@@ -559,9 +553,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var qualityControlDetail: String? {
-        if let automaticMPVDisplayedQualityOption {
-            return automaticMPVDisplayedQualityOption.detail
-        }
         guard qualityControlSelectionID != QualityOption.automaticID else {
             return nil
         }
@@ -569,7 +560,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var qualityControlSelectionID: String {
-        pendingQualityOptionID ?? automaticMPVDisplayedQualityOption?.id ?? selectedQualityOptionID
+        pendingQualityOptionID ?? selectedQualityOptionID
     }
 
     var subtitleControlText: String {
@@ -948,16 +939,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         qualityOptions.first(where: { $0.id == selectedQualityOptionID })
     }
 
-    private var automaticMPVDisplayedQualityOption: QualityOption? {
-        guard pendingQualityOptionID == nil,
-              activeBackendKind == .mpv,
-              selectedQualityOptionID == QualityOption.automaticID,
-              let playback = currentPlayback,
-              let selection = automaticStartupMPVSelection(for: playback) else {
-            return nil
-        }
+    private var displayedQualityOption: QualityOption? {
+        qualityOptions.first(where: { $0.id == qualityControlSelectionID })
+    }
 
-        return qualityOptions.first(where: { option in
+    private func manualQualityOptionID(for selection: ManualPlaybackSelection) -> String? {
+        qualityOptions.first(where: { option in
             switch option.selection {
             case .manual(let candidateSelection):
                 return candidateSelection.stream.url == selection.stream.url
@@ -965,11 +952,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             case .automatic, .manifestVariant:
                 return false
             }
-        })
-    }
-
-    private var displayedQualityOption: QualityOption? {
-        qualityOptions.first(where: { $0.id == qualityControlSelectionID })
+        })?.id
     }
 
     private var currentSubtitleOption: SubtitleOption? {
@@ -1255,6 +1238,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         duration = 0
         startPollingMPVState(using: engine)
         await refreshQualityOptions(for: playback)
+        if let optionID = manualQualityOptionID(for: selection) {
+            selectedQualityOptionID = optionID
+        }
         startHideMonitorIfNeeded()
     }
 
@@ -1305,12 +1291,17 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         currentSource = nil
         scheduleMPVStop(previousMPVEngine, pauseFirst: true)
 
-        selectedQualityOptionID = option.id
         currentTime = clampedTime
         scrubPosition = clampedTime
         pendingQualityOptionID = nil
         startPollingMPVState(using: engine)
         await refreshQualityOptions(for: playback)
+        if case .automatic = option.selection,
+           let optionID = manualQualityOptionID(for: selection) {
+            selectedQualityOptionID = optionID
+        } else {
+            selectedQualityOptionID = option.id
+        }
         PlaybackDebugLogger.log(
             "mpv switch success option=\(debugDescription(for: option)) duration=\(duration) currentTime=\(currentTime) qualityOptions=\(qualityOptions.map(debugDescription(for:)).joined(separator: " | "))"
         )
