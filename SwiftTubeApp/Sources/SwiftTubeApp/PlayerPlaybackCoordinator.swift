@@ -201,6 +201,30 @@ private func isAVFoundationVideoContainerSupported(_ container: String?) -> Bool
     return container.hasPrefix("mp4") || container.hasPrefix("mov") || container.hasPrefix("m4v")
 }
 
+private func directPlaybackSourceClient(for stream: StreamInfo) -> String? {
+    guard let components = URLComponents(string: stream.url) else {
+        return nil
+    }
+
+    return components.queryItems?
+        .first(where: { $0.name == "c" })?
+        .value?
+        .uppercased()
+}
+
+private func isDirectPlaybackURLSupported(_ stream: StreamInfo) -> Bool {
+    guard let client = directPlaybackSourceClient(for: stream) else {
+        return true
+    }
+
+    switch client {
+    case "MWEB", "WEB", "WEB_CREATOR", "WEB_UNPLUGGED", "WEB_REMIX", "WEB_KIDS", "TVHTML5":
+        return false
+    default:
+        return true
+    }
+}
+
 private func isMPVCompatibleVideoContainer(_ container: String?) -> Bool {
     guard let container = container?.lowercased() else { return false }
     return container.hasPrefix("mp4")
@@ -238,7 +262,8 @@ private func isSupportedDirectStream(_ stream: StreamInfo) -> Bool {
         return false
     }
 
-    return isAVFoundationVideoContainerSupported(stream.container)
+    return isDirectPlaybackURLSupported(stream)
+        && isAVFoundationVideoContainerSupported(stream.container)
         && isAVFoundationVideoCodecSupported(stream.videoCodec)
 }
 
@@ -247,19 +272,23 @@ private func isSupportedVideoOnlyStream(_ stream: StreamInfo) -> Bool {
         return false
     }
 
-    return isAVFoundationVideoContainerSupported(stream.container)
+    return isDirectPlaybackURLSupported(stream)
+        && isAVFoundationVideoContainerSupported(stream.container)
         && isAVFoundationVideoCodecSupported(stream.videoCodec)
 }
 
 private func preferredAdaptiveAudioStream(for playback: VideoPlayback) -> StreamInfo? {
     if let preferredAudioStream = playback.preferredAudioStream {
-        return preferredAudioStream
+        if isDirectPlaybackURLSupported(preferredAudioStream) {
+            return preferredAudioStream
+        }
     }
 
     return playback.streams
         .filter {
             $0.hasAudio
                 && !$0.hasVideo
+                && isDirectPlaybackURLSupported($0)
                 && ($0.container?.hasPrefix("m4a") == true || $0.container?.hasPrefix("mp4") == true)
         }
         .sorted { lhs, rhs in
@@ -274,7 +303,9 @@ private func manualQualityCandidate(
     for stream: StreamInfo,
     playback: VideoPlayback
 ) -> ManualQualityCandidate? {
-    guard stream.hasVideo, stream.streamKind != "manifest" else {
+    guard stream.hasVideo,
+          stream.streamKind != "manifest",
+          isDirectPlaybackURLSupported(stream) else {
         return nil
     }
 
@@ -297,6 +328,10 @@ private func manualQualityCandidate(
 
     let audioStream = stream.hasAudio ? nil : preferredAdaptiveAudioStream(for: playback)
     if stream.hasAudio == false, audioStream == nil {
+        return nil
+    }
+
+    if let audioStream, isDirectPlaybackURLSupported(audioStream) == false {
         return nil
     }
 
