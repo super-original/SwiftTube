@@ -5,7 +5,6 @@ import SwiftUI
 import VideoToolbox
 
 struct ManualPlaybackSelection: Hashable, Sendable {
-    let backend: PlaybackBackendKind
     let stream: StreamInfo
     let audioStream: StreamInfo?
 }
@@ -107,20 +106,8 @@ private struct SubtitleSelectionSnapshot: Sendable {
     let localeIdentifier: String?
 }
 
-private struct SourceCandidate: Sendable {
-    let source: PlayerSourceDescriptor
-    let height: Int
-}
-
-private struct ManifestSourceCandidate: Sendable {
-    let source: PlayerSourceDescriptor
-    let maxHeight: Int
-    let variantCount: Int
-}
-
 private struct ManualQualityCandidate: Sendable {
     let selection: ManualPlaybackSelection
-    let capability: PlaybackCapability
     let bitrate: Int
 }
 
@@ -128,7 +115,6 @@ private enum PlayerSourceDescriptor: Sendable {
     case manifestAutomatic(StreamInfo)
     case manifestVariant(parent: StreamInfo, url: URL)
     case direct(StreamInfo)
-    case adaptivePair(video: StreamInfo, audio: StreamInfo)
 }
 
 private func playbackCodecScore(for codec: String?) -> Int {
@@ -142,7 +128,7 @@ private func playbackCodecScore(for codec: String?) -> Int {
     return 1
 }
 
-private func adaptiveAudioPreference(for stream: StreamInfo) -> (Int, Int, Int, Int) {
+private func manualQualityAudioPreference(for stream: StreamInfo) -> (Int, Int, Int, Int) {
     let channels = stream.audioChannels ?? 0
     let channelPreference: Int
     let channelTiebreaker: Int
@@ -170,15 +156,6 @@ private func adaptiveAudioPreference(for stream: StreamInfo) -> (Int, Int, Int, 
     )
 }
 
-private func compatibilityCodecPreference(for codec: String?) -> Int {
-    guard let codec else { return 0 }
-    if codec.hasPrefix("vp9") { return 3 }
-    if codec.hasPrefix("av01") { return 2 }
-    if codec.hasPrefix("avc1") { return 1 }
-    if codec.hasPrefix("hvc1") || codec.hasPrefix("hev1") { return 1 }
-    return 0
-}
-
 private enum AVFoundationPlaybackSupport {
     static let supportsAV1: Bool = {
         if #available(macOS 14.0, *) {
@@ -201,24 +178,6 @@ private func isAVFoundationVideoContainerSupported(_ container: String?) -> Bool
     return container.hasPrefix("mp4") || container.hasPrefix("mov") || container.hasPrefix("m4v")
 }
 
-private func isMPVCompatibleVideoContainer(_ container: String?) -> Bool {
-    guard let container = container?.lowercased() else { return false }
-    return container.hasPrefix("mp4")
-        || container.hasPrefix("mov")
-        || container.hasPrefix("m4v")
-        || container.hasPrefix("webm")
-        || container.hasPrefix("mkv")
-}
-
-private func isMPVCompatibleVideoCodec(_ codec: String?) -> Bool {
-    guard let codec else { return false }
-    return codec.hasPrefix("avc1")
-        || codec.hasPrefix("hvc1")
-        || codec.hasPrefix("hev1")
-        || codec.hasPrefix("av01")
-        || codec.hasPrefix("vp9")
-}
-
 private func hasConflictingHeaders(video: StreamInfo, audio: StreamInfo?) -> Bool {
     guard let audio else { return false }
     let videoHeaders = video.httpHeaders ?? [:]
@@ -233,7 +192,7 @@ private func hasConflictingHeaders(video: StreamInfo, audio: StreamInfo?) -> Boo
     return false
 }
 
-private func isSupportedDirectStream(_ stream: StreamInfo) -> Bool {
+private func isSupportedNativeStartupStream(_ stream: StreamInfo) -> Bool {
     guard stream.hasVideo, stream.hasAudio, stream.streamKind != "manifest" else {
         return false
     }
@@ -242,88 +201,55 @@ private func isSupportedDirectStream(_ stream: StreamInfo) -> Bool {
         && isAVFoundationVideoCodecSupported(stream.videoCodec)
 }
 
-private func isSupportedVideoOnlyStream(_ stream: StreamInfo) -> Bool {
-    guard stream.hasVideo, !stream.hasAudio, stream.streamKind != "manifest" else {
-        return false
-    }
-
-    return isAVFoundationVideoContainerSupported(stream.container)
-        && isAVFoundationVideoCodecSupported(stream.videoCodec)
-}
-
-private func preferredAdaptiveAudioStream(for playback: VideoPlayback) -> StreamInfo? {
+private func preferredManualQualityAudioStream(for playback: VideoPlayback) -> StreamInfo? {
     if let preferredAudioStream = playback.preferredAudioStream {
         return preferredAudioStream
     }
 
     return playback.streams
         .filter {
-            $0.hasAudio
-                && !$0.hasVideo
-                && ($0.container?.hasPrefix("m4a") == true || $0.container?.hasPrefix("mp4") == true)
+                $0.hasAudio
+                    && !$0.hasVideo
+                    && ($0.container?.hasPrefix("m4a") == true || $0.container?.hasPrefix("mp4") == true)
         }
         .sorted { lhs, rhs in
-            let lhsScore = adaptiveAudioPreference(for: lhs)
-            let rhsScore = adaptiveAudioPreference(for: rhs)
+            let lhsScore = manualQualityAudioPreference(for: lhs)
+            let rhsScore = manualQualityAudioPreference(for: rhs)
             return lhsScore > rhsScore
         }
         .first
+}
+
+private func isManualQualityVideoStream(_ stream: StreamInfo) -> Bool {
+    guard stream.hasVideo,
+          !stream.hasAudio,
+          stream.streamKind != "manifest",
+          (stream.height ?? 0) > 0,
+          stream.container?.lowercased().hasPrefix("mp4") == true,
+          stream.videoCodec?.hasPrefix("av01") == true else {
+        return false
+    }
+
+    return true
 }
 
 private func manualQualityCandidate(
     for stream: StreamInfo,
     playback: VideoPlayback
 ) -> ManualQualityCandidate? {
-    guard stream.hasVideo, stream.streamKind != "manifest" else {
-        return nil
-    }
-
-    if isSupportedDirectStream(stream) {
-        return ManualQualityCandidate(
-            selection: ManualPlaybackSelection(
-                backend: .avFoundation,
-                stream: stream,
-                audioStream: nil
-            ),
-            capability: .native,
-            bitrate: stream.bitrate ?? 0
-        )
-    }
-
-    if isSupportedVideoOnlyStream(stream),
-       let audioStream = preferredAdaptiveAudioStream(for: playback) {
-        return ManualQualityCandidate(
-            selection: ManualPlaybackSelection(
-                backend: .avFoundation,
-                stream: stream,
-                audioStream: audioStream
-            ),
-            capability: .native,
-            bitrate: stream.bitrate ?? 0
-        )
-    }
-
-    guard isMPVCompatibleVideoContainer(stream.container),
-          isMPVCompatibleVideoCodec(stream.videoCodec) else {
-        return nil
-    }
-
-    let audioStream = stream.hasAudio ? nil : preferredAdaptiveAudioStream(for: playback)
-    if stream.hasAudio == false, audioStream == nil {
-        return nil
-    }
-
-    if hasConflictingHeaders(video: stream, audio: audioStream) {
+    // All manual quality rows are mpv-backed av01 video-only streams paired
+    // with the preferred m4a audio track. Native playback is startup-only.
+    guard isManualQualityVideoStream(stream),
+          let audioStream = preferredManualQualityAudioStream(for: playback),
+          hasConflictingHeaders(video: stream, audio: audioStream) == false else {
         return nil
     }
 
     return ManualQualityCandidate(
         selection: ManualPlaybackSelection(
-            backend: .mpv,
             stream: stream,
             audioStream: audioStream
         ),
-        capability: .compatibility,
         bitrate: stream.bitrate ?? 0
     )
 }
@@ -333,27 +259,16 @@ private func automaticStartupSource(for playback: VideoPlayback) -> PlayerSource
         return .manifestAutomatic(manifestStream)
     }
 
-    if let muxedStream = playback.preferredMuxedStream, isSupportedDirectStream(muxedStream) {
+    if let muxedStream = playback.preferredMuxedStream, isSupportedNativeStartupStream(muxedStream) {
         return .direct(muxedStream)
     }
 
-    if let bestStream = playback.bestStream, isSupportedDirectStream(bestStream) {
+    if let bestStream = playback.bestStream, isSupportedNativeStartupStream(bestStream) {
         return .direct(bestStream)
     }
 
-    if let videoStream = playback.preferredVideoStream,
-       isSupportedVideoOnlyStream(videoStream),
-       let audioStream = preferredAdaptiveAudioStream(for: playback) {
-        return .adaptivePair(video: videoStream, audio: audioStream)
-    }
-
-    if let fallbackMuxedStream = playback.streams.first(where: isSupportedDirectStream) {
+    if let fallbackMuxedStream = playback.streams.first(where: isSupportedNativeStartupStream) {
         return .direct(fallbackMuxedStream)
-    }
-
-    if let fallbackVideoStream = playback.streams.first(where: isSupportedVideoOnlyStream),
-       let audioStream = preferredAdaptiveAudioStream(for: playback) {
-        return .adaptivePair(video: fallbackVideoStream, audio: audioStream)
     }
 
     return nil
@@ -451,36 +366,9 @@ private actor QualityCoordinator {
             return automaticSource
         case .manifestVariant:
             return playback.preferredManifestStream.map(PlayerSourceDescriptor.manifestAutomatic)
-        case .manual(let selection):
-            guard selection.backend == .avFoundation else {
-                return nil
-            }
-
-            if let audioStream = selection.audioStream {
-                return .adaptivePair(video: selection.stream, audio: audioStream)
-            }
-
-            return .direct(selection.stream)
+        case .manual:
+            return nil
         }
-    }
-
-    private static func bestAdaptiveAudioStream(for playback: VideoPlayback) -> StreamInfo? {
-        if let preferredAudioStream = playback.preferredAudioStream {
-            return preferredAudioStream
-        }
-
-        return playback.streams
-            .filter {
-                $0.hasAudio
-                    && !$0.hasVideo
-                    && ($0.container?.hasPrefix("m4a") == true || $0.container?.hasPrefix("mp4") == true)
-            }
-            .sorted { lhs, rhs in
-                let lhsScore = adaptiveAudioPreference(for: lhs)
-                let rhsScore = adaptiveAudioPreference(for: rhs)
-                return lhsScore > rhsScore
-            }
-            .first
     }
 }
 
@@ -1065,14 +953,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         do {
             switch option.selection {
-            case .manual(let manualSelection) where manualSelection.backend == .mpv:
+            case .manual(let manualSelection):
                 try await switchToMPVQuality(
                     option: option,
                     selection: manualSelection,
                     playback: playback
                 )
-            default:
-                try await switchToNativeQuality(
+            case .automatic, .manifestVariant:
+                try await switchToAutomaticQuality(
                     option: option,
                     playback: playback,
                     subtitleSnapshot: subtitleSnapshot
@@ -1098,11 +986,15 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
     }
 
-    private func switchToNativeQuality(
+    private func switchToAutomaticQuality(
         option: QualityOption,
         playback: VideoPlayback,
         subtitleSnapshot: SubtitleSelectionSnapshot?
     ) async throws {
+        guard case .automatic = option.selection else {
+            throw URLError(.unsupportedURL)
+        }
+
         let automaticSource = try await preferredSource(for: playback)
         let source = await qualityCoordinator.source(
             for: option,
@@ -1110,7 +1002,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             automaticSource: automaticSource
         )
         PlaybackDebugLogger.log(
-            "native switch source option=\(debugDescription(for: option)) automatic=\(debugDescription(for: automaticSource)) resolved=\(debugDescription(for: source))"
+            "automatic switch source option=\(debugDescription(for: option)) automatic=\(debugDescription(for: automaticSource)) resolved=\(debugDescription(for: source))"
         )
         let item = try await buildPlayerItem(for: source)
         let engine = AVFoundationPlaybackEngine(item: item, volume: volume)
@@ -1161,7 +1053,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         pendingQualityOptionID = nil
         await metadataRefresh
         PlaybackDebugLogger.log(
-            "native switch success option=\(debugDescription(for: option)) duration=\(duration) currentTime=\(currentTime)"
+            "automatic switch success option=\(debugDescription(for: option)) duration=\(duration) currentTime=\(currentTime)"
         )
 
         if isHoveringStage {
@@ -1282,7 +1174,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 let variants = try? await manifestAsset.load(.variants)
                 manifestOptions = buildManifestQualityOptions(from: variants ?? [])
             }
-        case .direct, .adaptivePair, .none:
+        case .direct, .none:
             break
         }
 
@@ -1617,7 +1509,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         switch source {
         case .manifestAutomatic, .manifestVariant:
             return true
-        case .direct, .adaptivePair, .none:
+        case .direct, .none:
             return false
         }
     }
@@ -1855,26 +1747,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         )
     }
 
-    private func source(for option: QualityOption, playback: VideoPlayback) async throws -> PlayerSourceDescriptor {
-        switch option.selection {
-        case .automatic:
-            return try await preferredSource(for: playback)
-        case .manifestVariant:
-            guard let manifestStream = playback.preferredManifestStream else {
-                throw URLError(.badURL)
-            }
-            return .manifestAutomatic(manifestStream)
-        case .manual(let selection):
-            guard selection.backend == .avFoundation else {
-                throw URLError(.unsupportedURL)
-            }
-            if let audioStream = selection.audioStream {
-                return .adaptivePair(video: selection.stream, audio: audioStream)
-            }
-            return .direct(selection.stream)
-        }
-    }
-
     private func preferredSource(for playback: VideoPlayback) async throws -> PlayerSourceDescriptor {
         if let resolvedSource = resolvedInitialSource(for: playback) {
             return resolvedSource
@@ -1885,102 +1757,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private func resolvedInitialSource(for playback: VideoPlayback) -> PlayerSourceDescriptor? {
         automaticStartupSource(for: playback)
-    }
-
-    private func preferredManifestSource(
-        for playback: VideoPlayback
-    ) async throws -> ManifestSourceCandidate? {
-        guard let manifestStream = playback.preferredManifestStream,
-              try await isPlayable(stream: manifestStream) else {
-            return nil
-        }
-
-        let maxHeight: Int
-        let variantCount: Int
-        if let manifestAsset = buildAsset(for: manifestStream),
-           let variants = try? await manifestAsset.load(.variants),
-           !variants.isEmpty {
-            maxHeight = variants
-                .compactMap { variant in
-                    let height = variant.videoAttributes?.presentationSize.height ?? 0
-                    return height > 0 ? Int(height.rounded()) : nil
-                }
-                .max() ?? (manifestStream.height ?? 0)
-            variantCount = variants.count
-        } else {
-            maxHeight = manifestStream.height ?? 0
-            variantCount = 0
-        }
-
-        return ManifestSourceCandidate(
-            source: .manifestAutomatic(manifestStream),
-            maxHeight: maxHeight,
-            variantCount: variantCount
-        )
-    }
-
-    private func preferredNonManifestSource(
-        for playback: VideoPlayback
-    ) async throws -> SourceCandidate? {
-        var candidates: [SourceCandidate] = []
-
-        if let directStream = preferredDirectStream(for: playback),
-           try await isPlayable(stream: directStream) {
-            candidates.append(
-                SourceCandidate(
-                    source: .direct(directStream),
-                    height: directStream.height ?? 0
-                )
-            )
-        }
-
-        if let adaptiveSource = try await preferredAdaptiveSource(for: playback) {
-            candidates.append(
-                SourceCandidate(
-                    source: adaptiveSource,
-                    height: sourceHeight(for: adaptiveSource)
-                )
-            )
-        }
-
-        if let bestCandidate = candidates.max(by: { $0.height < $1.height }) {
-            return bestCandidate
-        }
-
-        if let adaptiveSource = try await preferredAdaptiveSource(for: playback) {
-            return SourceCandidate(
-                source: adaptiveSource,
-                height: sourceHeight(for: adaptiveSource)
-            )
-        }
-
-        if let directStream = preferredDirectStream(for: playback) {
-            return SourceCandidate(
-                source: .direct(directStream),
-                height: directStream.height ?? 0
-            )
-        }
-
-        return nil
-    }
-
-    private func preferredDirectStream(for playback: VideoPlayback) -> StreamInfo? {
-        if let preferredMuxedStream = playback.preferredMuxedStream {
-            return preferredMuxedStream
-        }
-
-        guard let bestStream = playback.bestStream, bestStream.streamKind != "manifest" else {
-            return nil
-        }
-        return bestStream
-    }
-
-    private func preferredAdaptiveSource(for playback: VideoPlayback) async throws -> PlayerSourceDescriptor? {
-        guard let videoStream = try await bestAdaptiveVideoStream(for: playback),
-              let audioStream = bestAdaptiveAudioStream(for: playback) else {
-            return nil
-        }
-        return .adaptivePair(video: videoStream, audio: audioStream)
     }
 
     private func buildPlayerItem(for source: PlayerSourceDescriptor) async throws -> AVPlayerItem {
@@ -1999,117 +1775,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             item.preferredPeakBitRate = 0
             item.preferredMaximumResolution = .zero
             return item
-        case .adaptivePair(let video, let audio):
-            return try await buildAdaptivePlayerItem(videoStream: video, audioStream: audio)
         }
-    }
-
-    private func sourceHeight(for source: PlayerSourceDescriptor) -> Int {
-        switch source {
-        case .manifestAutomatic(let stream):
-            return stream.height ?? 0
-        case .manifestVariant(_, let url):
-            let path = url.absoluteString.lowercased()
-            if let resolutionFragment = path.split(separator: "/").first(where: { $0.hasSuffix("p") }),
-               let height = Int(resolutionFragment.dropLast()) {
-                return height
-            }
-            return 0
-        case .direct(let stream):
-            return stream.height ?? 0
-        case .adaptivePair(let video, _):
-            return video.height ?? 0
-        }
-    }
-
-    private func buildAdaptivePlayerItem(
-        videoStream: StreamInfo,
-        audioStream: StreamInfo
-    ) async throws -> AVPlayerItem {
-        guard let videoAsset = buildAsset(for: videoStream),
-              let audioAsset = buildAsset(for: audioStream) else {
-            throw URLError(.badURL)
-        }
-
-        let videoDurationHint = streamDurationHint(for: videoStream)
-        let audioDurationHint = streamDurationHint(for: audioStream)
-
-        PlaybackDebugLogger.log(
-            "adaptive item prepare video=\(debugDescription(for: videoStream)) audio=\(debugDescription(for: audioStream)) videoHint=\(debugDescription(for: videoDurationHint)) audioHint=\(debugDescription(for: audioDurationHint))"
-        )
-
-        async let videoTracksTask = videoAsset.loadTracks(withMediaType: .video)
-        async let audioTracksTask = audioAsset.loadTracks(withMediaType: .audio)
-
-        let videoTracks = try await videoTracksTask
-        let audioTracks = try await audioTracksTask
-
-        guard let videoTrack = videoTracks.first,
-              let audioTrack = audioTracks.first else {
-            throw URLError(.cannotDecodeContentData)
-        }
-
-        let videoTimeRange = try await adaptiveTimeRange(for: videoTrack, durationHint: videoDurationHint)
-        let audioTimeRange = try await adaptiveTimeRange(for: audioTrack, durationHint: audioDurationHint)
-        let preferredTransform = try await videoTrack.load(.preferredTransform)
-        let duration = resolvedAdaptiveDuration(
-            videoDurationHint: videoDurationHint,
-            audioDurationHint: audioDurationHint,
-            fallbackVideoDuration: videoTimeRange.duration,
-            fallbackAudioDuration: audioTimeRange.duration
-        )
-        PlaybackDebugLogger.log(
-            "adaptive item build video=\(debugDescription(for: videoStream)) audio=\(debugDescription(for: audioStream)) videoHint=\(debugDescription(for: videoDurationHint)) audioHint=\(debugDescription(for: audioDurationHint)) videoTimeRange=\(debugDescription(for: videoTimeRange)) audioTimeRange=\(debugDescription(for: audioTimeRange)) chosenDuration=\(duration.seconds)"
-        )
-        let composition = AVMutableComposition()
-
-        guard let compositionVideoTrack = composition.addMutableTrack(
-            withMediaType: .video,
-            preferredTrackID: kCMPersistentTrackID_Invalid
-        ) else {
-            throw URLError(.cannotCreateFile)
-        }
-
-        try compositionVideoTrack.insertTimeRange(
-            CMTimeRange(start: videoTimeRange.start, duration: duration),
-            of: videoTrack,
-            at: .zero
-        )
-        compositionVideoTrack.preferredTransform = preferredTransform
-
-        guard let compositionAudioTrack = composition.addMutableTrack(
-            withMediaType: .audio,
-            preferredTrackID: kCMPersistentTrackID_Invalid
-        ) else {
-            throw URLError(.cannotCreateFile)
-        }
-
-        try compositionAudioTrack.insertTimeRange(
-            CMTimeRange(start: audioTimeRange.start, duration: duration),
-            of: audioTrack,
-            at: .zero
-        )
-
-        let item = AVPlayerItem(asset: composition)
-        item.preferredForwardBufferDuration = 2
-        item.forwardPlaybackEndTime = duration
-        if let compositionDuration = try? await composition.load(.duration) {
-            PlaybackDebugLogger.log(
-                "adaptive item ready compositionDuration=\(compositionDuration.seconds) forwardEnd=\(duration.seconds)"
-            )
-        }
-        return item
-    }
-
-    private func adaptiveTimeRange(
-        for track: AVAssetTrack,
-        durationHint: CMTime?
-    ) async throws -> CMTimeRange {
-        if let durationHint, durationHint.isNumeric, durationHint.seconds > 0 {
-            return CMTimeRange(start: .zero, duration: durationHint)
-        }
-
-        return try await track.load(.timeRange)
     }
 
     private func buildManifestQualityOptions(from variants: [AVAssetVariant]) -> [QualityOption] {
@@ -2262,93 +1928,15 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         return "Subtitle \(option.extendedLanguageTag ?? "\(UUID().uuidString.prefix(4))")"
     }
 
-    private func isPlayable(stream: StreamInfo) async throws -> Bool {
-        guard let asset = buildAsset(for: stream) else { return false }
-        return try await asset.load(.isPlayable)
-    }
-
-    private func bestAdaptiveVideoStream(for playback: VideoPlayback) async throws -> StreamInfo? {
-        let candidates = playback.streams
-            .filter {
-                $0.hasVideo
-                    && !$0.hasAudio
-                    && ($0.container?.hasPrefix("mp4") == true)
-            }
-            .sorted(by: adaptiveVideoCandidateSort(lhs:rhs:))
-
-        for candidate in candidates {
-            if try await isPlayable(stream: candidate) {
-                return candidate
-            }
-        }
-
-        return nil
-    }
-
-    private func bestAdaptiveAudioStream(for playback: VideoPlayback) -> StreamInfo? {
-        preferredAdaptiveAudioStream(for: playback)
-    }
-
-    private func adaptiveVideoCandidateSort(lhs: StreamInfo, rhs: StreamInfo) -> Bool {
-        let lhsScore = (
-            videoPlayabilityScore(for: lhs.videoCodec),
-            lhs.height ?? 0,
-            lhs.fps ?? 0,
-            lhs.bitrate ?? 0,
-            codecScore(for: lhs.videoCodec)
-        )
-        let rhsScore = (
-            videoPlayabilityScore(for: rhs.videoCodec),
-            rhs.height ?? 0,
-            rhs.fps ?? 0,
-            rhs.bitrate ?? 0,
-            codecScore(for: rhs.videoCodec)
-        )
-        return lhsScore > rhsScore
-    }
-
-    private func audioCandidateSort(lhs: StreamInfo, rhs: StreamInfo) -> Bool {
-        let lhsScore = (lhs.bitrate ?? 0, codecScore(for: lhs.audioCodec))
-        let rhsScore = (rhs.bitrate ?? 0, codecScore(for: rhs.audioCodec))
-        return lhsScore > rhsScore
-    }
-
-    private func fallbackQualitySort(lhs: StreamInfo, rhs: StreamInfo) -> Bool {
-        let lhsScore = (
-            lhs.height ?? 0,
-            lhs.hasAudio ? 1 : 0,
-            lhs.fps ?? 0,
-            lhs.bitrate ?? 0,
-            codecScore(for: lhs.videoCodec)
-        )
-        let rhsScore = (
-            rhs.height ?? 0,
-            rhs.hasAudio ? 1 : 0,
-            rhs.fps ?? 0,
-            rhs.bitrate ?? 0,
-            codecScore(for: rhs.videoCodec)
-        )
-        return lhsScore > rhsScore
-    }
-
     private func manualQualityCandidateSort(lhs: ManualQualityCandidate, rhs: ManualQualityCandidate) -> Bool {
-        let lhsCapability = lhs.capability == .native ? 2 : 1
-        let rhsCapability = rhs.capability == .native ? 2 : 1
-        let lhsCodecPreference = compatibilityCodecPreference(for: lhs.selection.stream.videoCodec)
-        let rhsCodecPreference = compatibilityCodecPreference(for: rhs.selection.stream.videoCodec)
-
         let lhsScore = (
-            lhsCapability,
             lhs.selection.stream.height ?? 0,
             lhs.selection.stream.fps ?? 0,
-            lhsCodecPreference,
             lhs.bitrate
         )
         let rhsScore = (
-            rhsCapability,
             rhs.selection.stream.height ?? 0,
             rhs.selection.stream.fps ?? 0,
-            rhsCodecPreference,
             rhs.bitrate
         )
 
@@ -2361,19 +1949,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         let lhsScore = (lhsSize.height, lhsSize.width, lhs.peakBitRate ?? 0)
         let rhsScore = (rhsSize.height, rhsSize.width, rhs.peakBitRate ?? 0)
         return lhsScore > rhsScore
-    }
-
-    private func videoPlayabilityScore(for codec: String?) -> Int {
-        guard let codec else { return 0 }
-        if codec.hasPrefix("avc1") { return 4 }
-        if codec.hasPrefix("hvc1") || codec.hasPrefix("hev1") { return 3 }
-        if codec.hasPrefix("av01") { return AVFoundationPlaybackSupport.supportsAV1 ? 2 : 0 }
-        if codec.hasPrefix("vp9") { return 0 }
-        return 0
-    }
-
-    private func codecScore(for codec: String?) -> Int {
-        playbackCodecScore(for: codec)
     }
 
     private func buildAsset(for stream: StreamInfo) -> AVURLAsset? {
@@ -2390,60 +1965,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
 
         return AVURLAsset(url: url)
-    }
-
-    private func minimumDuration(_ lhs: CMTime, _ rhs: CMTime) -> CMTime {
-        if lhs.isValid, rhs.isValid {
-            return CMTimeMinimum(lhs, rhs)
-        }
-        return lhs.isValid ? lhs : rhs
-    }
-
-    private func minimumDuration(_ lhs: CMTime?, _ rhs: CMTime?) -> CMTime? {
-        switch (lhs, rhs) {
-        case let (.some(lhs), .some(rhs)):
-            return minimumDuration(lhs, rhs)
-        case let (.some(lhs), .none):
-            return lhs
-        case let (.none, .some(rhs)):
-            return rhs
-        case (.none, .none):
-            return nil
-        }
-    }
-
-    private func resolvedAdaptiveDuration(
-        videoDurationHint: CMTime?,
-        audioDurationHint: CMTime?,
-        fallbackVideoDuration: CMTime,
-        fallbackAudioDuration: CMTime
-    ) -> CMTime {
-        if let hintedDuration = minimumDuration(videoDurationHint, audioDurationHint) {
-            return hintedDuration
-        }
-
-        if let hintedVideoDuration = videoDurationHint {
-            return hintedVideoDuration
-        }
-
-        if let hintedAudioDuration = audioDurationHint {
-            return hintedAudioDuration
-        }
-
-        return minimumDuration(fallbackVideoDuration, fallbackAudioDuration)
-    }
-
-    private func streamDurationHint(for stream: StreamInfo) -> CMTime? {
-        guard let url = URL(string: stream.url),
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let durationValue = components.queryItems?.first(where: { $0.name == "dur" })?.value,
-              let seconds = Double(durationValue) else {
-            return nil
-        }
-
-        let resolvedSeconds = sanitizeSeconds(seconds)
-        guard resolvedSeconds > 0 else { return nil }
-        return CMTime(seconds: resolvedSeconds, preferredTimescale: 1000)
     }
 
     private func resolvedPlaybackDuration(for item: AVPlayerItem) -> Double {
@@ -2494,7 +2015,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         case .manifestVariant(let url, let peakBitRate, let width, let height):
             return "option[id=\(option.id),title=\(option.title),manifest=\(url),peak=\(peakBitRate),size=\(Int(width))x\(Int(height))]"
         case .manual(let selection):
-            return "option[id=\(option.id),title=\(option.title),backend=\(selection.backend.rawValue),video=\(debugDescription(for: selection.stream)),audio=\(debugDescription(for: selection.audioStream))]"
+            return "option[id=\(option.id),title=\(option.title),backend=mpv,video=\(debugDescription(for: selection.stream)),audio=\(debugDescription(for: selection.audioStream))]"
         }
     }
 
@@ -2507,23 +2028,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             return "source[manifestVariant parent=\(debugDescription(for: parent)) url=\(url.absoluteString)]"
         case .direct(let stream):
             return "source[direct \(debugDescription(for: stream))]"
-        case .adaptivePair(let video, let audio):
-            return "source[adaptive video=\(debugDescription(for: video)) audio=\(debugDescription(for: audio))]"
         }
     }
 
     private func debugDescription(for stream: StreamInfo?) -> String {
         guard let stream else { return "stream=nil" }
         return "stream[format=\(stream.formatId ?? "nil"),kind=\(stream.streamKind),quality=\(stream.qualityLabel ?? "nil"),container=\(stream.container ?? "nil"),vcodec=\(stream.videoCodec ?? "nil"),acodec=\(stream.audioCodec ?? "nil"),channels=\(stream.audioChannels.map(String.init) ?? "nil"),fps=\(stream.fps.map(String.init) ?? "nil"),bitrate=\(stream.bitrate.map(String.init) ?? "nil"),url=\(stream.url)]"
-    }
-
-    private func debugDescription(for timeRange: CMTimeRange) -> String {
-        "timeRange[start=\(timeRange.start.seconds),duration=\(timeRange.duration.seconds)]"
-    }
-
-    private func debugDescription(for time: CMTime?) -> String {
-        guard let time else { return "nil" }
-        return time.isValid ? "\(time.seconds)" : "invalid"
     }
 
     private func formatTime(_ seconds: Double) -> String {

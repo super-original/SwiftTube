@@ -34,7 +34,7 @@ class PlaybackBundle:
                 > (self.preferred_muxed_stream.height or 0)
             )
         ):
-            return "adaptivePair"
+            return "mpv"
         return "direct"
 
     @property
@@ -121,20 +121,6 @@ def _manifest_stream_score(stream: StreamInfo) -> tuple[int, int, int, int, int,
     )
 
 
-def _video_playability_score(codec: Optional[str]) -> int:
-    if not isinstance(codec, str):
-        return 0
-    if codec.startswith("avc1"):
-        return 4
-    if codec.startswith(("hvc1", "hev1")):
-        return 3
-    if codec.startswith("av01"):
-        return 1
-    if codec.startswith("vp9"):
-        return 0
-    return 0
-
-
 def _stream_score(stream: StreamInfo) -> tuple[int, int, int, int, int]:
     return (
         stream.height or 0,
@@ -145,13 +131,11 @@ def _stream_score(stream: StreamInfo) -> tuple[int, int, int, int, int]:
     )
 
 
-def _adaptive_video_score(stream: StreamInfo) -> tuple[int, int, int, int, int]:
+def _manual_quality_video_score(stream: StreamInfo) -> tuple[int, int, int]:
     return (
-        _video_playability_score(stream.videoCodec),
         stream.height or 0,
         stream.fps or 0,
         stream.bitrate or 0,
-        _codec_score(stream.videoCodec),
     )
 
 
@@ -306,13 +290,12 @@ def _best_video_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
         if stream.hasVideo
         and not stream.hasAudio
         and (stream.container or "").startswith("mp4")
-        and _codec_score(stream.videoCodec) >= 3
+        and isinstance(stream.videoCodec, str)
+        and stream.videoCodec.startswith("av01")
     ]
     if not candidates:
         return None
-    # Prefer AVFoundation-friendly codecs over raw resolution so the native player
-    # gets a stream it can actually render.
-    return max(candidates, key=_adaptive_video_score)
+    return max(candidates, key=_manual_quality_video_score)
 
 
 def _best_audio_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:

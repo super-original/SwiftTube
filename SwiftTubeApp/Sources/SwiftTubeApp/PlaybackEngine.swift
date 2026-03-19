@@ -6,12 +6,6 @@ enum PlaybackBackendKind: String, Sendable {
     case mpv
 }
 
-enum PlaybackCapability: Sendable {
-    case native
-    case compatibility
-    case unsupported
-}
-
 struct MediaStreamRequest: Hashable, Sendable {
     let url: URL
     let headers: [String: String]

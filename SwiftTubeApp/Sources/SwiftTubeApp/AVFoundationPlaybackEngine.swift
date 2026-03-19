@@ -63,8 +63,10 @@ final class AVFoundationPlaybackEngine: NSObject, PlaybackEngine {
         let target = CMTime(seconds: clampedSeconds, preferredTimescale: 600)
         await withCheckedContinuation { continuation in
             player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-                self?.currentTime = clampedSeconds
-                continuation.resume()
+                Task { @MainActor in
+                    self?.currentTime = clampedSeconds
+                    continuation.resume()
+                }
             }
         }
     }
