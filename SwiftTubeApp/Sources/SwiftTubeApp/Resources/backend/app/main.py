@@ -50,7 +50,9 @@ auth_manager = BrowserAuthManager()
 
 def _build_clients(use_auth: bool) -> tuple[InnerTube, InnerTube]:
     if use_auth and auth_manager.is_authenticated:
-        return auth_manager.build_client("WEB"), auth_manager.build_client("WEB_PARENT_TOOLS")
+        # Authenticated MWEB exposes the full adaptive stream ladder, while
+        # authenticated WEB/WEB_PARENT_TOOLS frequently collapse to a single 360p muxed stream.
+        return auth_manager.build_client("WEB"), auth_manager.build_client("MWEB")
     return public_client_web, public_client_player
 
 
