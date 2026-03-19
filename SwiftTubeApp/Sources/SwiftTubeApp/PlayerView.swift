@@ -36,7 +36,7 @@ final class WindowResolverView: NSView {
     }
 }
 
-private struct StandardPlayerStageBoundsPreferenceKey: PreferenceKey {
+private struct PlayerSurfaceBoundsKey: PreferenceKey {
     static let defaultValue: Anchor<CGRect>? = nil
 
     static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
@@ -73,27 +73,29 @@ struct PlayerScreen: View {
         )
         .safeAreaInset(edge: .top, spacing: 0) {
             if usesImmersiveLayout {
-                PlayerStageHost(
-                    coordinator: playbackCoordinator,
-                    isLoading: viewModel.isLoading,
-                    errorMessage: viewModel.errorMessage,
-                    immersive: true,
-                    retry: viewModel.load
-                )
+                Color.black.opacity(0.96)
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .anchorPreference(key: PlayerSurfaceBoundsKey.self, value: .bounds) { $0 }
+                    .padding(.bottom, usesImmersiveLayout && !layoutState.isFullscreen ? 24 : 0)
             }
         }
-        .overlayPreferenceValue(StandardPlayerStageBoundsPreferenceKey.self) { anchor in
+        .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
             GeometryReader { proxy in
-                if !usesImmersiveLayout,
-                   let anchor {
+                if let anchor {
                     let rect = proxy[anchor]
-                    StandardPlayerStageOverlay(
+                    let errorMessage = viewModel.errorMessage ?? playbackCoordinator.errorMessage
+                    PlayerStageSurface(
                         coordinator: playbackCoordinator,
                         isLoading: viewModel.isLoading,
-                        errorMessage: viewModel.errorMessage ?? playbackCoordinator.errorMessage,
-                        rect: rect,
+                        errorMessage: errorMessage,
+                        immersive: usesImmersiveLayout,
                         retry: viewModel.load
                     )
+                    .clipShape(RoundedRectangle(cornerRadius: usesImmersiveLayout ? 0 : 22))
+                    .shadow(color: usesImmersiveLayout ? .clear : .black.opacity(0.18), radius: 22, y: 10)
+                    .frame(width: rect.width, height: rect.height)
+                    .position(x: rect.midX, y: rect.midY)
                 }
             }
         }
@@ -233,7 +235,7 @@ private extension PlayerScreen {
             .fill(Color.clear)
             .frame(maxWidth: .infinity)
             .aspectRatio(16 / 9, contentMode: .fit)
-            .anchorPreference(key: StandardPlayerStageBoundsPreferenceKey.self, value: .bounds) { $0 }
+            .anchorPreference(key: PlayerSurfaceBoundsKey.self, value: .bounds) { $0 }
     }
 
     var headerSection: some View {
@@ -335,71 +337,6 @@ private extension PlayerScreen {
     }
 }
 
-private struct PlayerStageHost: View {
-    @ObservedObject var coordinator: PlayerPlaybackCoordinator
-    let isLoading: Bool
-    let errorMessage: String?
-    let immersive: Bool
-    let retry: () -> Void
-
-    private var displayedErrorMessage: String? {
-        errorMessage ?? coordinator.errorMessage
-    }
-
-    var body: some View {
-        let stage = PlayerStageSurface(
-            coordinator: coordinator,
-            isLoading: isLoading,
-            errorMessage: displayedErrorMessage,
-            immersive: immersive,
-            retry: retry
-        )
-
-        Group {
-            if immersive {
-                stage
-                    .frame(maxWidth: .infinity)
-            } else {
-                stage
-                    .clipShape(RoundedRectangle(cornerRadius: 22))
-                    .shadow(color: .black.opacity(0.18), radius: 22, y: 10)
-            }
-        }
-        .padding(.horizontal, immersive ? 0 : 24)
-        .padding(.top, immersive ? 0 : 24)
-        .padding(.bottom, immersive ? 24 : 0)
-        .background(
-            immersive
-                ? Color.black.opacity(0.96)
-                : Color.clear
-        )
-    }
-}
-
-private struct StandardPlayerStageOverlay: View {
-    @ObservedObject var coordinator: PlayerPlaybackCoordinator
-    let isLoading: Bool
-    let errorMessage: String?
-    let rect: CGRect
-    let retry: () -> Void
-
-    var body: some View {
-        if rect.width > 1, rect.height > 1 {
-            PlayerStageSurface(
-                coordinator: coordinator,
-                isLoading: isLoading,
-                errorMessage: errorMessage,
-                immersive: false,
-                retry: retry
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 22))
-            .shadow(color: .black.opacity(0.18), radius: 22, y: 10)
-            .frame(width: rect.width, height: rect.height)
-            .position(x: rect.midX, y: rect.midY)
-        }
-    }
-}
-
 private struct PlayerStageSurface: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
     let isLoading: Bool
@@ -430,6 +367,13 @@ private struct PlayerStageSurface: View {
                 .onTapGesture {
                     coordinator.togglePlayback()
                 }
+
+            if let feedback = coordinator.actionFeedback {
+                ActionFeedbackOverlay(feedback: feedback)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                    .animation(.easeOut(duration: 0.15), value: coordinator.actionFeedback)
+            }
 
             if coordinator.mpvEngine != nil {
                 PlayerChromeOverlay(
@@ -481,7 +425,7 @@ private struct PlayerStageSurface: View {
             return .handled
         }
         .onKeyPress(characters: .init(charactersIn: "c")) { _ in
-            coordinator.cycleSubtitles()
+            coordinator.toggleSubtitles()
             return .handled
         }
         .frame(maxWidth: .infinity)
@@ -532,6 +476,52 @@ private struct PlayerStageErrorOverlay: View {
             .buttonStyle(.borderedProminent)
         }
         .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct ActionFeedbackOverlay: View {
+    let feedback: ActionFeedback
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var symbolName: String {
+        switch feedback {
+        case .play: return "play.fill"
+        case .pause: return "pause.fill"
+        case .seekForward: return "chevron.right"
+        case .seekBackward: return "chevron.left"
+        case .frameForward: return "chevron.right.2"
+        case .frameBackward: return "chevron.left.2"
+        }
+    }
+
+    private var label: String? {
+        switch feedback {
+        case .seekForward(let s): return "+\(s)s"
+        case .seekBackward(let s): return "-\(s)s"
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbolName)
+                .font(.system(size: 22, weight: .bold))
+
+            if let label {
+                Text(label)
+                    .font(.system(size: 18, weight: .bold))
+                    .monospacedDigit()
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 16)
+        .playerControlSurface(
+            reduceTransparency: reduceTransparency,
+            glass: .regular,
+            shape: RoundedRectangle(cornerRadius: 18)
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -593,6 +583,7 @@ private struct PlayerControlBar: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Namespace private var playPauseNamespace
     @State private var isQualityPopoverPresented = false
+    @State private var isSubtitlePopoverPresented = false
 
     private let compactControlHeight: CGFloat = 38
     private let circularButtonLabelSize: CGFloat = 30
@@ -706,7 +697,7 @@ private struct PlayerControlBar: View {
 
     var subtitlesButton: some View {
         Button {
-            coordinator.cycleSubtitles()
+            isSubtitlePopoverPresented.toggle()
         } label: {
             circularButtonLabel(
                 symbol: coordinator.subtitleSymbolName,
@@ -718,7 +709,60 @@ private struct PlayerControlBar: View {
         .buttonBorderShape(.circle)
         .controlSize(.regular)
         .disabled(!coordinator.hasSubtitleOptions)
+        .popover(
+            isPresented: $isSubtitlePopoverPresented,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            subtitlePopoverContent
+        }
+        .onChange(of: isSubtitlePopoverPresented) { _, isPresented in
+            if isPresented {
+                coordinator.beginMenuInteraction()
+            } else {
+                coordinator.endMenuInteraction()
+            }
+        }
         .accessibilityLabel("Subtitles")
+    }
+
+    var subtitlePopoverContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                subtitleMenuOptionButton(for: .off)
+                ForEach(coordinator.subtitleOptions) { option in
+                    subtitleMenuOptionButton(for: option)
+                }
+            }
+            .padding(8)
+        }
+        .frame(minWidth: 220)
+    }
+
+    func subtitleMenuOptionButton(for option: SubtitleOption) -> some View {
+        Button {
+            coordinator.selectSubtitle(option)
+            isSubtitlePopoverPresented = false
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: option.id == coordinator.selectedSubtitleOptionID ? "checkmark" : "circle")
+                    .foregroundStyle(option.id == coordinator.selectedSubtitleOptionID ? Color.accentColor : .secondary)
+                Text(option.title)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        option.id == coordinator.selectedSubtitleOptionID
+                            ? Color.accentColor.opacity(0.14)
+                            : Color.clear
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     var qualityMenu: some View {
