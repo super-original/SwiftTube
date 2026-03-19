@@ -124,7 +124,7 @@ private struct ManualQualityCandidate: Sendable {
     let bitrate: Int
 }
 
-private enum PlayerSourceDescriptor: Sendable {
+private enum PlayerSourceDescriptor: Hashable, Sendable {
     case manifestAutomatic(StreamInfo)
     case manifestVariant(parent: StreamInfo, url: URL)
     case direct(StreamInfo)
@@ -284,19 +284,6 @@ private func manualQualityCandidate(
                 backend: .avFoundation,
                 stream: stream,
                 audioStream: nil
-            ),
-            capability: .native,
-            bitrate: stream.bitrate ?? 0
-        )
-    }
-
-    if isSupportedVideoOnlyStream(stream),
-       let audioStream = preferredAdaptiveAudioStream(for: playback) {
-        return ManualQualityCandidate(
-            selection: ManualPlaybackSelection(
-                backend: .avFoundation,
-                stream: stream,
-                audioStream: audioStream
             ),
             capability: .native,
             bitrate: stream.bitrate ?? 0
@@ -999,12 +986,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         currentLoadedBufferDuration = 0
 
         do {
-            let source = try await preferredSource(for: playback)
-            let item = try await buildPlayerItem(for: source)
-            guard !Task.isCancelled else { return }
-
             currentPlayback = playback
-            currentSource = source
             selectedQualityOptionID = QualityOption.automaticID
             activeBackendKind = .avFoundation
             scheduleMPVStop(activeMPVEngine, pauseFirst: true)
@@ -1016,32 +998,74 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             mpvStateTask?.cancel()
 
             let player = ensurePlayer()
-            observeCurrentItem(item)
-            player.replaceCurrentItem(with: item)
-            clearManifestQualityPreferences(on: item)
             activeRenderState = .avFoundation(player)
-
-            async let metadataRefresh: Void = refreshPlaybackMetadata(
-                for: item,
-                playback: playback,
-                preferredSubtitle: nil
+            let sources = try await startupSourceCandidates(for: playback)
+            PlaybackDebugLogger.log(
+                "prepare playback candidates id=\(playback.id) sources=\(sources.map(debugDescription(for:)).joined(separator: " | "))"
             )
 
-            guard !Task.isCancelled else { return }
-            currentTime = 0
-            scrubPosition = 0
-            try await waitUntilReadyToPlay(item)
-            guard !Task.isCancelled else { return }
-            player.play()
-            startHideMonitorIfNeeded()
-            await metadataRefresh
-            await qualityCoordinator.prime(
-                playback: playback,
-                automaticSource: source,
-                options: qualityOptions
-            )
+            var lastError: Error = URLError(.badURL)
+            var didPrepareSource = false
+
+            for source in sources {
+                guard !Task.isCancelled else { return }
+
+                do {
+                    PlaybackDebugLogger.log(
+                        "prepare playback attempt id=\(playback.id) source=\(debugDescription(for: source))"
+                    )
+                    let item = try await buildPlayerItem(for: source)
+                    guard !Task.isCancelled else { return }
+
+                    currentSource = source
+                    observeCurrentItem(item)
+                    player.replaceCurrentItem(with: item)
+                    clearManifestQualityPreferences(on: item)
+                    currentTime = 0
+                    scrubPosition = 0
+
+                    try await waitUntilReadyToPlay(item)
+                    guard !Task.isCancelled else { return }
+
+                    async let metadataRefresh: Void = refreshPlaybackMetadata(
+                        for: item,
+                        playback: playback,
+                        preferredSubtitle: nil
+                    )
+
+                    player.play()
+                    startHideMonitorIfNeeded()
+                    await metadataRefresh
+                    await qualityCoordinator.prime(
+                        playback: playback,
+                        automaticSource: source,
+                        options: qualityOptions
+                    )
+                    PlaybackDebugLogger.log(
+                        "prepare playback success id=\(playback.id) source=\(debugDescription(for: source))"
+                    )
+                    didPrepareSource = true
+                    break
+                } catch {
+                    lastError = error
+                    PlaybackDebugLogger.log(
+                        "prepare playback source failed id=\(playback.id) source=\(debugDescription(for: source)) error=\(error.localizedDescription)"
+                    )
+                    player.pause()
+                    player.replaceCurrentItem(with: nil)
+                    teardownCurrentItemObservers()
+                    currentSource = nil
+                }
+            }
+
+            if didPrepareSource == false {
+                throw lastError
+            }
         } catch {
             if !Task.isCancelled {
+                PlaybackDebugLogger.log(
+                    "prepare playback failed id=\(playback.id) error=\(error.localizedDescription)"
+                )
                 errorMessage = "Failed to prepare video."
                 player?.pause()
             }
@@ -1876,11 +1900,41 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func preferredSource(for playback: VideoPlayback) async throws -> PlayerSourceDescriptor {
-        if let resolvedSource = resolvedInitialSource(for: playback) {
+        if let resolvedSource = try await startupSourceCandidates(for: playback).first {
             return resolvedSource
         }
 
         throw URLError(.badURL)
+    }
+
+    private func startupSourceCandidates(for playback: VideoPlayback) async throws -> [PlayerSourceDescriptor] {
+        let manifestCandidate = try await preferredManifestSource(for: playback)
+        let nonManifestCandidate = try await preferredNonManifestSource(for: playback)
+
+        let orderedSources: [PlayerSourceDescriptor?]
+        switch (manifestCandidate, nonManifestCandidate) {
+        case let (.some(manifestCandidate), .some(nonManifestCandidate)):
+            let prefersManifest = manifestCandidate.maxHeight > nonManifestCandidate.height
+                || (
+                    manifestCandidate.maxHeight == nonManifestCandidate.height
+                        && manifestCandidate.variantCount > 1
+                )
+            orderedSources = prefersManifest
+                ? [manifestCandidate.source, nonManifestCandidate.source]
+                : [nonManifestCandidate.source, manifestCandidate.source]
+        case let (.some(manifestCandidate), .none):
+            orderedSources = [manifestCandidate.source]
+        case let (.none, .some(nonManifestCandidate)):
+            orderedSources = [nonManifestCandidate.source]
+        case (.none, .none):
+            orderedSources = [resolvedInitialSource(for: playback)]
+        }
+
+        var dedupedSources: [PlayerSourceDescriptor] = []
+        for source in orderedSources.compactMap({ $0 }) where dedupedSources.contains(source) == false {
+            dedupedSources.append(source)
+        }
+        return dedupedSources
     }
 
     private func resolvedInitialSource(for playback: VideoPlayback) -> PlayerSourceDescriptor? {
