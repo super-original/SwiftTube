@@ -178,6 +178,53 @@ private func isAVFoundationVideoContainerSupported(_ container: String?) -> Bool
     return container.hasPrefix("mp4") || container.hasPrefix("mov") || container.hasPrefix("m4v")
 }
 
+private func isMPVStartupCompatibleVideoCodec(_ codec: String?) -> Bool {
+    guard let codec else { return false }
+    return codec.hasPrefix("avc1")
+        || codec.hasPrefix("hvc1")
+        || codec.hasPrefix("hev1")
+        || codec.hasPrefix("av01")
+        || codec.hasPrefix("vp9")
+}
+
+private func isMPVStartupCompatibleVideoContainer(_ container: String?) -> Bool {
+    guard let container = container?.lowercased() else { return false }
+    return container.hasPrefix("mp4")
+        || container.hasPrefix("mov")
+        || container.hasPrefix("m4v")
+        || container.hasPrefix("webm")
+        || container.hasPrefix("mkv")
+}
+
+private func isMPVStartupCompatibleVideoStream(_ stream: StreamInfo) -> Bool {
+    guard stream.hasVideo, stream.streamKind != "manifest" else {
+        return false
+    }
+
+    return isMPVStartupCompatibleVideoContainer(stream.container)
+        && isMPVStartupCompatibleVideoCodec(stream.videoCodec)
+}
+
+private func startupMPVAudioPreference(for stream: StreamInfo) -> (Int, Int, Int, Int, Int) {
+    let containerPreference: Int
+    switch stream.container?.lowercased() {
+    case let container? where container.hasPrefix("m4a"), let container? where container.hasPrefix("mp4"):
+        containerPreference = 2
+    case let container? where container.hasPrefix("webm"):
+        containerPreference = 1
+    default:
+        containerPreference = 0
+    }
+
+    return (
+        containerPreference,
+        manualQualityAudioPreference(for: stream).0,
+        playbackCodecScore(for: stream.audioCodec),
+        stream.audioChannels ?? 0,
+        stream.bitrate ?? 0
+    )
+}
+
 private func hasConflictingHeaders(video: StreamInfo, audio: StreamInfo?) -> Bool {
     guard let audio else { return false }
     let videoHeaders = video.httpHeaders ?? [:]
@@ -282,16 +329,59 @@ private func automaticStartupNativeSource(for playback: VideoPlayback) -> Player
     return nil
 }
 
-private func automaticStartupMPVSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
-    if let preferredVideoStream = playback.preferredVideoStream,
-       let preferredCandidate = manualQualityCandidate(for: preferredVideoStream, playback: playback) {
-        return preferredCandidate.selection
+private func preferredStartupMPVAudioStream(for playback: VideoPlayback) -> StreamInfo? {
+    if let preferredAudioStream = playback.preferredAudioStream {
+        return preferredAudioStream
     }
 
     return playback.streams
-        .compactMap { manualQualityCandidate(for: $0, playback: playback) }
-        .max { manualQualitySortKey(for: $0) < manualQualitySortKey(for: $1) }?
-        .selection
+        .filter {
+            $0.hasAudio
+                && !$0.hasVideo
+                && ($0.container?.lowercased().hasPrefix("m4a") == true
+                    || $0.container?.lowercased().hasPrefix("mp4") == true
+                    || $0.container?.lowercased().hasPrefix("webm") == true)
+        }
+        .sorted { lhs, rhs in
+            startupMPVAudioPreference(for: lhs) > startupMPVAudioPreference(for: rhs)
+        }
+        .first
+}
+
+private func automaticStartupMPVSortKey(for stream: StreamInfo) -> (Int, Int, Int, Int, Int) {
+    (
+        stream.height ?? 0,
+        stream.hasAudio ? 1 : 0,
+        stream.fps ?? 0,
+        stream.bitrate ?? 0,
+        playbackCodecScore(for: stream.videoCodec)
+    )
+}
+
+private func automaticStartupMPVSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
+    let audioStream = preferredStartupMPVAudioStream(for: playback)
+
+    if let preferredVideoStream = playback.preferredVideoStream,
+       isMPVStartupCompatibleVideoStream(preferredVideoStream),
+       (preferredVideoStream.hasAudio || (audioStream != nil && !hasConflictingHeaders(video: preferredVideoStream, audio: audioStream))) {
+        return ManualPlaybackSelection(
+            stream: preferredVideoStream,
+            audioStream: preferredVideoStream.hasAudio ? nil : audioStream
+        )
+    }
+
+    return playback.streams
+        .filter(isMPVStartupCompatibleVideoStream)
+        .filter { stream in
+            stream.hasAudio || (audioStream != nil && !hasConflictingHeaders(video: stream, audio: audioStream))
+        }
+        .max { automaticStartupMPVSortKey(for: $0) < automaticStartupMPVSortKey(for: $1) }
+        .map { stream in
+            ManualPlaybackSelection(
+                stream: stream,
+                audioStream: stream.hasAudio ? nil : audioStream
+            )
+        }
 }
 
 @MainActor
@@ -905,6 +995,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         isCurrentItemLikelyToKeepUp = false
         isCurrentItemBufferEmpty = true
         currentLoadedBufferDuration = 0
+        var startupNativeSource: PlayerSourceDescriptor?
+        var startupMPVSelection: ManualPlaybackSelection?
 
         do {
             currentPlayback = playback
@@ -917,7 +1009,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             pendingRenderState = nil
             mpvStateTask?.cancel()
 
-            if let source = automaticStartupNativeSource(for: playback) {
+            startupNativeSource = automaticStartupNativeSource(for: playback)
+            startupMPVSelection = automaticStartupMPVSelection(for: playback)
+            PlaybackDebugLogger.log(
+                "prepare playback start id=\(playback.id) nativeStartup=\(debugDescription(for: startupNativeSource)) mpvVideo=\(debugDescription(for: startupMPVSelection?.stream)) mpvAudio=\(debugDescription(for: startupMPVSelection?.audioStream)) streams=\(playback.streams.count)"
+            )
+
+            if let source = startupNativeSource {
+                PlaybackDebugLogger.log(
+                    "prepare playback using native startup source=\(debugDescription(for: source))"
+                )
                 let item = try await buildPlayerItem(for: source)
                 guard !Task.isCancelled else { return }
 
@@ -949,13 +1050,22 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                     automaticSource: source,
                     options: qualityOptions
                 )
-            } else if let selection = automaticStartupMPVSelection(for: playback) {
+            } else if let selection = startupMPVSelection {
+                PlaybackDebugLogger.log(
+                    "prepare playback using mpv startup video=\(debugDescription(for: selection.stream)) audio=\(debugDescription(for: selection.audioStream))"
+                )
                 try await prepareAutomaticMPVPlayback(playback: playback, selection: selection)
             } else {
+                PlaybackDebugLogger.log(
+                    "prepare playback missing startup source id=\(playback.id) preferredVideo=\(debugDescription(for: playback.preferredVideoStream)) preferredAudio=\(debugDescription(for: playback.preferredAudioStream)) preferredMuxed=\(debugDescription(for: playback.preferredMuxedStream)) preferredManifest=\(debugDescription(for: playback.preferredManifestStream))"
+                )
                 throw URLError(.badURL)
             }
         } catch {
             if !Task.isCancelled {
+                PlaybackDebugLogger.log(
+                    "prepare playback failed id=\(playback.id) error=\(error.localizedDescription) nativeStartup=\(debugDescription(for: startupNativeSource)) mpvVideo=\(debugDescription(for: startupMPVSelection?.stream)) mpvAudio=\(debugDescription(for: startupMPVSelection?.audioStream))"
+                )
                 errorMessage = "Failed to prepare video."
                 player?.pause()
             }
