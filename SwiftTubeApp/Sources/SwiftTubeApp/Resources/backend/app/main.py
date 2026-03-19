@@ -247,6 +247,7 @@ def _video_info(
             preferredAudioStream=player_bundle.preferred_audio_stream,
             bestStreamUrl=(player_bundle.best_stream or best).url if (player_bundle.best_stream or best) else None,
             bestStream=player_bundle.best_stream or best,
+            subtitles=player_bundle.subtitles,
         )
 
     if not playback_bundle.streams and not player_streams:
@@ -285,6 +286,7 @@ def _video_info(
         preferredAudioStream=resolved_audio_stream,
         bestStreamUrl=resolved_best_stream.url if resolved_best_stream else None,
         bestStream=resolved_best_stream,
+        subtitles=resolved_bundle.subtitles,
     )
 
 

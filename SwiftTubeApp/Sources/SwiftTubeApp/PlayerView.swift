@@ -425,12 +425,64 @@ private struct PlayerStageSurface: View {
                 PlayerStageLoadingOverlay(text: isLoading ? "Loading video..." : coordinator.playbackLoadingText)
             }
 
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    coordinator.togglePlayback()
+                }
+
             if coordinator.mpvEngine != nil {
                 PlayerChromeOverlay(
                     coordinator: coordinator,
                     edgeToEdge: immersive
                 )
             }
+        }
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.space) {
+            coordinator.togglePlayback()
+            return .handled
+        }
+        .onKeyPress(characters: .init(charactersIn: "k")) { _ in
+            coordinator.togglePlayback()
+            return .handled
+        }
+        .onKeyPress(.leftArrow) {
+            coordinator.seekRelative(-5)
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            coordinator.seekRelative(5)
+            return .handled
+        }
+        .onKeyPress(characters: .init(charactersIn: "j")) { _ in
+            coordinator.seekRelative(-10)
+            return .handled
+        }
+        .onKeyPress(characters: .init(charactersIn: "l")) { _ in
+            coordinator.seekRelative(10)
+            return .handled
+        }
+        .onKeyPress(characters: .init(charactersIn: ",")) { _ in
+            coordinator.stepFrame(direction: -1)
+            return .handled
+        }
+        .onKeyPress(characters: .init(charactersIn: ".")) { _ in
+            coordinator.stepFrame(direction: 1)
+            return .handled
+        }
+        .onKeyPress(characters: .init(charactersIn: "t")) { _ in
+            coordinator.toggleTheaterMode()
+            return .handled
+        }
+        .onKeyPress(characters: .init(charactersIn: "f")) { _ in
+            coordinator.toggleFullscreen()
+            return .handled
+        }
+        .onKeyPress(characters: .init(charactersIn: "c")) { _ in
+            coordinator.cycleSubtitles()
+            return .handled
         }
         .frame(maxWidth: .infinity)
         .aspectRatio(16 / 9, contentMode: .fit)
@@ -512,6 +564,12 @@ private struct PlayerChromeOverlay: View {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     PlayerStatusPill(text: coordinator.playbackBadgeText)
+
+                    if coordinator.selectedSubtitleOptionID != SubtitleOption.offID,
+                       coordinator.hasSubtitleOptions {
+                        PlayerStatusPill(text: coordinator.subtitleControlText)
+                    }
+
                     Spacer()
                 }
                 .padding(.horizontal, edgeToEdge ? 20 : 18)
@@ -548,6 +606,7 @@ private struct PlayerControlBar: View {
                 playPauseButton
                 volumeControl
                 Spacer(minLength: 0)
+                subtitlesButton
                 qualityMenu
                 theaterToggle
                 fullscreenButton
@@ -643,6 +702,23 @@ private struct PlayerControlBar: View {
             glass: .regular,
             shape: Capsule()
         )
+    }
+
+    var subtitlesButton: some View {
+        Button {
+            coordinator.cycleSubtitles()
+        } label: {
+            circularButtonLabel(
+                symbol: coordinator.subtitleSymbolName,
+                fontSize: 14,
+                foregroundStyle: coordinator.hasSubtitleOptions ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
+            )
+        }
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.circle)
+        .controlSize(.regular)
+        .disabled(!coordinator.hasSubtitleOptions)
+        .accessibilityLabel("Subtitles")
     }
 
     var qualityMenu: some View {

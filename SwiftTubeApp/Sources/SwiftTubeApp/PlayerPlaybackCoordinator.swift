@@ -56,6 +56,24 @@ private extension QualityOption.Selection {
     }
 }
 
+struct SubtitleOption: Identifiable, Hashable, Sendable {
+    static let offID = "subtitle-off"
+
+    let id: String
+    let title: String
+    let url: String?
+    let mpvTrackIndex: Int?
+
+    var isOff: Bool { url == nil }
+
+    static let off = SubtitleOption(
+        id: offID,
+        title: "Off",
+        url: nil,
+        mpvTrackIndex: nil
+    )
+}
+
 private struct PlaybackRestoreState: Sendable {
     let currentTime: Double
     let wasPlaying: Bool
@@ -306,6 +324,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var qualityOptions: [QualityOption] = [QualityOption.automatic]
     @Published private(set) var selectedQualityOptionID = QualityOption.automaticID
     @Published private(set) var pendingQualityOptionID: String? = nil
+    @Published private(set) var subtitleOptions: [SubtitleOption] = []
+    @Published private(set) var selectedSubtitleOptionID = SubtitleOption.offID
     @Published var volume: Double = 0.9 {
         didSet {
             applyVolume()
@@ -424,6 +444,22 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         max(duration, 1)
     }
 
+    var hasSubtitleOptions: Bool {
+        !subtitleOptions.isEmpty
+    }
+
+    var subtitleControlText: String {
+        if subtitleOptions.isEmpty { return "No Subtitles" }
+        if selectedSubtitleOptionID == SubtitleOption.offID { return "Off" }
+        return subtitleOptions.first(where: { $0.id == selectedSubtitleOptionID })?.title ?? "Off"
+    }
+
+    var subtitleSymbolName: String {
+        selectedSubtitleOptionID == SubtitleOption.offID
+            ? "captions.bubble"
+            : "captions.bubble.fill"
+    }
+
     func configure(with playback: VideoPlayback) {
         prepareTask?.cancel()
         prepareTask = Task { [weak self] in
@@ -446,6 +482,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         qualityOptions = [QualityOption.automatic]
         selectedQualityOptionID = QualityOption.automaticID
         pendingQualityOptionID = nil
+        subtitleOptions = []
+        selectedSubtitleOptionID = SubtitleOption.offID
         currentPlayback = nil
         layoutState.isTheaterMode = false
         lastInteractionAt = Date()
@@ -611,6 +649,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func toggleTheaterMode() {
         withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
+            if layoutState.isFullscreen {
+                window?.toggleFullScreen(nil)
+            }
             layoutState.isTheaterMode.toggle()
         }
         noteInteraction()
@@ -618,10 +659,61 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func toggleFullscreen() {
         noteInteraction()
+        if layoutState.isTheaterMode {
+            withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
+                layoutState.isTheaterMode = false
+            }
+        }
         window?.toggleFullScreen(nil)
     }
 
     func handlePlayerGeometryChange() {}
+
+    func cycleSubtitles() {
+        noteInteraction()
+        guard !subtitleOptions.isEmpty else { return }
+
+        let nextOption: SubtitleOption
+        if selectedSubtitleOptionID == SubtitleOption.offID {
+            nextOption = subtitleOptions[0]
+        } else if let index = subtitleOptions.firstIndex(where: { $0.id == selectedSubtitleOptionID }),
+                  index + 1 < subtitleOptions.count {
+            nextOption = subtitleOptions[index + 1]
+        } else {
+            nextOption = .off
+        }
+
+        applySubtitleSelection(nextOption)
+    }
+
+    func selectSubtitle(_ option: SubtitleOption) {
+        noteInteraction()
+        applySubtitleSelection(option)
+    }
+
+    func seekRelative(_ seconds: Double) {
+        guard mpvEngine != nil, duration > 0 else { return }
+        noteInteraction()
+        let target = max(0, min(currentTime + seconds, duration))
+        scrubPosition = target
+        currentTime = target
+        Task { [weak self] in
+            guard let self, let mpvEngine else { return }
+            await mpvEngine.seek(to: target)
+            syncMPVState(using: mpvEngine)
+        }
+    }
+
+    func stepFrame(direction: Int) {
+        guard let mpvEngine, !isPlaying else { return }
+        noteInteraction()
+        mpvEngine.stepFrame(direction: direction)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard let self, let mpvEngine = self.mpvEngine else { return }
+            self.syncMPVState(using: mpvEngine)
+        }
+    }
 
     private var activeQualityOption: QualityOption? {
         qualityOptions.first(where: { $0.id == selectedQualityOptionID })
@@ -691,6 +783,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             duration = 0
             startPollingMPVState(using: engine)
             refreshQualityOptions(for: playback)
+            loadSubtitleTracks(for: playback, engine: engine)
             if let optionID = manualQualityOptionID(for: selection) {
                 selectedQualityOptionID = optionID
             }
@@ -772,6 +865,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             }
 
             refreshQualityOptions(for: playback)
+            if let engine = mpvEngine {
+                reapplySubtitlesAfterSwitch(for: playback, engine: engine)
+            }
             if case .automatic = option.selection,
                let optionID = manualQualityOptionID(for: selection) {
                 selectedQualityOptionID = optionID
@@ -1082,6 +1178,55 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private func debugDescription(for stream: StreamInfo?) -> String {
         guard let stream else { return "stream=nil" }
         return "stream[format=\(stream.formatId ?? "nil"),kind=\(stream.streamKind),quality=\(stream.qualityLabel ?? "nil"),container=\(stream.container ?? "nil"),vcodec=\(stream.videoCodec ?? "nil"),acodec=\(stream.audioCodec ?? "nil"),channels=\(stream.audioChannels.map(String.init) ?? "nil"),fps=\(stream.fps.map(String.init) ?? "nil"),bitrate=\(stream.bitrate.map(String.init) ?? "nil"),url=\(stream.url)]"
+    }
+
+    private func loadSubtitleTracks(for playback: VideoPlayback, engine: MPVPlaybackEngine) {
+        guard let tracks = playback.subtitles, !tracks.isEmpty else {
+            subtitleOptions = []
+            selectedSubtitleOptionID = SubtitleOption.offID
+            return
+        }
+
+        var options: [SubtitleOption] = []
+        for (index, track) in tracks.enumerated() {
+            let suffix = track.isAutoGenerated ? " (auto)" : ""
+            let option = SubtitleOption(
+                id: "subtitle-\(index)-\(track.language)",
+                title: "\(track.label)\(suffix)",
+                url: track.url,
+                mpvTrackIndex: index + 1
+            )
+            options.append(option)
+            engine.addSubtitle(url: track.url)
+        }
+
+        subtitleOptions = options
+        selectedSubtitleOptionID = SubtitleOption.offID
+        engine.setSubtitleVisibility(false)
+    }
+
+    private func applySubtitleSelection(_ option: SubtitleOption) {
+        guard let mpvEngine else { return }
+
+        if option.isOff {
+            mpvEngine.setSubtitleVisibility(false)
+            mpvEngine.setSubtitleTrack(0)
+            selectedSubtitleOptionID = SubtitleOption.offID
+        } else if let trackIndex = option.mpvTrackIndex {
+            mpvEngine.setSubtitleTrack(trackIndex)
+            mpvEngine.setSubtitleVisibility(true)
+            selectedSubtitleOptionID = option.id
+        }
+    }
+
+    private func reapplySubtitlesAfterSwitch(for playback: VideoPlayback, engine: MPVPlaybackEngine) {
+        let previousSelection = selectedSubtitleOptionID
+        loadSubtitleTracks(for: playback, engine: engine)
+
+        if previousSelection != SubtitleOption.offID,
+           let option = subtitleOptions.first(where: { $0.id == previousSelection }) {
+            applySubtitleSelection(option)
+        }
     }
 
     private func formatTime(_ seconds: Double) -> String {

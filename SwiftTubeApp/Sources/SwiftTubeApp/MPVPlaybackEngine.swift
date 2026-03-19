@@ -148,6 +148,40 @@ final class MPVPlaybackEngine: NSObject {
         )
     }
 
+    func addSubtitle(url: String) {
+        do {
+            try command(["sub-add", url, "auto"])
+            PlaybackDebugLogger.log("mpv sub-add url=\(url)")
+        } catch {
+            PlaybackDebugLogger.log("mpv sub-add failed url=\(url) error=\(error.localizedDescription)")
+        }
+    }
+
+    func setSubtitleTrack(_ trackID: Int) {
+        guard let mpv else { return }
+        var value = Int64(trackID)
+        mpv_set_property(mpv, "sid", MPV_FORMAT_INT64, &value)
+        PlaybackDebugLogger.log("mpv set sid=\(trackID)")
+    }
+
+    func setSubtitleVisibility(_ visible: Bool) {
+        guard let mpv else { return }
+        var value: Int32 = visible ? 1 : 0
+        mpv_set_property(mpv, "sub-visibility", MPV_FORMAT_FLAG, &value)
+    }
+
+    func stepFrame(direction: Int) {
+        guard mpv != nil, didLoadFile else { return }
+        do {
+            if direction >= 0 {
+                try command(["frame-step"])
+            } else {
+                try command(["frame-back-step"])
+            }
+            updateCachedState()
+        } catch {}
+    }
+
     func stopSafely() async {
         guard isStopping == false else { return }
         isStopping = true
