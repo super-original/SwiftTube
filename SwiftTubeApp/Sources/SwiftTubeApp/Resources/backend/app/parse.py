@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+import re
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .models import CommentItem, StreamInfo, Thumbnail, VideoItem
 
@@ -300,6 +301,53 @@ def extract_continuation_token(data: Any) -> Optional[str]:
     return None
 
 
+_AUDIO_CODEC_PREFIXES = (
+    "mp4a",
+    "opus",
+    "vorbis",
+    "ac-3",
+    "ec-3",
+    "flac",
+)
+_VIDEO_CODEC_PREFIXES = (
+    "avc1",
+    "av01",
+    "vp9",
+    "vp09",
+    "hvc1",
+    "hev1",
+)
+
+
+def parse_mime_type_details(mime_type: Optional[str]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    if not isinstance(mime_type, str) or "/" not in mime_type:
+        return None, None, None
+
+    media_type = mime_type.split(";", 1)[0].strip().lower()
+    container = media_type.split("/", 1)[1] if "/" in media_type else None
+
+    codecs_match = re.search(r'codecs="([^"]+)"', mime_type)
+    codec_tokens = []
+    if codecs_match:
+        codec_tokens = [token.strip() for token in codecs_match.group(1).split(",") if token.strip()]
+
+    audio_codec = next(
+        (codec for codec in codec_tokens if codec.lower().startswith(_AUDIO_CODEC_PREFIXES)),
+        None,
+    )
+    video_codec = next(
+        (codec for codec in codec_tokens if codec.lower().startswith(_VIDEO_CODEC_PREFIXES)),
+        None,
+    )
+
+    if media_type.startswith("audio/"):
+        audio_codec = audio_codec or (codec_tokens[0] if codec_tokens else None)
+    if media_type.startswith("video/"):
+        video_codec = video_codec or (codec_tokens[0] if codec_tokens else None)
+
+    return container, audio_codec, video_codec
+
+
 def parse_streams(player_response: Dict[str, Any]) -> List[StreamInfo]:
     streaming = player_response.get("streamingData")
     if not isinstance(streaming, dict):
@@ -318,13 +366,16 @@ def parse_streams(player_response: Dict[str, Any]) -> List[StreamInfo]:
                 # signatureCipher streams require additional deciphering, so skip for now
                 continue
             mime_type = entry.get("mimeType")
+            parsed_container, parsed_audio_codec, parsed_video_codec = parse_mime_type_details(mime_type)
             has_audio = bool(
                 entry.get("audioQuality")
                 or entry.get("audioChannels")
+                or parsed_audio_codec
                 or (isinstance(mime_type, str) and "audio/" in mime_type)
             )
             has_video = bool(
                 entry.get("qualityLabel")
+                or parsed_video_codec
                 or (isinstance(mime_type, str) and "video/" in mime_type)
             )
             results.append(
@@ -338,9 +389,9 @@ def parse_streams(player_response: Dict[str, Any]) -> List[StreamInfo]:
                     height=entry.get("height"),
                     fps=entry.get("fps"),
                     audioChannels=entry.get("audioChannels"),
-                    audioCodec=entry.get("audioQuality"),
-                    videoCodec=entry.get("codecs"),
-                    container=entry.get("container"),
+                    audioCodec=entry.get("audioCodec") or parsed_audio_codec,
+                    videoCodec=entry.get("videoCodec") or entry.get("codecs") or parsed_video_codec,
+                    container=entry.get("container") or entry.get("ext") or parsed_container,
                     hasAudio=has_audio,
                     hasVideo=has_video,
                     isAdaptive=key == "adaptiveFormats",
