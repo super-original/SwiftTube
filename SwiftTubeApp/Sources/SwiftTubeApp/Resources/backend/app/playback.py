@@ -329,7 +329,10 @@ def _best_audio_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
 
 
 def _extract_playback(video_id: str, opts: dict[str, Any]) -> PlaybackBundle:
-    with YoutubeDL(opts) as ydl:
+    resolved_opts = dict(opts)
+    resolved_opts.setdefault("ignoreconfig", True)
+
+    with YoutubeDL(resolved_opts) as ydl:
         info = ydl.extract_info(
             f"https://www.youtube.com/watch?v={video_id}", download=False
         )

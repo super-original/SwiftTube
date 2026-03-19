@@ -213,6 +213,10 @@ private func directPlaybackSourceClient(for stream: StreamInfo) -> String? {
 }
 
 private func isDirectPlaybackURLSupported(_ stream: StreamInfo) -> Bool {
+    if let headers = stream.httpHeaders, headers.isEmpty == false {
+        return true
+    }
+
     guard let client = directPlaybackSourceClient(for: stream) else {
         return true
     }

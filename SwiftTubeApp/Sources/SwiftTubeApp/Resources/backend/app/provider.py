@@ -31,6 +31,9 @@ def build_authenticated_ytdlp_options(auth_options: dict[str, Any]) -> dict[str,
     extractor_args = opts.setdefault("extractor_args", {})
     youtube_args = extractor_args.setdefault("youtube", {})
     youtube_args["player_client"] = ["mweb"]
+    # The "actual" JS variant avoids the broken TV-player challenge path that
+    # was collapsing authenticated extraction down to image-only results.
+    youtube_args["player_js_variant"] = ["actual"]
 
     server_home = ensure_bgutil_provider(opts.get("cookiefile"))
     node_path = _resolve_command_path("node")
