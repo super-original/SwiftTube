@@ -108,6 +108,49 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
         return (currentTime, duration, isPlaying, isBuffering)
     }
 
+    func replaceFile(with newRequest: MPVPlaybackRequest, seekTo time: Double) async throws {
+        guard let mpv else {
+            throw NSError(domain: "SwiftTube.MPV", code: -2, userInfo: [NSLocalizedDescriptionKey: "mpv is not initialized."])
+        }
+
+        PlaybackDebugLogger.log(
+            "mpv replaceFile start video=\(newRequest.video.url.absoluteString) audio=\(newRequest.audio?.url.absoluteString ?? "nil") seekTo=\(time)"
+        )
+
+        let previousEventPump = eventPumpTask
+        eventPumpTask = nil
+        previousEventPump?.cancel()
+        mpv_wakeup(mpv)
+        _ = await previousEventPump?.result
+
+        didLoadFile = false
+        try command(["loadfile", newRequest.video.url.absoluteString, "replace"])
+
+        let loadWaitTask = makeFileLoadedTask(for: mpv)
+        self.loadWaitTask = loadWaitTask
+        try await loadWaitTask.value
+        self.loadWaitTask = nil
+        didLoadFile = true
+
+        if let audio = newRequest.audio {
+            let audioReadyTask = makeAudioReadyTask(for: audio, handle: mpv)
+            self.audioReadyTask = audioReadyTask
+            await audioReadyTask.value
+            self.audioReadyTask = nil
+        }
+
+        startEventPump(using: mpv)
+
+        if time > 0 {
+            await seek(to: time)
+        }
+
+        updateCachedState()
+        PlaybackDebugLogger.log(
+            "mpv replaceFile ready duration=\(duration) currentTime=\(currentTime) isPlaying=\(isPlaying)"
+        )
+    }
+
     func stopSafely() async {
         guard isStopping == false else { return }
         isStopping = true

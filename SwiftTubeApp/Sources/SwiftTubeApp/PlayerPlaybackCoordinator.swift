@@ -1263,6 +1263,18 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         PlaybackDebugLogger.log(
             "mpv switch request option=\(debugDescription(for: option)) video=\(debugDescription(for: selection.stream)) audio=\(debugDescription(for: selection.audioStream))"
         )
+
+        if let existingEngine = activeMPVEngine {
+            try await switchToMPVQualityInPlace(
+                option: option,
+                selection: selection,
+                playback: playback,
+                engine: existingEngine,
+                request: request
+            )
+            return
+        }
+
         let engine = MPVPlaybackEngine(request: request)
         pendingMPVEngine = engine
         pendingRenderState = .mpv(engine)
@@ -1290,7 +1302,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         subtitleOptions = []
         selectedSubtitleOptionID = SubtitleOption.offID
 
-        let previousMPVEngine = activeMPVEngine
         activeMPVEngine = engine
         pendingNativeEngine?.stop()
         pendingNativeEngine = nil
@@ -1299,7 +1310,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         activeRenderState = .mpv(engine)
         pendingRenderState = nil
         currentSource = nil
-        scheduleMPVStop(previousMPVEngine, pauseFirst: true)
 
         currentTime = clampedTime
         scrubPosition = clampedTime
@@ -1314,6 +1324,53 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
         PlaybackDebugLogger.log(
             "mpv switch success option=\(debugDescription(for: option)) duration=\(duration) currentTime=\(currentTime) qualityOptions=\(qualityOptions.map(debugDescription(for:)).joined(separator: " | "))"
+        )
+
+        if isHoveringStage {
+            startHideMonitorIfNeeded()
+        } else {
+            hideControlsIfAllowed()
+        }
+        endMenuInteraction()
+    }
+
+    private func switchToMPVQualityInPlace(
+        option: QualityOption,
+        selection: ManualPlaybackSelection,
+        playback: VideoPlayback,
+        engine: MPVPlaybackEngine,
+        request: MPVPlaybackRequest
+    ) async throws {
+        let restoreState = currentRestoreState()
+        let clampedTime = max(restoreState.currentTime, 0)
+
+        PlaybackDebugLogger.log(
+            "mpv in-place switch start option=\(debugDescription(for: option)) seekTo=\(clampedTime)"
+        )
+
+        mpvStateTask?.cancel()
+        try await engine.replaceFile(with: request, seekTo: clampedTime)
+        engine.setVolume(volume)
+
+        if restoreState.wasPlaying {
+            engine.play()
+        } else {
+            engine.pause()
+        }
+
+        currentTime = clampedTime
+        scrubPosition = clampedTime
+        pendingQualityOptionID = nil
+        startPollingMPVState(using: engine)
+        await refreshQualityOptions(for: playback)
+        if case .automatic = option.selection,
+           let optionID = manualQualityOptionID(for: selection) {
+            selectedQualityOptionID = optionID
+        } else {
+            selectedQualityOptionID = option.id
+        }
+        PlaybackDebugLogger.log(
+            "mpv in-place switch success option=\(debugDescription(for: option)) duration=\(duration) currentTime=\(currentTime)"
         )
 
         if isHoveringStage {
