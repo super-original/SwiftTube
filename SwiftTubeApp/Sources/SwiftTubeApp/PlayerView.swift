@@ -536,12 +536,14 @@ private struct PlayerStageSurface: View {
                 MPVMetalRenderView(engine: displayedMPVEngine, onLayoutChange: {
                     coordinator.handlePlayerGeometryChange()
                 })
+                .id(displayedMPVEngine.id)
             }
 
             if let preparingMPVEngine {
                 MPVMetalRenderView(engine: preparingMPVEngine, onLayoutChange: {
                     coordinator.handlePlayerGeometryChange()
                 })
+                .id(preparingMPVEngine.id)
                 .opacity(0.001)
                 .allowsHitTesting(false)
             }
