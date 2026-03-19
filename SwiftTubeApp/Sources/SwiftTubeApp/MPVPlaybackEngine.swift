@@ -150,7 +150,7 @@ final class MPVPlaybackEngine: NSObject {
 
     func addSubtitle(url: String) {
         do {
-            try command(["sub-add", url, "auto"])
+            try command(["sub-add", url, "select"])
             PlaybackDebugLogger.log("mpv sub-add url=\(url)")
         } catch {
             PlaybackDebugLogger.log("mpv sub-add failed url=\(url) error=\(error.localizedDescription)")
