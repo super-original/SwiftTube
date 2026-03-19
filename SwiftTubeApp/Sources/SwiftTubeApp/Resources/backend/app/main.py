@@ -252,29 +252,14 @@ def _video_info(
     if not playback_bundle.streams and not player_streams:
         raise HTTPException(status_code=404, detail="No playable streams found")
 
-    resolved_streams = _merge_streams(playback_bundle.streams, player_streams)
-    resolved_bundle = build_playback_bundle_from_streams(
-        resolved_streams,
-        title=playback_bundle.title,
-        duration_text=playback_bundle.duration_text,
-    )
-    resolved_manifest_stream = playback_bundle.preferred_manifest_stream or resolved_bundle.preferred_manifest_stream
-    resolved_muxed_stream = playback_bundle.preferred_muxed_stream or resolved_bundle.preferred_muxed_stream or best
-    resolved_video_stream = playback_bundle.preferred_video_stream or resolved_bundle.preferred_video_stream
-    resolved_audio_stream = playback_bundle.preferred_audio_stream or resolved_bundle.preferred_audio_stream
-    if resolved_manifest_stream is not None:
-        resolved_strategy = "manifest"
-    elif (
-        resolved_video_stream is not None
-        and resolved_audio_stream is not None
-        and (
-            resolved_muxed_stream is None
-            or (resolved_video_stream.height or 0) > (resolved_muxed_stream.height or 0)
-        )
-    ):
-        resolved_strategy = "mpv"
-    else:
-        resolved_strategy = "direct"
+    resolved_streams = playback_bundle.streams or player_streams
+    resolved_bundle = playback_bundle if playback_bundle.streams else player_bundle
+    resolved_manifest_stream = resolved_bundle.preferred_manifest_stream
+    resolved_muxed_stream = resolved_bundle.preferred_muxed_stream or best
+    resolved_video_stream = resolved_bundle.preferred_video_stream
+    resolved_audio_stream = resolved_bundle.preferred_audio_stream
+    resolved_strategy = resolved_bundle.playback_strategy if resolved_streams else "direct"
+    resolved_best_stream = resolved_bundle.best_stream or best
 
     return VideoPlayback(
         id=video_id,
@@ -298,8 +283,8 @@ def _video_info(
         preferredMuxedStream=resolved_muxed_stream,
         preferredVideoStream=resolved_video_stream,
         preferredAudioStream=resolved_audio_stream,
-        bestStreamUrl=(resolved_manifest_stream or resolved_muxed_stream or resolved_video_stream or playback_bundle.best_stream or best).url if (resolved_manifest_stream or resolved_muxed_stream or resolved_video_stream or playback_bundle.best_stream or best) else None,
-        bestStream=resolved_manifest_stream or resolved_muxed_stream or resolved_video_stream or playback_bundle.best_stream or best,
+        bestStreamUrl=resolved_best_stream.url if resolved_best_stream else None,
+        bestStream=resolved_best_stream,
     )
 
 

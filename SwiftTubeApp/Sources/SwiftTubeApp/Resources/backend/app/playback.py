@@ -6,9 +6,17 @@ from typing import Any, Iterable, List, Optional
 import httpx
 from yt_dlp import YoutubeDL
 from yt_dlp.cookies import YoutubeDLCookieJar
+from yt_dlp.extractor.youtube.jsc._builtin.ejs import EJSBaseJCP
 
 from .models import StreamInfo
 from .provider import build_authenticated_ytdlp_options
+
+_YTDLP_JS_CHALLENGE_PATCHED = False
+_YTDLP_NODE_LOCATION_POLYFILL = """\
+if (typeof globalThis.self === "undefined") { globalThis.self = globalThis; }
+if (!globalThis.location) { globalThis.location = { origin: "https://www.youtube.com" }; }
+if (!globalThis.self.location) { globalThis.self.location = globalThis.location; }
+"""
 
 
 @dataclass
@@ -49,6 +57,23 @@ class PlaybackBundle:
     def best_stream_url(self) -> Optional[str]:
         stream = self.best_stream
         return stream.url if stream else None
+
+
+def _ensure_ytdlp_js_challenge_polyfill() -> None:
+    global _YTDLP_JS_CHALLENGE_PATCHED
+    if _YTDLP_JS_CHALLENGE_PATCHED:
+        return
+
+    original_construct_stdin = EJSBaseJCP._construct_stdin
+
+    def patched_construct_stdin(self, player, preprocessed, requests, /):
+        stdin = original_construct_stdin(self, player, preprocessed, requests)
+        if _YTDLP_NODE_LOCATION_POLYFILL in stdin:
+            return stdin
+        return _YTDLP_NODE_LOCATION_POLYFILL + stdin
+
+    EJSBaseJCP._construct_stdin = patched_construct_stdin
+    _YTDLP_JS_CHALLENGE_PATCHED = True
 
 
 def _format_duration(seconds: Any) -> Optional[str]:
@@ -328,6 +353,7 @@ def build_playback_bundle_from_streams(
 
 
 def _extract_playback(video_id: str, opts: dict[str, Any]) -> PlaybackBundle:
+    _ensure_ytdlp_js_challenge_polyfill()
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(
             f"https://www.youtube.com/watch?v={video_id}", download=False
