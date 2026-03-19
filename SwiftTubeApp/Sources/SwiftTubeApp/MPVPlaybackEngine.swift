@@ -126,7 +126,7 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
         didLoadFile = false
         try command(["loadfile", newRequest.video.url.absoluteString, "replace"])
 
-        let loadWaitTask = makeFileLoadedTask(for: mpv)
+        let loadWaitTask = makeFileLoadedTask(for: mpv, isReplace: true)
         self.loadWaitTask = loadWaitTask
         try await loadWaitTask.value
         self.loadWaitTask = nil
@@ -266,7 +266,7 @@ private extension MPVPlaybackEngine {
         }
     }
 
-    func makeFileLoadedTask(for handle: OpaquePointer) -> Task<Void, Error> {
+    func makeFileLoadedTask(for handle: OpaquePointer, isReplace: Bool = false) -> Task<Void, Error> {
         let handleBits = UInt(bitPattern: handle)
 
         return Task.detached(priority: .userInitiated) {
@@ -290,15 +290,19 @@ private extension MPVPlaybackEngine {
                         let endError = endFile.pointee.error
                         let endErrorMessage = String(cString: mpv_error_string(endError))
                         PlaybackDebugLogger.log(
-                            "mpv event \(eventName) reason=\(endReason) error=\(endError) message=\(endErrorMessage)"
+                            "mpv event \(eventName) reason=\(endReason) error=\(endError) message=\(endErrorMessage) isReplace=\(isReplace)"
                         )
+                        if isReplace && endError == 0 {
+                            continue
+                        }
                         throw NSError(
                             domain: "SwiftTube.MPV",
                             code: Int(endError != 0 ? endError : -11),
                             userInfo: [NSLocalizedDescriptionKey: "mpv ended the file before it became ready. reason=\(endReason) error=\(endErrorMessage)"]
                         )
                     }
-                    PlaybackDebugLogger.log("mpv event \(eventName)")
+                    PlaybackDebugLogger.log("mpv event \(eventName) isReplace=\(isReplace)")
+                    if isReplace { continue }
                     throw NSError(domain: "SwiftTube.MPV", code: -11, userInfo: [NSLocalizedDescriptionKey: "mpv ended the file before it became ready."])
                 case MPV_EVENT_LOG_MESSAGE:
                     if let logMessage = event.pointee.data?.assumingMemoryBound(to: mpv_event_log_message.self) {
