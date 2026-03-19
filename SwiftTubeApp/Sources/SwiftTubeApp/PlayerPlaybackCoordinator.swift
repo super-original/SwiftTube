@@ -1113,11 +1113,15 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         playback: VideoPlayback,
         subtitleSnapshot: SubtitleSelectionSnapshot?
     ) async throws {
-        guard case .automatic = option.selection else {
+        switch option.selection {
+        case .automatic, .manifestVariant:
+            break
+        case .manual:
             throw URLError(.unsupportedURL)
         }
 
-        if let selection = automaticStartupMPVSelection(for: playback),
+        if case .automatic = option.selection,
+           let selection = automaticStartupMPVSelection(for: playback),
            automaticStartupNativeSource(for: playback) == nil {
             try await switchToMPVQuality(
                 option: option,
@@ -1173,6 +1177,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         setupPlayerObservers(for: engine.player)
         observeCurrentItem(item)
         clearManifestQualityPreferences(on: item)
+        if case .manifestVariant(_, let peakBitRate, let width, let height) = option.selection {
+            item.preferredPeakBitRate = peakBitRate
+            if width > 0 || height > 0 {
+                item.preferredMaximumResolution = CGSize(width: width, height: height)
+            }
+        }
         currentSource = source
         activeBackendKind = .avFoundation
         activeRenderState = .avFoundation(engine.player)
