@@ -50,9 +50,7 @@ auth_manager = BrowserAuthManager()
 
 def _build_clients(use_auth: bool) -> tuple[InnerTube, InnerTube]:
     if use_auth and auth_manager.is_authenticated:
-        # Authenticated MWEB exposes the full adaptive stream ladder, while
-        # authenticated WEB/WEB_PARENT_TOOLS frequently collapse to a single 360p muxed stream.
-        return auth_manager.build_client("WEB"), auth_manager.build_client("MWEB")
+        return auth_manager.build_client("WEB"), auth_manager.build_client("WEB_PARENT_TOOLS")
     return public_client_web, public_client_player
 
 
@@ -156,10 +154,16 @@ def _video_info(
     client_player: InnerTube,
     playback_auth: Optional[dict] = None,
 ) -> VideoPlayback:
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         watch_future = executor.submit(client_web.next, video_id=video_id)
         playback_future = executor.submit(extract_playback, video_id, playback_auth)
         player_future = executor.submit(client_player.player, video_id)
+        auth_ladder_future = None
+        if playback_auth is not None and auth_manager.is_authenticated:
+            auth_ladder_future = executor.submit(
+                auth_manager.build_client("MWEB").player,
+                video_id,
+            )
 
         try:
             watch_data = watch_future.result()
@@ -178,11 +182,20 @@ def _video_info(
         except RequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+        auth_ladder_data = None
+        if auth_ladder_future is not None:
+            try:
+                auth_ladder_data = auth_ladder_future.result()
+            except RequestError:
+                auth_ladder_data = None
+
     watch_metadata = extract_watch_metadata(watch_data)
     related_videos = extract_related_videos(watch_data, current_video_id=video_id)
 
-    streams = parse_streams(player_data)
-    best = pick_best_stream(streams)
+    startup_streams = parse_streams(player_data)
+    auth_ladder_streams = parse_streams(auth_ladder_data) if auth_ladder_data else []
+    streams = _merge_streams(startup_streams, auth_ladder_streams)
+    best = pick_best_stream(startup_streams) or pick_best_stream(streams)
     title = None
     details = player_data.get("videoDetails") if isinstance(player_data, dict) else None
     if isinstance(details, dict):
