@@ -233,6 +233,14 @@ private func isManualQualityVideoStream(_ stream: StreamInfo) -> Bool {
     return true
 }
 
+private func manualQualitySortKey(for candidate: ManualQualityCandidate) -> (Int, Int, Int) {
+    (
+        candidate.selection.stream.height ?? 0,
+        candidate.selection.stream.fps ?? 0,
+        candidate.bitrate
+    )
+}
+
 private func manualQualityCandidate(
     for stream: StreamInfo,
     playback: VideoPlayback
@@ -254,7 +262,7 @@ private func manualQualityCandidate(
     )
 }
 
-private func automaticStartupSource(for playback: VideoPlayback) -> PlayerSourceDescriptor? {
+private func automaticStartupNativeSource(for playback: VideoPlayback) -> PlayerSourceDescriptor? {
     if let manifestStream = playback.preferredManifestStream {
         return .manifestAutomatic(manifestStream)
     }
@@ -272,6 +280,18 @@ private func automaticStartupSource(for playback: VideoPlayback) -> PlayerSource
     }
 
     return nil
+}
+
+private func automaticStartupMPVSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
+    if let preferredVideoStream = playback.preferredVideoStream,
+       let preferredCandidate = manualQualityCandidate(for: preferredVideoStream, playback: playback) {
+        return preferredCandidate.selection
+    }
+
+    return playback.streams
+        .compactMap { manualQualityCandidate(for: $0, playback: playback) }
+        .max { manualQualitySortKey(for: $0) < manualQualitySortKey(for: $1) }?
+        .selection
 }
 
 @MainActor
@@ -353,7 +373,7 @@ private actor QualityCoordinator {
     }
 
     private static func resolveInitialSource(for playback: VideoPlayback) -> PlayerSourceDescriptor? {
-        automaticStartupSource(for: playback)
+        automaticStartupNativeSource(for: playback)
     }
 
     private static func resolveSource(
@@ -887,14 +907,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         currentLoadedBufferDuration = 0
 
         do {
-            let source = try await preferredSource(for: playback)
-            let item = try await buildPlayerItem(for: source)
-            guard !Task.isCancelled else { return }
-
             currentPlayback = playback
-            currentSource = source
             selectedQualityOptionID = QualityOption.automaticID
-            activeBackendKind = .avFoundation
             scheduleMPVStop(activeMPVEngine, pauseFirst: true)
             activeMPVEngine = nil
             scheduleMPVStop(pendingMPVEngine)
@@ -903,31 +917,43 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             pendingRenderState = nil
             mpvStateTask?.cancel()
 
-            let player = ensurePlayer()
-            observeCurrentItem(item)
-            player.replaceCurrentItem(with: item)
-            clearManifestQualityPreferences(on: item)
-            activeRenderState = .avFoundation(player)
+            if let source = automaticStartupNativeSource(for: playback) {
+                let item = try await buildPlayerItem(for: source)
+                guard !Task.isCancelled else { return }
 
-            async let metadataRefresh: Void = refreshPlaybackMetadata(
-                for: item,
-                playback: playback,
-                preferredSubtitle: nil
-            )
+                currentSource = source
+                activeBackendKind = .avFoundation
 
-            guard !Task.isCancelled else { return }
-            currentTime = 0
-            scrubPosition = 0
-            try await waitUntilReadyToPlay(item)
-            guard !Task.isCancelled else { return }
-            player.play()
-            startHideMonitorIfNeeded()
-            await metadataRefresh
-            await qualityCoordinator.prime(
-                playback: playback,
-                automaticSource: source,
-                options: qualityOptions
-            )
+                let player = ensurePlayer()
+                observeCurrentItem(item)
+                player.replaceCurrentItem(with: item)
+                clearManifestQualityPreferences(on: item)
+                activeRenderState = .avFoundation(player)
+
+                async let metadataRefresh: Void = refreshPlaybackMetadata(
+                    for: item,
+                    playback: playback,
+                    preferredSubtitle: nil
+                )
+
+                guard !Task.isCancelled else { return }
+                currentTime = 0
+                scrubPosition = 0
+                try await waitUntilReadyToPlay(item)
+                guard !Task.isCancelled else { return }
+                player.play()
+                startHideMonitorIfNeeded()
+                await metadataRefresh
+                await qualityCoordinator.prime(
+                    playback: playback,
+                    automaticSource: source,
+                    options: qualityOptions
+                )
+            } else if let selection = automaticStartupMPVSelection(for: playback) {
+                try await prepareAutomaticMPVPlayback(playback: playback, selection: selection)
+            } else {
+                throw URLError(.badURL)
+            }
         } catch {
             if !Task.isCancelled {
                 errorMessage = "Failed to prepare video."
@@ -993,6 +1019,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     ) async throws {
         guard case .automatic = option.selection else {
             throw URLError(.unsupportedURL)
+        }
+
+        if let selection = automaticStartupMPVSelection(for: playback),
+           automaticStartupNativeSource(for: playback) == nil {
+            try await switchToMPVQuality(
+                option: option,
+                selection: selection,
+                playback: playback
+            )
+            return
         }
 
         let automaticSource = try await preferredSource(for: playback)
@@ -1062,6 +1098,51 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             hideControlsIfAllowed()
         }
         endMenuInteraction()
+    }
+
+    private func prepareAutomaticMPVPlayback(
+        playback: VideoPlayback,
+        selection: ManualPlaybackSelection
+    ) async throws {
+        let request = try mpvRequest(for: selection)
+        PlaybackDebugLogger.log(
+            "automatic mpv prepare request video=\(debugDescription(for: selection.stream)) audio=\(debugDescription(for: selection.audioStream))"
+        )
+
+        let engine = MPVPlaybackEngine(request: request)
+        pendingMPVEngine = engine
+        pendingRenderState = .mpv(engine)
+
+        try await engine.prepare(startTime: 0, autoPlay: false)
+        guard !Task.isCancelled else { return }
+        engine.setVolume(volume)
+        engine.play()
+
+        teardownPlayerObservers()
+        player?.pause()
+        player = nil
+
+        currentItemStatus = .readyToPlay
+        isCurrentItemLikelyToKeepUp = true
+        isCurrentItemBufferEmpty = false
+        currentLoadedBufferDuration = 1
+        subtitleOptions = []
+        selectedSubtitleOptionID = SubtitleOption.offID
+
+        activeMPVEngine = engine
+        pendingNativeEngine?.stop()
+        pendingNativeEngine = nil
+        pendingMPVEngine = nil
+        activeBackendKind = .mpv
+        activeRenderState = .mpv(engine)
+        pendingRenderState = nil
+        currentSource = nil
+        currentTime = 0
+        scrubPosition = 0
+        duration = 0
+        startPollingMPVState(using: engine)
+        await refreshQualityOptions(for: playback)
+        startHideMonitorIfNeeded()
     }
 
     private func switchToMPVQuality(
@@ -1756,7 +1837,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func resolvedInitialSource(for playback: VideoPlayback) -> PlayerSourceDescriptor? {
-        automaticStartupSource(for: playback)
+        automaticStartupNativeSource(for: playback)
     }
 
     private func buildPlayerItem(for source: PlayerSourceDescriptor) async throws -> AVPlayerItem {
@@ -1929,18 +2010,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func manualQualityCandidateSort(lhs: ManualQualityCandidate, rhs: ManualQualityCandidate) -> Bool {
-        let lhsScore = (
-            lhs.selection.stream.height ?? 0,
-            lhs.selection.stream.fps ?? 0,
-            lhs.bitrate
-        )
-        let rhsScore = (
-            rhs.selection.stream.height ?? 0,
-            rhs.selection.stream.fps ?? 0,
-            rhs.bitrate
-        )
-
-        return lhsScore > rhsScore
+        manualQualitySortKey(for: lhs) > manualQualitySortKey(for: rhs)
     }
 
     private func manifestVariantSort(lhs: AVAssetVariant, rhs: AVAssetVariant) -> Bool {
