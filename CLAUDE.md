@@ -47,13 +47,11 @@ Key backend files:
 - `app/auth.py` - browser cookie import via yt-dlp cookie extraction
 - `app/provider.py` - authenticated yt-dlp option builder
 
-### Playback engine abstraction
+### Playback engine (MPV-only since v0.6.0)
 
-Two playback backends behind a shared `PlaybackEngine` protocol:
-- `AVFoundationPlaybackEngine` - for HLS manifests and muxed streams
-- `MPVPlaybackEngine` - for adaptive (separate video+audio) via MPVKit
+All playback uses `MPVPlaybackEngine` via MPVKit (libmpv). The previous AVFoundation path was removed in v0.6.0 since YouTube now serves adaptive streams exclusively.
 
-`PlayerPlaybackCoordinator` is the central playback controller. It selects the engine based on `playbackStrategy` from the backend ("manifest" -> AVFoundation, "mpv" -> MPV, "direct" -> AVFoundation), manages quality switching, subtitles, theater/fullscreen modes, and scrubbing.
+`PlayerPlaybackCoordinator` is the central playback controller. It manages the MPV engine lifecycle, quality switching (via `replaceFile` on the same mpv context), theater/fullscreen modes, and scrubbing. Quality options are built from AV1 mp4 adaptive streams paired with m4a audio.
 
 ### Navigation
 
@@ -77,7 +75,7 @@ Two playback backends behind a shared `PlaybackEngine` protocol:
 
 ## Versioning and Packaging
 
-- The app version lives in `SwiftTubeApp/VERSION` (single line, e.g., `0.5.19`)
+- The app version lives in `SwiftTubeApp/VERSION` (single line, e.g., `0.6.0`)
 - Build number is auto-derived from `git rev-list --count HEAD`
 - `SwiftTubeApp/build_app.sh` builds the app bundle at `SwiftTubeApp/Build/SwiftTube.app`
   - Runs `swift build`, copies the binary + resources, embeds frameworks, and codesigns

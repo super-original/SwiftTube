@@ -1,106 +1,5 @@
 import AppKit
-import AVKit
 import SwiftUI
-
-final class PassivePlayerContainerView: NSView {
-    private let playerView = AVPlayerView()
-    var onLayoutChange: (() -> Void)?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-
-        playerView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(playerView)
-
-        NSLayoutConstraint.activate([
-            playerView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            playerView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            playerView.topAnchor.constraint(equalTo: topAnchor),
-            playerView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override var acceptsFirstResponder: Bool {
-        false
-    }
-
-    override func layout() {
-        super.layout()
-        onLayoutChange?()
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        nil
-    }
-
-    func configure(player: AVPlayer) {
-        if playerView.player !== player {
-            playerView.player = player
-        }
-        playerView.controlsStyle = .none
-        playerView.videoGravity = .resizeAspect
-        playerView.showsFullScreenToggleButton = false
-        playerView.allowsMagnification = false
-    }
-}
-
-final class PlayerContainerViewController: NSViewController {
-    override func loadView() {
-        view = PassivePlayerContainerView()
-    }
-
-    func configure(player: AVPlayer, onLayoutChange: @escaping () -> Void) {
-        guard let containerView = view as? PassivePlayerContainerView else { return }
-        containerView.onLayoutChange = onLayoutChange
-        containerView.configure(player: player)
-    }
-}
-
-struct PlayerRenderView: NSViewControllerRepresentable {
-    let player: AVPlayer
-    let onLayoutChange: () -> Void
-
-    func makeNSViewController(context: Context) -> PlayerContainerViewController {
-        let controller = PlayerContainerViewController()
-        controller.configure(player: player, onLayoutChange: onLayoutChange)
-        return controller
-    }
-
-    func updateNSViewController(_ controller: PlayerContainerViewController, context: Context) {
-        controller.configure(player: player, onLayoutChange: onLayoutChange)
-    }
-}
-
-private struct PlayerRenderStateView: View {
-    let renderState: PlayerRenderState
-    let onLayoutChange: () -> Void
-
-    var body: some View {
-        switch renderState {
-        case .avFoundation(let player):
-            PlayerRenderView(player: player, onLayoutChange: onLayoutChange)
-        case .mpv(let engine):
-            MPVMetalRenderView(engine: engine, onLayoutChange: onLayoutChange)
-        }
-    }
-}
-
-private extension PlayerRenderState {
-    var avPlayer: AVPlayer? {
-        guard case .avFoundation(let player) = self else { return nil }
-        return player
-    }
-
-    var mpvEngine: MPVPlaybackEngine? {
-        guard case .mpv(let engine) = self else { return nil }
-        return engine
-    }
-}
 
 struct WindowAccessor: NSViewRepresentable {
     let onResolve: (NSWindow?) -> Void
@@ -508,55 +407,25 @@ private struct PlayerStageSurface: View {
     let immersive: Bool
     let retry: () -> Void
 
-    private var activeAVPlayer: AVPlayer? {
-        coordinator.activeRenderState?.avPlayer
-    }
-
-    private var pendingAVPlayer: AVPlayer? {
-        coordinator.pendingRenderState?.avPlayer
-    }
-
-    private var displayedMPVEngine: MPVPlaybackEngine? {
-        coordinator.activeRenderState?.mpvEngine ?? coordinator.pendingRenderState?.mpvEngine
-    }
-
     var body: some View {
         ZStack {
             Rectangle()
                 .fill(Color.black.opacity(0.94))
 
-            if let displayedMPVEngine {
-                MPVMetalRenderView(engine: displayedMPVEngine, onLayoutChange: {
+            if let engine = coordinator.mpvEngine {
+                MPVMetalRenderView(engine: engine, onLayoutChange: {
                     coordinator.handlePlayerGeometryChange()
                 })
-            }
-
-            if let activeAVPlayer {
-                PlayerRenderView(player: activeAVPlayer, onLayoutChange: {
-                    coordinator.handlePlayerGeometryChange()
-                })
-            }
-
-            if let pendingAVPlayer {
-                PlayerRenderView(player: pendingAVPlayer, onLayoutChange: {
-                    coordinator.handlePlayerGeometryChange()
-                })
-                .opacity(0.001)
-                .allowsHitTesting(false)
             }
 
             if coordinator.shouldShowPlaybackErrorOverlay,
                let errorMessage {
                 PlayerStageErrorOverlay(message: errorMessage, retry: retry)
             } else if coordinator.shouldShowPlaybackLoadingOverlay {
-                if coordinator.player == nil {
-                    PlayerStageLoadingOverlay(text: isLoading ? "Loading video..." : coordinator.playbackLoadingText)
-                } else {
-                    PlayerInlineLoadingOverlay(text: coordinator.playbackLoadingText)
-                }
+                PlayerStageLoadingOverlay(text: isLoading ? "Loading video..." : coordinator.playbackLoadingText)
             }
 
-            if coordinator.activeRenderState != nil {
+            if coordinator.mpvEngine != nil {
                 PlayerChromeOverlay(
                     coordinator: coordinator,
                     edgeToEdge: immersive
@@ -643,12 +512,6 @@ private struct PlayerChromeOverlay: View {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     PlayerStatusPill(text: coordinator.playbackBadgeText)
-
-                    if coordinator.selectedSubtitleOptionID != SubtitleOption.offID,
-                       coordinator.hasSubtitleOptions {
-                        PlayerStatusPill(text: coordinator.subtitleControlText)
-                    }
-
                     Spacer()
                 }
                 .padding(.horizontal, edgeToEdge ? 20 : 18)
@@ -685,7 +548,6 @@ private struct PlayerControlBar: View {
                 playPauseButton
                 volumeControl
                 Spacer(minLength: 0)
-                subtitlesButton
                 qualityMenu
                 theaterToggle
                 fullscreenButton
@@ -781,24 +643,6 @@ private struct PlayerControlBar: View {
             glass: .regular,
             shape: Capsule()
         )
-    }
-
-    var subtitlesButton: some View {
-        Button {
-            coordinator.cycleSubtitles()
-        } label: {
-            circularButtonLabel(
-                symbol: coordinator.subtitleSymbolName,
-                fontSize: 14,
-                foregroundStyle: coordinator.hasSubtitleOptions ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
-            )
-        }
-        .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.circle)
-        .controlSize(.regular)
-        .disabled(!coordinator.hasSubtitleOptions)
-        .accessibilityLabel("Subtitles")
-        .accessibilityValue(coordinator.subtitleAccessibilityValue)
     }
 
     var qualityMenu: some View {
@@ -952,33 +796,6 @@ private struct PlayerStatusPill: View {
                 glass: .regular,
                 shape: Capsule()
             )
-    }
-}
-
-private struct PlayerInlineLoadingOverlay: View {
-    let text: String
-
-    var body: some View {
-        VStack {
-            Spacer()
-
-            HStack(spacing: 10) {
-                ProgressView()
-                Text(text)
-                    .font(.subheadline.weight(.medium))
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(Color.black.opacity(0.72))
-            )
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .foregroundStyle(.white)
-        .allowsHitTesting(false)
     }
 }
 

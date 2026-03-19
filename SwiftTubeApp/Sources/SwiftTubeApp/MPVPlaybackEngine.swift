@@ -3,11 +3,8 @@ import Foundation
 import Libmpv
 
 @MainActor
-final class MPVPlaybackEngine: NSObject, PlaybackEngine {
+final class MPVPlaybackEngine: NSObject {
     let id = UUID()
-    let kind: PlaybackBackendKind = .mpv
-
-    weak var delegate: PlaybackEngineDelegate?
 
     let renderController = MPVRenderViewController()
     private let request: MPVPlaybackRequest
