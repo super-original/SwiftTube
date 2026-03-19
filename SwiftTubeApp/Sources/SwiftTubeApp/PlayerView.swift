@@ -516,13 +516,14 @@ private struct PlayerStageSurface: View {
         coordinator.pendingRenderState?.avPlayer
     }
 
-    private var activeMPVEngine: MPVPlaybackEngine? {
-        coordinator.activeRenderState?.mpvEngine
+    private var displayedMPVEngine: MPVPlaybackEngine? {
+        coordinator.activeRenderState?.mpvEngine ?? coordinator.pendingRenderState?.mpvEngine
     }
 
-    private var pendingMPVEngine: MPVPlaybackEngine? {
-        guard let pending = coordinator.pendingRenderState?.mpvEngine else { return nil }
-        guard pending.id != coordinator.activeRenderState?.mpvEngine?.id else { return nil }
+    private var preparingMPVEngine: MPVPlaybackEngine? {
+        guard let active = coordinator.activeRenderState?.mpvEngine,
+              let pending = coordinator.pendingRenderState?.mpvEngine,
+              pending.id != active.id else { return nil }
         return pending
     }
 
@@ -531,14 +532,14 @@ private struct PlayerStageSurface: View {
             Rectangle()
                 .fill(Color.black.opacity(0.94))
 
-            if let activeMPVEngine {
-                MPVMetalRenderView(engine: activeMPVEngine, onLayoutChange: {
+            if let displayedMPVEngine {
+                MPVMetalRenderView(engine: displayedMPVEngine, onLayoutChange: {
                     coordinator.handlePlayerGeometryChange()
                 })
             }
 
-            if let pendingMPVEngine {
-                MPVMetalRenderView(engine: pendingMPVEngine, onLayoutChange: {
+            if let preparingMPVEngine {
+                MPVMetalRenderView(engine: preparingMPVEngine, onLayoutChange: {
                     coordinator.handlePlayerGeometryChange()
                 })
                 .opacity(0.001)
