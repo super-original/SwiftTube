@@ -2031,18 +2031,27 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             throw URLError(.badURL)
         }
 
-        let videoTracks = try await videoAsset.loadTracks(withMediaType: .video)
-        let audioTracks = try await audioAsset.loadTracks(withMediaType: .audio)
+        let videoDurationHint = streamDurationHint(for: videoStream)
+        let audioDurationHint = streamDurationHint(for: audioStream)
+
+        PlaybackDebugLogger.log(
+            "adaptive item prepare video=\(debugDescription(for: videoStream)) audio=\(debugDescription(for: audioStream)) videoHint=\(debugDescription(for: videoDurationHint)) audioHint=\(debugDescription(for: audioDurationHint))"
+        )
+
+        async let videoTracksTask = videoAsset.loadTracks(withMediaType: .video)
+        async let audioTracksTask = audioAsset.loadTracks(withMediaType: .audio)
+
+        let videoTracks = try await videoTracksTask
+        let audioTracks = try await audioTracksTask
 
         guard let videoTrack = videoTracks.first,
               let audioTrack = audioTracks.first else {
             throw URLError(.cannotDecodeContentData)
         }
 
-        let videoTimeRange = try await videoTrack.load(.timeRange)
-        let audioTimeRange = try await audioTrack.load(.timeRange)
-        let videoDurationHint = streamDurationHint(for: videoStream)
-        let audioDurationHint = streamDurationHint(for: audioStream)
+        let videoTimeRange = try await adaptiveTimeRange(for: videoTrack, durationHint: videoDurationHint)
+        let audioTimeRange = try await adaptiveTimeRange(for: audioTrack, durationHint: audioDurationHint)
+        let preferredTransform = try await videoTrack.load(.preferredTransform)
         let duration = resolvedAdaptiveDuration(
             videoDurationHint: videoDurationHint,
             audioDurationHint: audioDurationHint,
@@ -2066,7 +2075,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             of: videoTrack,
             at: .zero
         )
-        compositionVideoTrack.preferredTransform = try await videoTrack.load(.preferredTransform)
+        compositionVideoTrack.preferredTransform = preferredTransform
 
         guard let compositionAudioTrack = composition.addMutableTrack(
             withMediaType: .audio,
@@ -2090,6 +2099,17 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             )
         }
         return item
+    }
+
+    private func adaptiveTimeRange(
+        for track: AVAssetTrack,
+        durationHint: CMTime?
+    ) async throws -> CMTimeRange {
+        if let durationHint, durationHint.isNumeric, durationHint.seconds > 0 {
+            return CMTimeRange(start: .zero, duration: durationHint)
+        }
+
+        return try await track.load(.timeRange)
     }
 
     private func buildManifestQualityOptions(from variants: [AVAssetVariant]) -> [QualityOption] {
