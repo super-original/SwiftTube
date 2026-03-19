@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Iterable, List, Optional
 
 from .models import CommentItem, StreamInfo, Thumbnail, VideoItem
@@ -300,6 +301,46 @@ def extract_continuation_token(data: Any) -> Optional[str]:
     return None
 
 
+def _parse_mime_type(mime_type: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    if not isinstance(mime_type, str) or not mime_type:
+        return None, None, None
+
+    base, _, remainder = mime_type.partition(";")
+    container = base.split("/", 1)[1].strip().lower() if "/" in base else None
+    codecs_match = re.search(r'codecs="([^"]+)"', remainder)
+    codecs = [
+        codec.strip()
+        for codec in (codecs_match.group(1).split(",") if codecs_match else [])
+        if codec.strip()
+    ]
+
+    video_codec = next((codec for codec in codecs if not codec.startswith(("mp4a", "opus", "vorbis", "aac"))), None)
+    audio_codec = next((codec for codec in codecs if codec.startswith(("mp4a", "opus", "vorbis", "aac"))), None)
+    return container, video_codec, audio_codec
+
+
+def _is_manifest_url(url: str) -> bool:
+    lowered = url.lower()
+    return (
+        "manifest.googlevideo.com" in lowered
+        or "/api/manifest/" in lowered
+        or lowered.endswith(".m3u8")
+        or "/playlist/index.m3u8" in lowered
+    )
+
+
+def _stream_kind(url: str, has_audio: bool, has_video: bool) -> str:
+    if _is_manifest_url(url):
+        return "manifest"
+    if has_video and has_audio:
+        return "muxed"
+    if has_video:
+        return "video"
+    if has_audio:
+        return "audio"
+    return "muxed"
+
+
 def parse_streams(player_response: Dict[str, Any]) -> List[StreamInfo]:
     streaming = player_response.get("streamingData")
     if not isinstance(streaming, dict):
@@ -318,13 +359,16 @@ def parse_streams(player_response: Dict[str, Any]) -> List[StreamInfo]:
                 # signatureCipher streams require additional deciphering, so skip for now
                 continue
             mime_type = entry.get("mimeType")
+            container, video_codec, audio_codec = _parse_mime_type(mime_type)
             has_audio = bool(
-                entry.get("audioQuality")
+                audio_codec
+                or entry.get("audioQuality")
                 or entry.get("audioChannels")
                 or (isinstance(mime_type, str) and "audio/" in mime_type)
             )
             has_video = bool(
-                entry.get("qualityLabel")
+                video_codec
+                or entry.get("qualityLabel")
                 or (isinstance(mime_type, str) and "video/" in mime_type)
             )
             results.append(
@@ -338,12 +382,13 @@ def parse_streams(player_response: Dict[str, Any]) -> List[StreamInfo]:
                     height=entry.get("height"),
                     fps=entry.get("fps"),
                     audioChannels=entry.get("audioChannels"),
-                    audioCodec=entry.get("audioQuality"),
-                    videoCodec=entry.get("codecs"),
-                    container=entry.get("container"),
+                    audioCodec=audio_codec or entry.get("audioQuality"),
+                    videoCodec=video_codec,
+                    container=container or entry.get("container"),
                     hasAudio=has_audio,
                     hasVideo=has_video,
                     isAdaptive=key == "adaptiveFormats",
+                    streamKind=_stream_kind(url, has_audio, has_video),
                 )
             )
     return results

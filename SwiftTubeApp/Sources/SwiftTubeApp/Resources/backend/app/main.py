@@ -29,6 +29,7 @@ from .parse import (
     pick_best_stream,
 )
 from .playback import extract_playback
+from .playback import build_playback_bundle_from_streams
 
 APP_VERSION = os.environ.get("SWIFTTUBE_APP_VERSION", "0.0.0")
 
@@ -153,11 +154,17 @@ def _video_info(
     client_web: InnerTube,
     client_player: InnerTube,
     playback_auth: Optional[dict] = None,
+    supplemental_player_clients: Optional[list[InnerTube]] = None,
 ) -> VideoPlayback:
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    supplemental_player_clients = supplemental_player_clients or []
+
+    with ThreadPoolExecutor(max_workers=3 + len(supplemental_player_clients)) as executor:
         watch_future = executor.submit(client_web.next, video_id=video_id)
         playback_future = executor.submit(extract_playback, video_id, playback_auth)
         player_future = executor.submit(client_player.player, video_id)
+        supplemental_player_futures = [
+            executor.submit(client.player, video_id) for client in supplemental_player_clients
+        ]
 
         try:
             watch_data = watch_future.result()
@@ -176,18 +183,28 @@ def _video_info(
         except RequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+        supplemental_player_data = []
+        for future in supplemental_player_futures:
+            try:
+                supplemental_player_data.append(future.result())
+            except RequestError:
+                continue
+
     watch_metadata = extract_watch_metadata(watch_data)
     related_videos = extract_related_videos(watch_data, current_video_id=video_id)
 
-    streams = parse_streams(player_data)
-    best = pick_best_stream(streams)
+    primary_streams = parse_streams(player_data)
+    supplemental_streams = [parse_streams(data) for data in supplemental_player_data]
+    player_streams = _merge_streams(primary_streams, *supplemental_streams)
+    player_bundle = build_playback_bundle_from_streams(player_streams)
+    best = pick_best_stream(player_streams)
     title = None
     details = player_data.get("videoDetails") if isinstance(player_data, dict) else None
     if isinstance(details, dict):
         title = details.get("title")
 
     if playback_bundle is None:
-        if not streams:
+        if not player_streams:
             detail = str(playback_error) if playback_error else "No playable streams found"
             raise HTTPException(status_code=404, detail=detail)
 
@@ -220,24 +237,44 @@ def _video_info(
             durationText=fallback_duration,
             description=watch_metadata.get("description"),
             commentCountText=watch_metadata.get("commentCountText"),
-            streams=streams,
+            streams=player_streams,
             recommendations=related_videos,
             comments=[],
-            playbackStrategy="direct",
-            preferredManifestStream=None,
-            preferredMuxedStream=best,
-            bestStreamUrl=best.url if best else None,
-            bestStream=best,
+            playbackStrategy=player_bundle.playback_strategy,
+            preferredManifestStream=player_bundle.preferred_manifest_stream,
+            preferredMuxedStream=player_bundle.preferred_muxed_stream or best,
+            preferredVideoStream=player_bundle.preferred_video_stream,
+            preferredAudioStream=player_bundle.preferred_audio_stream,
+            bestStreamUrl=(player_bundle.best_stream or best).url if (player_bundle.best_stream or best) else None,
+            bestStream=player_bundle.best_stream or best,
         )
 
-    if not playback_bundle.streams and not streams:
+    if not playback_bundle.streams and not player_streams:
         raise HTTPException(status_code=404, detail="No playable streams found")
 
-    resolved_streams = _merge_streams(playback_bundle.streams, streams)
-    resolved_muxed_stream = playback_bundle.preferred_muxed_stream or best
-    resolved_strategy = (
-        playback_bundle.playback_strategy if playback_bundle.streams else "direct"
+    resolved_streams = _merge_streams(playback_bundle.streams, player_streams)
+    resolved_bundle = build_playback_bundle_from_streams(
+        resolved_streams,
+        title=playback_bundle.title,
+        duration_text=playback_bundle.duration_text,
     )
+    resolved_manifest_stream = playback_bundle.preferred_manifest_stream or resolved_bundle.preferred_manifest_stream
+    resolved_muxed_stream = playback_bundle.preferred_muxed_stream or resolved_bundle.preferred_muxed_stream or best
+    resolved_video_stream = playback_bundle.preferred_video_stream or resolved_bundle.preferred_video_stream
+    resolved_audio_stream = playback_bundle.preferred_audio_stream or resolved_bundle.preferred_audio_stream
+    if resolved_manifest_stream is not None:
+        resolved_strategy = "manifest"
+    elif (
+        resolved_video_stream is not None
+        and resolved_audio_stream is not None
+        and (
+            resolved_muxed_stream is None
+            or (resolved_video_stream.height or 0) > (resolved_muxed_stream.height or 0)
+        )
+    ):
+        resolved_strategy = "mpv"
+    else:
+        resolved_strategy = "direct"
 
     return VideoPlayback(
         id=video_id,
@@ -257,12 +294,12 @@ def _video_info(
         recommendations=related_videos,
         comments=[],
         playbackStrategy=resolved_strategy,
-        preferredManifestStream=playback_bundle.preferred_manifest_stream,
+        preferredManifestStream=resolved_manifest_stream,
         preferredMuxedStream=resolved_muxed_stream,
-        preferredVideoStream=playback_bundle.preferred_video_stream,
-        preferredAudioStream=playback_bundle.preferred_audio_stream,
-        bestStreamUrl=playback_bundle.best_stream_url,
-        bestStream=playback_bundle.best_stream or best,
+        preferredVideoStream=resolved_video_stream,
+        preferredAudioStream=resolved_audio_stream,
+        bestStreamUrl=(resolved_manifest_stream or resolved_muxed_stream or resolved_video_stream or playback_bundle.best_stream or best).url if (resolved_manifest_stream or resolved_muxed_stream or resolved_video_stream or playback_bundle.best_stream or best) else None,
+        bestStream=resolved_manifest_stream or resolved_muxed_stream or resolved_video_stream or playback_bundle.best_stream or best,
     )
 
 
@@ -295,6 +332,7 @@ def video_info(video_id: str) -> VideoPlayback:
                 client_web,
                 client_player,
                 auth_manager.playback_options(),
+                supplemental_player_clients=[auth_manager.build_client("MWEB")],
             )
         except RequestError:
             auth_manager.clear()

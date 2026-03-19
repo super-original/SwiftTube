@@ -311,6 +311,22 @@ def _best_audio_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
     return max(candidates, key=_adaptive_audio_score)
 
 
+def build_playback_bundle_from_streams(
+    streams: List[StreamInfo],
+    title: Optional[str] = None,
+    duration_text: Optional[str] = None,
+) -> PlaybackBundle:
+    return PlaybackBundle(
+        title=title,
+        duration_text=duration_text,
+        streams=streams,
+        preferred_manifest_stream=_best_manifest_stream(streams),
+        preferred_muxed_stream=_best_muxed_stream(streams),
+        preferred_video_stream=_best_video_stream(streams),
+        preferred_audio_stream=_best_audio_stream(streams),
+    )
+
+
 def _extract_playback(video_id: str, opts: dict[str, Any]) -> PlaybackBundle:
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(
@@ -319,15 +335,10 @@ def _extract_playback(video_id: str, opts: dict[str, Any]) -> PlaybackBundle:
 
     formats = info.get("formats", []) if isinstance(info, dict) else []
     streams = _build_streams(formats if isinstance(formats, list) else [])
-
-    return PlaybackBundle(
+    return build_playback_bundle_from_streams(
+        streams,
         title=info.get("title") if isinstance(info, dict) else None,
         duration_text=_format_duration(info.get("duration") if isinstance(info, dict) else None),
-        streams=streams,
-        preferred_manifest_stream=_best_manifest_stream(streams),
-        preferred_muxed_stream=_best_muxed_stream(streams),
-        preferred_video_stream=_best_video_stream(streams),
-        preferred_audio_stream=_best_audio_stream(streams),
     )
 
 
