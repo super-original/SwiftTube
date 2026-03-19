@@ -178,31 +178,12 @@ private func isAVFoundationVideoContainerSupported(_ container: String?) -> Bool
     return container.hasPrefix("mp4") || container.hasPrefix("mov") || container.hasPrefix("m4v")
 }
 
-private func isMPVStartupCompatibleVideoCodec(_ codec: String?) -> Bool {
-    guard let codec else { return false }
-    return codec.hasPrefix("avc1")
-        || codec.hasPrefix("hvc1")
-        || codec.hasPrefix("hev1")
-        || codec.hasPrefix("av01")
-        || codec.hasPrefix("vp9")
-}
-
-private func isMPVStartupCompatibleVideoContainer(_ container: String?) -> Bool {
-    guard let container = container?.lowercased() else { return false }
-    return container.hasPrefix("mp4")
-        || container.hasPrefix("mov")
-        || container.hasPrefix("m4v")
-        || container.hasPrefix("webm")
-        || container.hasPrefix("mkv")
-}
-
-private func isMPVStartupCompatibleVideoStream(_ stream: StreamInfo) -> Bool {
+private func isMPVStartupVideoStream(_ stream: StreamInfo) -> Bool {
     guard stream.hasVideo, stream.streamKind != "manifest" else {
         return false
     }
 
-    return isMPVStartupCompatibleVideoContainer(stream.container)
-        && isMPVStartupCompatibleVideoCodec(stream.videoCodec)
+    return true
 }
 
 private func startupMPVAudioPreference(for stream: StreamInfo) -> (Int, Int, Int, Int, Int) {
@@ -237,15 +218,6 @@ private func hasConflictingHeaders(video: StreamInfo, audio: StreamInfo?) -> Boo
     }
 
     return false
-}
-
-private func isSupportedNativeStartupStream(_ stream: StreamInfo) -> Bool {
-    guard stream.hasVideo, stream.hasAudio, stream.streamKind != "manifest" else {
-        return false
-    }
-
-    return isAVFoundationVideoContainerSupported(stream.container)
-        && isAVFoundationVideoCodecSupported(stream.videoCodec)
 }
 
 private func preferredManualQualityAudioStream(for playback: VideoPlayback) -> StreamInfo? {
@@ -314,18 +286,6 @@ private func automaticStartupNativeSource(for playback: VideoPlayback) -> Player
         return .manifestAutomatic(manifestStream)
     }
 
-    if let muxedStream = playback.preferredMuxedStream, isSupportedNativeStartupStream(muxedStream) {
-        return .direct(muxedStream)
-    }
-
-    if let bestStream = playback.bestStream, isSupportedNativeStartupStream(bestStream) {
-        return .direct(bestStream)
-    }
-
-    if let fallbackMuxedStream = playback.streams.first(where: isSupportedNativeStartupStream) {
-        return .direct(fallbackMuxedStream)
-    }
-
     return nil
 }
 
@@ -338,9 +298,6 @@ private func preferredStartupMPVAudioStream(for playback: VideoPlayback) -> Stre
         .filter {
             $0.hasAudio
                 && !$0.hasVideo
-                && ($0.container?.lowercased().hasPrefix("m4a") == true
-                    || $0.container?.lowercased().hasPrefix("mp4") == true
-                    || $0.container?.lowercased().hasPrefix("webm") == true)
         }
         .sorted { lhs, rhs in
             startupMPVAudioPreference(for: lhs) > startupMPVAudioPreference(for: rhs)
@@ -361,17 +318,34 @@ private func automaticStartupMPVSortKey(for stream: StreamInfo) -> (Int, Int, In
 private func automaticStartupMPVSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
     let audioStream = preferredStartupMPVAudioStream(for: playback)
 
-    if let preferredVideoStream = playback.preferredVideoStream,
-       isMPVStartupCompatibleVideoStream(preferredVideoStream),
-       (preferredVideoStream.hasAudio || (audioStream != nil && !hasConflictingHeaders(video: preferredVideoStream, audio: audioStream))) {
+    func buildSelection(for stream: StreamInfo?) -> ManualPlaybackSelection? {
+        guard let stream, isMPVStartupVideoStream(stream) else {
+            return nil
+        }
+        guard stream.hasAudio || (audioStream != nil && !hasConflictingHeaders(video: stream, audio: audioStream)) else {
+            return nil
+        }
+
         return ManualPlaybackSelection(
-            stream: preferredVideoStream,
-            audioStream: preferredVideoStream.hasAudio ? nil : audioStream
+            stream: stream,
+            audioStream: stream.hasAudio ? nil : audioStream
         )
     }
 
+    if let selection = buildSelection(for: playback.preferredVideoStream) {
+        return selection
+    }
+
+    if let selection = buildSelection(for: playback.preferredMuxedStream) {
+        return selection
+    }
+
+    if let selection = buildSelection(for: playback.bestStream) {
+        return selection
+    }
+
     return playback.streams
-        .filter(isMPVStartupCompatibleVideoStream)
+        .filter(isMPVStartupVideoStream)
         .filter { stream in
             stream.hasAudio || (audioStream != nil && !hasConflictingHeaders(video: stream, audio: audioStream))
         }
