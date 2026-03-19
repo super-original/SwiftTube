@@ -741,9 +741,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         player?.pause()
         player?.replaceCurrentItem(with: nil)
         player = nil
-        activeMPVEngine?.stop()
+        scheduleMPVStop(activeMPVEngine, pauseFirst: true)
         activeMPVEngine = nil
-        pendingMPVEngine?.stop()
+        scheduleMPVStop(pendingMPVEngine)
         pendingMPVEngine = nil
         pendingNativeEngine?.stop()
         pendingNativeEngine = nil
@@ -978,6 +978,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         return subtitleOptions.first(where: { $0.id == selectedSubtitleOptionID })
     }
 
+    private func scheduleMPVStop(_ engine: MPVPlaybackEngine?, pauseFirst: Bool = false) {
+        guard let engine else { return }
+        if pauseFirst {
+            engine.pause()
+        }
+        Task { @MainActor in
+            await engine.stopSafely()
+        }
+    }
+
     private func preparePlayback(_ playback: VideoPlayback) async {
         errorMessage = nil
         isPreparingInitialPlayback = true
@@ -997,9 +1007,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             currentSource = source
             selectedQualityOptionID = QualityOption.automaticID
             activeBackendKind = .avFoundation
-            activeMPVEngine?.stop()
+            scheduleMPVStop(activeMPVEngine, pauseFirst: true)
             activeMPVEngine = nil
-            pendingMPVEngine?.stop()
+            scheduleMPVStop(pendingMPVEngine)
             pendingMPVEngine = nil
             pendingNativeEngine = nil
             pendingRenderState = nil
@@ -1126,9 +1136,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         let previousPlayer = player
         mpvStateTask?.cancel()
-        activeMPVEngine?.stop()
+        let previousMPVEngine = activeMPVEngine
+        scheduleMPVStop(previousMPVEngine, pauseFirst: true)
         activeMPVEngine = nil
-        pendingMPVEngine?.stop()
+        scheduleMPVStop(pendingMPVEngine)
         pendingMPVEngine = nil
 
         teardownPlayerObservers()
@@ -1197,7 +1208,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         subtitleOptions = []
         selectedSubtitleOptionID = SubtitleOption.offID
 
-        activeMPVEngine?.stop()
+        let previousMPVEngine = activeMPVEngine
         activeMPVEngine = engine
         pendingNativeEngine?.stop()
         pendingNativeEngine = nil
@@ -1206,6 +1217,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         activeRenderState = .mpv(engine)
         pendingRenderState = nil
         currentSource = nil
+        scheduleMPVStop(previousMPVEngine, pauseFirst: true)
 
         selectedQualityOptionID = option.id
         currentTime = clampedTime

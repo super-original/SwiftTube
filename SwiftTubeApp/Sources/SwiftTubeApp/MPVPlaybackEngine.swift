@@ -13,6 +13,9 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
     private let request: MPVPlaybackRequest
     private var mpv: OpaquePointer?
     private var didLoadFile = false
+    private var isStopping = false
+    private var loadWaitTask: Task<Void, Error>?
+    private var audioReadyTask: Task<Void, Never>?
     private var eventPumpTask: Task<Void, Never>?
 
     private(set) var currentTime: Double = 0
@@ -36,9 +39,16 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
         let handle = try initializeIfNeeded(layer: layer)
         didLoadFile = false
         try command(["loadfile", request.video.url.absoluteString, "replace", "-1"])
-        try await waitUntilFileLoaded(handle)
+        let loadWaitTask = makeFileLoadedTask(for: handle)
+        self.loadWaitTask = loadWaitTask
+        try await loadWaitTask.value
+        self.loadWaitTask = nil
+        didLoadFile = true
         if let audio = request.audio {
-            try await loadExternalAudio(audio, with: handle)
+            let audioReadyTask = makeAudioReadyTask(for: audio, handle: handle)
+            self.audioReadyTask = audioReadyTask
+            await audioReadyTask.value
+            self.audioReadyTask = nil
         }
         startEventPump(using: handle)
 
@@ -71,8 +81,9 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
     }
 
     func stop() {
-        isPlaying = false
-        destroyPlayer()
+        Task { [weak self] in
+            await self?.stopSafely()
+        }
     }
 
     func seek(to seconds: Double) async {
@@ -95,6 +106,14 @@ final class MPVPlaybackEngine: NSObject, PlaybackEngine {
     func snapshot() -> (currentTime: Double, duration: Double, isPlaying: Bool, isBuffering: Bool) {
         updateCachedState()
         return (currentTime, duration, isPlaying, isBuffering)
+    }
+
+    func stopSafely() async {
+        guard isStopping == false else { return }
+        isStopping = true
+        isPlaying = false
+        await destroyPlayer()
+        isStopping = false
     }
 }
 
@@ -153,10 +172,31 @@ private extension MPVPlaybackEngine {
         return handle
     }
 
-    func destroyPlayer() {
-        eventPumpTask?.cancel()
-        eventPumpTask = nil
+    func destroyPlayer() async {
         guard let mpv else { return }
+
+        let loadWaitTask = self.loadWaitTask
+        let audioReadyTask = self.audioReadyTask
+        let eventPumpTask = self.eventPumpTask
+        self.loadWaitTask = nil
+        self.audioReadyTask = nil
+        self.eventPumpTask = nil
+
+        loadWaitTask?.cancel()
+        audioReadyTask?.cancel()
+        eventPumpTask?.cancel()
+        mpv_wakeup(mpv)
+
+        if loadWaitTask != nil || audioReadyTask != nil || eventPumpTask != nil {
+            PlaybackDebugLogger.log(
+                "mpv stop draining waiters load=\(loadWaitTask != nil) audio=\(audioReadyTask != nil) eventPump=\(eventPumpTask != nil)"
+            )
+        }
+
+        _ = try? await loadWaitTask?.value
+        _ = await audioReadyTask?.result
+        _ = await eventPumpTask?.result
+
         PlaybackDebugLogger.log("mpv terminate")
         mpv_terminate_destroy(mpv)
         self.mpv = nil
@@ -183,13 +223,14 @@ private extension MPVPlaybackEngine {
         }
     }
 
-    func waitUntilFileLoaded(_ handle: OpaquePointer) async throws {
+    func makeFileLoadedTask(for handle: OpaquePointer) -> Task<Void, Error> {
         let handleBits = UInt(bitPattern: handle)
 
-        try await Task.detached(priority: .userInitiated) {
+        return Task.detached(priority: .userInitiated) {
             let handle = OpaquePointer(bitPattern: handleBits)!
 
             while true {
+                try Task.checkCancellation()
                 guard let event = mpv_wait_event(handle, 0.1) else { continue }
                 let eventName = String(cString: mpv_event_name(event.pointee.event_id))
 
@@ -229,21 +270,36 @@ private extension MPVPlaybackEngine {
                     continue
                 }
             }
-        }.value
-
-        didLoadFile = true
+        }
     }
 
-    func loadExternalAudio(_ audio: MediaStreamRequest, with handle: OpaquePointer) async throws {
-        PlaybackDebugLogger.log("mpv audio-add start url=\(audio.url.absoluteString)")
-        try command(["audio-add", audio.url.absoluteString, "select"])
-
+    func makeAudioReadyTask(for audio: MediaStreamRequest, handle: OpaquePointer) -> Task<Void, Never> {
         let handleBits = UInt(bitPattern: handle)
-        await Task.detached(priority: .userInitiated) {
+        return Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            guard Task.isCancelled == false else {
+                PlaybackDebugLogger.log("mpv audio-add cancelled before command")
+                return
+            }
+
+            do {
+                PlaybackDebugLogger.log("mpv audio-add start url=\(audio.url.absoluteString)")
+                try await MainActor.run {
+                    try self.command(["audio-add", audio.url.absoluteString, "select"])
+                }
+            } catch {
+                PlaybackDebugLogger.log("mpv audio-add command failed error=\(error.localizedDescription)")
+                return
+            }
+
             let handle = OpaquePointer(bitPattern: handleBits)!
             let deadline = Date().addingTimeInterval(5)
 
             while Date() < deadline {
+                if Task.isCancelled {
+                    PlaybackDebugLogger.log("mpv audio-add cancelled")
+                    return
+                }
                 let audioTrackID = Self.intProperty(MPVProperty.audioTrackID, from: handle) ?? 0
                 if audioTrackID > 0 {
                     let codec = Self.stringProperty(MPVProperty.audioCodecName, from: handle) ?? "nil"
@@ -265,7 +321,7 @@ private extension MPVPlaybackEngine {
             }
 
             PlaybackDebugLogger.log("mpv audio-add timed out waiting for aid")
-        }.value
+        }
     }
 
     func updateCachedState() {
@@ -345,6 +401,8 @@ private extension MPVPlaybackEngine {
                     continue
                 }
             }
+
+            PlaybackDebugLogger.log("mpv event pump cancelled")
         }
     }
 
