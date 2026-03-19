@@ -531,6 +531,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var playbackBadgeText: String {
+        if let automaticMPVDisplayedQualityOption {
+            return automaticMPVDisplayedQualityOption.title
+        }
         if selectedQualityOptionID == QualityOption.automaticID {
             return "Auto"
         }
@@ -538,6 +541,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var qualityControlText: String {
+        if let automaticMPVDisplayedQualityOption {
+            return automaticMPVDisplayedQualityOption.title
+        }
         if qualityControlSelectionID == QualityOption.automaticID {
             return "Auto"
         }
@@ -553,6 +559,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var qualityControlDetail: String? {
+        if let automaticMPVDisplayedQualityOption {
+            return automaticMPVDisplayedQualityOption.detail
+        }
         guard qualityControlSelectionID != QualityOption.automaticID else {
             return nil
         }
@@ -560,7 +569,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var qualityControlSelectionID: String {
-        pendingQualityOptionID ?? selectedQualityOptionID
+        pendingQualityOptionID ?? automaticMPVDisplayedQualityOption?.id ?? selectedQualityOptionID
     }
 
     var subtitleControlText: String {
@@ -937,6 +946,26 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private var activeQualityOption: QualityOption? {
         qualityOptions.first(where: { $0.id == selectedQualityOptionID })
+    }
+
+    private var automaticMPVDisplayedQualityOption: QualityOption? {
+        guard pendingQualityOptionID == nil,
+              activeBackendKind == .mpv,
+              selectedQualityOptionID == QualityOption.automaticID,
+              let playback = currentPlayback,
+              let selection = automaticStartupMPVSelection(for: playback) else {
+            return nil
+        }
+
+        return qualityOptions.first(where: { option in
+            switch option.selection {
+            case .manual(let candidateSelection):
+                return candidateSelection.stream.url == selection.stream.url
+                    && candidateSelection.audioStream?.url == selection.audioStream?.url
+            case .automatic, .manifestVariant:
+                return false
+            }
+        })
     }
 
     private var displayedQualityOption: QualityOption? {
