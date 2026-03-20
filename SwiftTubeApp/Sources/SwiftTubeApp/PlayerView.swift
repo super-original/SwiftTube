@@ -36,6 +36,31 @@ final class WindowResolverView: NSView {
     }
 }
 
+private final class ScrollForwarderView: NSView {
+    override var acceptsFirstResponder: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        var candidate: NSView? = superview
+        while let view = candidate {
+            if let scrollView = view as? NSScrollView {
+                scrollView.scrollWheel(with: event)
+                return
+            }
+            candidate = view.superview
+        }
+        super.scrollWheel(with: event)
+    }
+}
+
+private struct ScrollForwarder: NSViewRepresentable {
+    func makeNSView(context: Context) -> ScrollForwarderView { ScrollForwarderView() }
+    func updateNSView(_ nsView: ScrollForwarderView, context: Context) {}
+}
+
 private struct PlayerSurfaceBoundsKey: PreferenceKey {
     static let defaultValue: Anchor<CGRect>? = nil
 
@@ -73,10 +98,9 @@ struct PlayerScreen: View {
         )
         .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
             GeometryReader { proxy in
-                let resolvedRect: CGRect? = anchor.map {
-                    layoutState.isFullscreen ? CGRect(origin: .zero, size: proxy.size) : proxy[$0]
-                }
-                if let rect = resolvedRect ?? (layoutState.isFullscreen ? CGRect(origin: .zero, size: proxy.size) : nil) {
+                // For immersive modes, compute directly from proxy.size (no anchor)
+                // to avoid timing issues when coordinator state changes cause re-renders.
+                if let rect = surfaceRect(anchor: anchor, proxy: proxy) {
                     let errorMessage = viewModel.errorMessage ?? playbackCoordinator.errorMessage
                     PlayerStageSurface(
                         coordinator: playbackCoordinator,
@@ -232,6 +256,24 @@ private extension PlayerScreen {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    func surfaceRect(anchor: Anchor<CGRect>?, proxy: GeometryProxy) -> CGRect? {
+        if layoutState.isFullscreen {
+            return CGRect(origin: .zero, size: proxy.size)
+        }
+        if layoutState.isTheaterMode {
+            let heightByWidth = proxy.size.width * 9.0 / 16.0
+            let surfaceHeight = min(heightByWidth, proxy.size.height)
+            let surfaceWidth = surfaceHeight * 16.0 / 9.0
+            return CGRect(
+                x: (proxy.size.width - surfaceWidth) / 2,
+                y: 0,
+                width: surfaceWidth,
+                height: surfaceHeight
+            )
+        }
+        return anchor.map { proxy[$0] }
+    }
+
     var standardPlayerStagePlaceholder: some View {
         RoundedRectangle(cornerRadius: 22)
             .fill(Color.clear)
@@ -339,6 +381,17 @@ private extension PlayerScreen {
     }
 }
 
+private func feedbackID(_ feedback: ActionFeedback) -> String {
+    switch feedback {
+    case .play: return "play"
+    case .pause: return "pause"
+    case .seekForward: return "seek-fwd"
+    case .seekBackward: return "seek-bwd"
+    case .frameForward: return "frame-fwd"
+    case .frameBackward: return "frame-bwd"
+    }
+}
+
 private struct PlayerStageSurface: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
     let isLoading: Bool
@@ -350,6 +403,9 @@ private struct PlayerStageSurface: View {
         ZStack {
             Rectangle()
                 .fill(Color.black.opacity(0.94))
+
+            ScrollForwarder()
+                .allowsHitTesting(false)
 
             if let engine = coordinator.mpvEngine {
                 MPVMetalRenderView(engine: engine, onLayoutChange: {
@@ -372,7 +428,7 @@ private struct PlayerStageSurface: View {
 
             if let feedback = coordinator.actionFeedback {
                 ActionFeedbackOverlay(feedback: feedback)
-                    .id(feedback == .play || feedback == .pause ? "\(feedback)" : "seek")
+                    .id(feedbackID(feedback))
                     .allowsHitTesting(false)
             }
 
@@ -484,20 +540,34 @@ private struct PlayerStageErrorOverlay: View {
 private struct ActionFeedbackOverlay: View {
     let feedback: ActionFeedback
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @State private var scale: CGFloat = 0.6
-    @State private var opacity: Double = 0
 
-    private var isCenter: Bool {
+    // Play/pause: zoom-in from center
+    // Seek: slide-in from the seek direction
+    @State private var scale: CGFloat = 0.5
+    @State private var opacity: Double = 0
+    @State private var slideX: CGFloat = 0  // extra slide offset (animated away)
+
+    private var isSeek: Bool {
         switch feedback {
-        case .play, .pause: return true
+        case .seekForward, .seekBackward, .frameForward, .frameBackward: return true
         default: return false
         }
     }
 
-    private var xOffset: CGFloat {
+    // Settled position of the circle
+    private var settledX: CGFloat {
         switch feedback {
-        case .seekForward, .frameForward: return 80
-        case .seekBackward, .frameBackward: return -80
+        case .seekForward, .frameForward: return 160
+        case .seekBackward, .frameBackward: return -160
+        case .play, .pause: return 0
+        }
+    }
+
+    // Entry slide direction (additional offset that animates to 0)
+    private var entrySlideX: CGFloat {
+        switch feedback {
+        case .seekForward, .frameForward: return 60
+        case .seekBackward, .frameBackward: return -60
         case .play, .pause: return 0
         }
     }
@@ -525,11 +595,13 @@ private struct ActionFeedbackOverlay: View {
         VStack(spacing: 4) {
             Image(systemName: symbolName)
                 .font(.system(size: 26, weight: .semibold))
+                .contentTransition(.symbolEffect(.replace.offUp))
 
             if let label {
                 Text(label)
                     .font(.system(size: 13, weight: .bold))
                     .monospacedDigit()
+                    .contentTransition(.numericText(countsDown: label.hasPrefix("-")))
             }
         }
         .foregroundStyle(.white)
@@ -541,20 +613,31 @@ private struct ActionFeedbackOverlay: View {
         )
         .scaleEffect(scale)
         .opacity(opacity)
-        .offset(x: xOffset)
+        .offset(x: settledX + slideX)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
-                scale = 1.0
-                opacity = 1.0
+            slideX = entrySlideX
+            if isSeek {
+                // Slide in from direction + fade in
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.7)) {
+                    scale = 1.0
+                    opacity = 1.0
+                    slideX = 0
+                }
+            } else {
+                // Zoom in from center
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.55)) {
+                    scale = 1.0
+                    opacity = 1.0
+                }
             }
         }
         .onChange(of: feedback) { _, _ in
-            // Pop animation on accumulation
-            withAnimation(.spring(response: 0.15, dampingFraction: 0.5)) {
-                scale = 1.12
+            // Accumulation bounce
+            withAnimation(.spring(response: 0.12, dampingFraction: 0.35)) {
+                scale = 1.18
             }
-            withAnimation(.spring(response: 0.2, dampingFraction: 0.6).delay(0.05)) {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.65).delay(0.06)) {
                 scale = 1.0
             }
         }
