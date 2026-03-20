@@ -22,13 +22,12 @@ final class MPVRenderContainerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        // Use a regular layer-backed view (NOT layer-hosting via layer = metalLayer).
-        // With layer-hosting, Apple docs state AppKit does NOT manage the custom layer's
-        // geometry — so the layer stays at its original position when SwiftUI repositions
-        // the view. Instead, add metalLayer as a sublayer so the AppKit-managed backing
-        // layer handles positioning, and we only manage the sublayer size in layout().
+        autoresizingMask = [.width, .height]
         metalLayer.framebufferOnly = true
         metalLayer.backgroundColor = NSColor.black.cgColor
+        // Layer-hosting: the metal layer IS the view's backing layer.
+        // AppKit places it in the layer tree at the view's position.
+        layer = metalLayer
     }
 
     @available(*, unavailable)
@@ -36,43 +35,31 @@ final class MPVRenderContainerView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override func makeBackingLayer() -> CALayer {
-        let backing = CALayer()
-        backing.backgroundColor = NSColor.black.cgColor
-        return backing
-    }
-
-    // Called immediately when frame changes — update the Metal sublayer right away.
+    // Called when SwiftUI explicitly sets the view's frame — update the drawable
+    // size immediately so it's correct before moltenvk_reconfig reads it.
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        applyMetalLayerBounds()
+        applyMetalLayerBounds(size: newSize)
     }
 
     override func layout() {
         super.layout()
-        // Attach sublayer on first layout
-        if metalLayer.superlayer == nil, let hostLayer = layer {
-            hostLayer.addSublayer(metalLayer)
-        }
-        applyMetalLayerBounds()
+        applyMetalLayerBounds(size: bounds.size)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }
 
-    private func applyMetalLayerBounds() {
+    func applyMetalLayerBounds(size: CGSize) {
         let scale = window?.screen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
-        let newDrawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        let newDrawableSize = CGSize(width: size.width * scale, height: size.height * scale)
         guard newDrawableSize != lastDrawableSize,
               Int(newDrawableSize.width) > 1,
               Int(newDrawableSize.height) > 1 else { return }
         lastDrawableSize = newDrawableSize
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        metalLayer.frame = bounds
+        metalLayer.frame = CGRect(origin: .zero, size: size)
         metalLayer.contentsScale = scale
-        CATransaction.commit()
         metalLayer.drawableSize = newDrawableSize
         onLayoutChange?()
     }
@@ -127,23 +114,27 @@ final class MPVRenderViewController: NSViewController {
     }
 }
 
-// NSViewRepresentable (not NSViewControllerRepresentable) so SwiftUI directly
-// manages the NSView's frame, guaranteeing the view — and thus its sublayers —
-// resize and reposition correctly when the overlay rect changes.
-struct MPVMetalRenderView: NSViewRepresentable {
+struct MPVMetalRenderView: NSViewControllerRepresentable {
     let engine: MPVPlaybackEngine
     let onLayoutChange: () -> Void
+    // Explicit surface size passed from the overlay's geometry so we can force
+    // the NSView frame directly — bypassing any SwiftUI/AppKit sizing ambiguity.
+    let forcedSize: CGSize
 
-    func makeNSView(context: Context) -> MPVRenderContainerView {
-        engine.renderController.configure(onLayoutChange: onLayoutChange)
-        return engine.renderController.view as! MPVRenderContainerView
+    func makeNSViewController(context: Context) -> MPVRenderViewController {
+        let controller = engine.renderController
+        controller.configure(onLayoutChange: onLayoutChange)
+        return controller
     }
 
-    func updateNSView(_ nsView: MPVRenderContainerView, context: Context) {
-        nsView.onLayoutChange = onLayoutChange
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: MPVRenderContainerView, context: Context) -> CGSize? {
-        proposal.replacingUnspecifiedDimensions()
+    func updateNSViewController(_ controller: MPVRenderViewController, context: Context) {
+        controller.configure(onLayoutChange: onLayoutChange)
+        // Explicitly set the view's frame to the known surface size.
+        // This guarantees setFrameSize is called with the correct dimensions,
+        // which updates metalLayer.drawableSize before moltenvk_reconfig reads it.
+        let targetFrame = CGRect(origin: .zero, size: forcedSize)
+        if controller.view.frame != targetFrame, forcedSize.width > 1, forcedSize.height > 1 {
+            controller.view.frame = targetFrame
+        }
     }
 }

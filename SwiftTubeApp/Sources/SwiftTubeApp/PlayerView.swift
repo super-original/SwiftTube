@@ -105,6 +105,7 @@ struct PlayerScreen: View {
                         isLoading: viewModel.isLoading,
                         errorMessage: errorMessage,
                         immersive: usesImmersiveLayout,
+                        surfaceSize: rect.size,
                         retry: viewModel.load
                     )
                     .clipShape(RoundedRectangle(cornerRadius: usesImmersiveLayout ? 0 : 22))
@@ -379,6 +380,7 @@ private struct PlayerStageSurface: View {
     let isLoading: Bool
     let errorMessage: String?
     let immersive: Bool
+    let surfaceSize: CGSize
     let retry: () -> Void
 
     var body: some View {
@@ -392,7 +394,7 @@ private struct PlayerStageSurface: View {
             if let engine = coordinator.mpvEngine {
                 MPVMetalRenderView(engine: engine, onLayoutChange: {
                     coordinator.handlePlayerGeometryChange()
-                })
+                }, forcedSize: surfaceSize)
             }
 
             if coordinator.shouldShowPlaybackErrorOverlay,
