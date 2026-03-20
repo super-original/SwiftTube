@@ -1192,9 +1192,21 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private func showFeedback(_ feedback: ActionFeedback) {
         feedbackDismissTask?.cancel()
-        actionFeedback = feedback
+
+        // Accumulate seek amounts when pressing the same direction rapidly
+        let resolved: ActionFeedback
+        switch (actionFeedback, feedback) {
+        case (.seekForward(let prev), .seekForward(let next)):
+            resolved = .seekForward(prev + next)
+        case (.seekBackward(let prev), .seekBackward(let next)):
+            resolved = .seekBackward(prev + next)
+        default:
+            resolved = feedback
+        }
+
+        actionFeedback = resolved
         feedbackDismissTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 600_000_000)
+            try? await Task.sleep(nanoseconds: 700_000_000)
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.2)) {
                 self?.actionFeedback = nil

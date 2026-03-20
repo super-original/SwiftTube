@@ -68,22 +68,15 @@ struct PlayerScreen: View {
         }
         .scrollDisabled(layoutState.isFullscreen)
         .background(
-            (layoutState.isFullscreen ? Color.black : Color(NSColor.windowBackgroundColor))
+            (usesImmersiveLayout ? Color.black : Color(NSColor.windowBackgroundColor))
                 .ignoresSafeArea()
         )
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if usesImmersiveLayout {
-                Color.black.opacity(0.96)
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .anchorPreference(key: PlayerSurfaceBoundsKey.self, value: .bounds) { $0 }
-                    .padding(.bottom, usesImmersiveLayout && !layoutState.isFullscreen ? 24 : 0)
-            }
-        }
         .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
             GeometryReader { proxy in
-                if let anchor {
-                    let rect = proxy[anchor]
+                let resolvedRect: CGRect? = anchor.map {
+                    layoutState.isFullscreen ? CGRect(origin: .zero, size: proxy.size) : proxy[$0]
+                }
+                if let rect = resolvedRect ?? (layoutState.isFullscreen ? CGRect(origin: .zero, size: proxy.size) : nil) {
                     let errorMessage = viewModel.errorMessage ?? playbackCoordinator.errorMessage
                     PlayerStageSurface(
                         coordinator: playbackCoordinator,
@@ -176,12 +169,21 @@ private extension PlayerScreen {
     }
 
     var scrollContent: some View {
-        VStack(alignment: .leading, spacing: usesImmersiveLayout ? 24 : 0) {
+        VStack(alignment: .leading, spacing: 0) {
             if layoutState.isFullscreen {
+                // Fullscreen: no content visible, rect is overridden to fill screen
                 Color.clear
                     .frame(height: 0)
-            } else if usesImmersiveLayout {
+                    .anchorPreference(key: PlayerSurfaceBoundsKey.self, value: .bounds) { $0 }
+            } else if layoutState.isTheaterMode {
+                // Theater: player spacer is IN the scroll so it scrolls with content
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .anchorPreference(key: PlayerSurfaceBoundsKey.self, value: .bounds) { $0 }
+
                 immersiveContent
+                    .padding(.top, 24)
             } else {
                 standardContent
                     .padding(24)
@@ -370,9 +372,8 @@ private struct PlayerStageSurface: View {
 
             if let feedback = coordinator.actionFeedback {
                 ActionFeedbackOverlay(feedback: feedback)
+                    .id(feedback == .play || feedback == .pause ? "\(feedback)" : "seek")
                     .allowsHitTesting(false)
-                    .transition(.opacity)
-                    .animation(.easeOut(duration: 0.15), value: coordinator.actionFeedback)
             }
 
             if coordinator.mpvEngine != nil {
@@ -483,15 +484,32 @@ private struct PlayerStageErrorOverlay: View {
 private struct ActionFeedbackOverlay: View {
     let feedback: ActionFeedback
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @State private var scale: CGFloat = 0.6
+    @State private var opacity: Double = 0
+
+    private var isCenter: Bool {
+        switch feedback {
+        case .play, .pause: return true
+        default: return false
+        }
+    }
+
+    private var xOffset: CGFloat {
+        switch feedback {
+        case .seekForward, .frameForward: return 80
+        case .seekBackward, .frameBackward: return -80
+        case .play, .pause: return 0
+        }
+    }
 
     private var symbolName: String {
         switch feedback {
         case .play: return "play.fill"
         case .pause: return "pause.fill"
-        case .seekForward: return "chevron.right"
-        case .seekBackward: return "chevron.left"
-        case .frameForward: return "chevron.right.2"
-        case .frameBackward: return "chevron.left.2"
+        case .seekForward: return "forward.fill"
+        case .seekBackward: return "backward.fill"
+        case .frameForward: return "forward.frame.fill"
+        case .frameBackward: return "backward.frame.fill"
         }
     }
 
@@ -504,25 +522,42 @@ private struct ActionFeedbackOverlay: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        VStack(spacing: 4) {
             Image(systemName: symbolName)
-                .font(.system(size: 22, weight: .bold))
+                .font(.system(size: 26, weight: .semibold))
 
             if let label {
                 Text(label)
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .monospacedDigit()
             }
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 22)
-        .padding(.vertical, 16)
+        .frame(width: 72, height: 72)
         .playerControlSurface(
             reduceTransparency: reduceTransparency,
             glass: .regular,
-            shape: RoundedRectangle(cornerRadius: 18)
+            shape: Circle()
         )
+        .scaleEffect(scale)
+        .opacity(opacity)
+        .offset(x: xOffset)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
+                scale = 1.0
+                opacity = 1.0
+            }
+        }
+        .onChange(of: feedback) { _, _ in
+            // Pop animation on accumulation
+            withAnimation(.spring(response: 0.15, dampingFraction: 0.5)) {
+                scale = 1.12
+            }
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.6).delay(0.05)) {
+                scale = 1.0
+            }
+        }
     }
 }
 
