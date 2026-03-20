@@ -117,9 +117,6 @@ final class MPVRenderViewController: NSViewController {
 struct MPVMetalRenderView: NSViewControllerRepresentable {
     let engine: MPVPlaybackEngine
     let onLayoutChange: () -> Void
-    // Explicit surface size passed from the overlay's geometry so we can force
-    // the NSView frame directly — bypassing any SwiftUI/AppKit sizing ambiguity.
-    let forcedSize: CGSize
 
     func makeNSViewController(context: Context) -> MPVRenderViewController {
         let controller = engine.renderController
@@ -129,12 +126,5 @@ struct MPVMetalRenderView: NSViewControllerRepresentable {
 
     func updateNSViewController(_ controller: MPVRenderViewController, context: Context) {
         controller.configure(onLayoutChange: onLayoutChange)
-        // Explicitly set the view's frame to the known surface size.
-        // This guarantees setFrameSize is called with the correct dimensions,
-        // which updates metalLayer.drawableSize before moltenvk_reconfig reads it.
-        let targetFrame = CGRect(origin: .zero, size: forcedSize)
-        if controller.view.frame != targetFrame, forcedSize.width > 1, forcedSize.height > 1 {
-            controller.view.frame = targetFrame
-        }
     }
 }
