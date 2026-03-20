@@ -35,8 +35,16 @@ final class MPVRenderContainerView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    // Called when SwiftUI explicitly sets the view's frame — update the drawable
-    // size immediately so it's correct before moltenvk_reconfig reads it.
+    // When first added to a superview, fill it immediately.
+    // autoresizingMask = [.width, .height] does proportional resize, so if the view
+    // starts at .zero (from loadView's init(frame: .zero)) it stays at .zero forever.
+    // Setting the frame here bootstraps the proportional fill correctly.
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        guard let sv = superview, sv.bounds.width > 1, sv.bounds.height > 1 else { return }
+        frame = sv.bounds
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         applyMetalLayerBounds(size: newSize)
