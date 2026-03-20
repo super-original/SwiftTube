@@ -22,10 +22,13 @@ final class MPVRenderContainerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        autoresizingMask = [.width, .height]
+        // Use a regular layer-backed view (NOT layer-hosting via layer = metalLayer).
+        // With layer-hosting, Apple docs state AppKit does NOT manage the custom layer's
+        // geometry — so the layer stays at its original position when SwiftUI repositions
+        // the view. Instead, add metalLayer as a sublayer so the AppKit-managed backing
+        // layer handles positioning, and we only manage the sublayer size in layout().
         metalLayer.framebufferOnly = true
         metalLayer.backgroundColor = NSColor.black.cgColor
-        layer = metalLayer
     }
 
     @available(*, unavailable)
@@ -33,32 +36,43 @@ final class MPVRenderContainerView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    // Called immediately when frame changes — update the Metal layer right away
-    // so the drawable size is current before MPV renders the next frame.
+    override func makeBackingLayer() -> CALayer {
+        let backing = CALayer()
+        backing.backgroundColor = NSColor.black.cgColor
+        return backing
+    }
+
+    // Called immediately when frame changes — update the Metal sublayer right away.
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        applyMetalLayerSize()
+        applyMetalLayerBounds()
     }
 
     override func layout() {
         super.layout()
-        applyMetalLayerSize()
+        // Attach sublayer on first layout
+        if metalLayer.superlayer == nil, let hostLayer = layer {
+            hostLayer.addSublayer(metalLayer)
+        }
+        applyMetalLayerBounds()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }
 
-    private func applyMetalLayerSize() {
+    private func applyMetalLayerBounds() {
         let scale = window?.screen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
         let newDrawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
-        // Only fire the callback when the size actually changes to avoid redundant reconfigs
         guard newDrawableSize != lastDrawableSize,
               Int(newDrawableSize.width) > 1,
               Int(newDrawableSize.height) > 1 else { return }
         lastDrawableSize = newDrawableSize
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         metalLayer.frame = bounds
         metalLayer.contentsScale = scale
+        CATransaction.commit()
         metalLayer.drawableSize = newDrawableSize
         onLayoutChange?()
     }
@@ -113,17 +127,23 @@ final class MPVRenderViewController: NSViewController {
     }
 }
 
-struct MPVMetalRenderView: NSViewControllerRepresentable {
+// NSViewRepresentable (not NSViewControllerRepresentable) so SwiftUI directly
+// manages the NSView's frame, guaranteeing the view — and thus its sublayers —
+// resize and reposition correctly when the overlay rect changes.
+struct MPVMetalRenderView: NSViewRepresentable {
     let engine: MPVPlaybackEngine
     let onLayoutChange: () -> Void
 
-    func makeNSViewController(context: Context) -> MPVRenderViewController {
-        let controller = engine.renderController
-        controller.configure(onLayoutChange: onLayoutChange)
-        return controller
+    func makeNSView(context: Context) -> MPVRenderContainerView {
+        engine.renderController.configure(onLayoutChange: onLayoutChange)
+        return engine.renderController.view as! MPVRenderContainerView
     }
 
-    func updateNSViewController(_ controller: MPVRenderViewController, context: Context) {
-        controller.configure(onLayoutChange: onLayoutChange)
+    func updateNSView(_ nsView: MPVRenderContainerView, context: Context) {
+        nsView.onLayoutChange = onLayoutChange
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: MPVRenderContainerView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
     }
 }
