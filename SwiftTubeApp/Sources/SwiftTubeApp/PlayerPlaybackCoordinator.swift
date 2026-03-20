@@ -684,26 +684,35 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     func handlePlayerGeometryChange() {
-        // Debounce: wait for size to settle after animations complete.
+        // Debounce: wait for surface to settle at its final size.
         geometryChangeTask?.cancel()
         geometryChangeTask = Task { @MainActor [weak self] in
-            // Wait for the surface to reach its final size
             try? await Task.sleep(nanoseconds: 100_000_000)
             guard !Task.isCancelled, let self else { return }
 
-            // Queue a real filter chain change ([] → [lavfi=null]) so the next
-            // decode cycle runs reinit_video_filter_chain → vo_reconfig2 → moltenvk_reconfig.
-            // Returns in ~20ms; the actual async rebuild happens on the next frame.
-            self.mpvEngine?.triggerSwapchainResize()
+            // Only force-reload when in an immersive mode where the display size
+            // differs significantly from the standard player size.
+            guard self.layoutState.isTheaterMode || self.layoutState.isFullscreen else { return }
+            guard let engine = self.mpvEngine else { return }
 
-            // Give the decode cycle time to process the filter change and run
-            // moltenvk_reconfig before we clean up. 300ms >> one frame at 30fps.
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled else { return }
+            // Reload the current file at the current position. This is the only
+            // reliable trigger for moltenvk_reconfig: file load always calls
+            // vo_reconfig2 fresh, which reads the now-correct drawableSize and
+            // recreates the Vulkan swapchain at the theater/fullscreen dimensions.
+            // This is the same mechanism used by quality switching.
+            let time = self.currentTime
+            let wasPlaying = self.isPlaying
+            self.mpvStateTask?.cancel()
 
-            // Restore empty filter chain (triggers a second reconfig at the same
-            // correct drawableSize — no visible change).
-            self.mpvEngine?.cleanupFilterChain()
+            do {
+                try await engine.reloadCurrentFile(seekTo: time)
+                guard !Task.isCancelled else { return }
+                engine.setVolume(self.volume)
+                if wasPlaying { engine.play() } else { engine.pause() }
+                self.startPollingMPVState(using: engine)
+            } catch {
+                // Reload failed (e.g. stream expired) — ignore silently
+            }
         }
     }
 

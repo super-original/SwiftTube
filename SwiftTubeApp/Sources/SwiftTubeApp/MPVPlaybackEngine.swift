@@ -182,21 +182,12 @@ final class MPVPlaybackEngine: NSObject {
         } catch {}
     }
 
-    /// Triggers the Vulkan swapchain recreation by queuing a real filter chain change.
-    /// "vf set lavfi=null" changes [] → [lavfi=null], which is NOT a no-op.
-    /// The player queues reinit_video_filter_chain; on the next decode cycle it runs
-    /// vo_reconfig2 → moltenvk_reconfig, which reads the updated drawableSize and
-    /// calls ra_vk_ctx_resize to recreate the swapchain at the correct size.
-    /// Do NOT immediately follow with "vf set """ — that would cancel the rebuild
-    /// before the decode cycle can process it. Call cleanupFilterChain() after a delay.
-    func triggerSwapchainResize() {
-        guard didLoadFile else { return }
-        try? command(["vf", "set", "lavfi=null"])
-    }
-
-    func cleanupFilterChain() {
-        guard didLoadFile else { return }
-        try? command(["vf", "set", ""])
+    /// Reloads the current video file at the given seek position.
+    /// This is the same path used by quality switching and is the only reliable
+    /// way to force moltenvk_reconfig to run with the correct drawableSize, since
+    /// file load always calls vo_reconfig2 → moltenvk_reconfig fresh.
+    func reloadCurrentFile(seekTo time: Double) async throws {
+        try await replaceFile(with: request, seekTo: time)
     }
 
     func stopSafely() async {
