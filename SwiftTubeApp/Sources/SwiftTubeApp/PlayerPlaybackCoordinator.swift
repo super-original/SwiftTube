@@ -363,6 +363,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var mouseMoveMonitor: Any? = nil
     private var scrollMonitor: Any? = nil
     private var settingsCancellable: AnyCancellable? = nil
+    private var savedWindowBackgroundColor: NSColor? = nil
 
     init(layoutState: PlayerLayoutState = PlayerLayoutState()) {
         self.layoutState = layoutState
@@ -677,14 +678,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     func toggleTheaterMode() {
-        let entering = !layoutState.isTheaterMode
-        // Set fullSizeContentView before the SwiftUI layout change so that
-        // .ignoresSafeArea(edges: .top) can fill the title bar area in the same frame.
-        if entering && AppSettings.shared.hideTopBarInImmersiveMode {
-            window?.styleMask.insert(.fullSizeContentView)
-        } else if !entering {
-            window?.styleMask.remove(.fullSizeContentView)
-        }
         withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
             if layoutState.isFullscreen {
                 window?.toggleFullScreen(nil)
@@ -1319,9 +1312,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private func hideWindowToolbar() {
         guard let window, !toolbarIsHidden else { return }
         toolbarIsHidden = true
+        savedWindowBackgroundColor = window.backgroundColor
+        // Make the transparent title bar area appear black so it blends with the video.
+        window.backgroundColor = .black
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.styleMask.insert(.fullSizeContentView)
         window.toolbar?.isVisible = false
         for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(b)?.alphaValue = 0
@@ -1330,17 +1325,15 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func restoreToolbarIfNeeded() {
-        guard toolbarIsHidden else {
-            // Even if toolbar wasn't hidden via our code, ensure fullSizeContentView
-            // is removed when exiting theater mode.
-            window?.styleMask.remove(.fullSizeContentView)
-            return
-        }
+        guard toolbarIsHidden else { return }
         toolbarIsHidden = false
         toolbarRevealTask?.cancel()
         toolbarRevealTask = nil
         uninstallMouseMoveMonitor()
-        window?.styleMask.remove(.fullSizeContentView)
+        if let saved = savedWindowBackgroundColor {
+            window?.backgroundColor = saved
+            savedWindowBackgroundColor = nil
+        }
         window?.titlebarAppearsTransparent = false
         window?.titleVisibility = .visible
         window?.toolbar?.isVisible = true

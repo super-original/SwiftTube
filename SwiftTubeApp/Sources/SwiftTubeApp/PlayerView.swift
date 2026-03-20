@@ -52,7 +52,6 @@ struct PlayerScreen: View {
     @StateObject private var layoutState: PlayerLayoutState
     @State private var playbackCoordinator: PlayerPlaybackCoordinator
     @State private var isDescriptionExpanded = false
-    @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
 
@@ -69,9 +68,6 @@ struct PlayerScreen: View {
             scrollContent
         }
         .scrollDisabled(layoutState.isFullscreen)
-        // When toolbar is hidden in theater mode via fullSizeContentView, extend
-        // the scroll view under the title bar area so the video fills it.
-        .ignoresSafeArea(edges: layoutState.isTheaterMode && settings.hideTopBarInImmersiveMode ? .top : [])
         .background(
             (layoutState.isFullscreen ? Color.black : Color(NSColor.windowBackgroundColor))
                 .ignoresSafeArea()
@@ -358,6 +354,7 @@ private func feedbackID(_ feedback: ActionFeedback) -> String {
 private struct PlayerStageSurface: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
     @ObservedObject private var settings = AppSettings.shared
+    @State private var hoverExitTask: Task<Void, Never>? = nil
     let isLoading: Bool
     let errorMessage: String?
     let immersive: Bool
@@ -382,24 +379,39 @@ private struct PlayerStageSurface: View {
                     PlayerStageLoadingOverlay(text: isLoading ? "Loading video..." : coordinator.playbackLoadingText)
                 }
 
-                // Tap to toggle play. Only onContinuousHover is used for hover state —
-                // onHover is intentionally omitted because it fires .false when the cursor
-                // moves to a child SwiftUI control (button, slider), causing rapid
-                // show/hide flicker. .ended is ignored for the same reason; the
-                // coordinator's hide monitor handles idle timeout naturally.
+                // Tap to toggle play. onHover drives enter/exit with an 80ms debounce
+                // so spurious false events (when cursor briefly moves to a child control)
+                // are absorbed before calling setHovering(false). onContinuousHover
+                // handles position-aware letterbox filtering; its .ended is ignored.
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture {
                         coordinator.togglePlayback()
                     }
+                    .onHover { hovering in
+                        if hovering {
+                            hoverExitTask?.cancel()
+                            hoverExitTask = nil
+                            coordinator.setHovering(true)
+                        } else {
+                            hoverExitTask?.cancel()
+                            hoverExitTask = Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 80_000_000)
+                                guard !Task.isCancelled else { return }
+                                coordinator.setHovering(false)
+                            }
+                        }
+                    }
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
+                            hoverExitTask?.cancel()
+                            hoverExitTask = nil
                             let inVideo = pad < 1 || (location.x >= pad && location.x <= geo.size.width - pad)
                             coordinator.setHovering(inVideo)
                             if inVideo { coordinator.handlePointerMovement() }
                         case .ended:
-                            break // spurious when cursor moves to child controls; ignore
+                            break // let onHover handle the real exit
                         }
                     }
 
