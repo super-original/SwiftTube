@@ -88,32 +88,48 @@ struct PlayerScreen: View {
     }
 
     var body: some View {
-        ScrollView {
-            scrollContent
-        }
-        .scrollDisabled(layoutState.isFullscreen)
-        .background(
-            (usesImmersiveLayout ? Color.black : Color(NSColor.windowBackgroundColor))
-                .ignoresSafeArea()
-        )
-        .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
-            GeometryReader { proxy in
-                // For immersive modes, compute directly from proxy.size (no anchor)
-                // to avoid timing issues when coordinator state changes cause re-renders.
-                if let rect = surfaceRect(anchor: anchor, proxy: proxy) {
-                    let errorMessage = viewModel.errorMessage ?? playbackCoordinator.errorMessage
-                    PlayerStageSurface(
-                        coordinator: playbackCoordinator,
-                        isLoading: viewModel.isLoading,
-                        errorMessage: errorMessage,
-                        immersive: usesImmersiveLayout,
-                        retry: viewModel.load
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: usesImmersiveLayout ? 0 : 22))
-                    .shadow(color: usesImmersiveLayout ? .clear : .black.opacity(0.18), radius: 22, y: 10)
-                    .frame(width: rect.width, height: rect.height)
-                    .position(x: rect.midX, y: rect.midY)
+        ZStack {
+            ScrollView {
+                scrollContent
+            }
+            .scrollDisabled(layoutState.isFullscreen)
+            .background(
+                (usesImmersiveLayout ? Color.black : Color(NSColor.windowBackgroundColor))
+                    .ignoresSafeArea()
+            )
+            // Theater + standard: anchor-based surface that scrolls with content
+            .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
+                if !layoutState.isFullscreen {
+                    GeometryReader { proxy in
+                        if let rect = surfaceRect(anchor: anchor, proxy: proxy) {
+                            let errorMessage = viewModel.errorMessage ?? playbackCoordinator.errorMessage
+                            PlayerStageSurface(
+                                coordinator: playbackCoordinator,
+                                isLoading: viewModel.isLoading,
+                                errorMessage: errorMessage,
+                                immersive: layoutState.isTheaterMode,
+                                retry: viewModel.load
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: layoutState.isTheaterMode ? 0 : 22))
+                            .shadow(color: layoutState.isTheaterMode ? .clear : .black.opacity(0.18), radius: 22, y: 10)
+                            .frame(width: rect.width, height: rect.height)
+                            .position(x: rect.midX, y: rect.midY)
+                        }
+                    }
                 }
+            }
+
+            // Fullscreen: entirely separate surface that fills the whole screen
+            if layoutState.isFullscreen {
+                let errorMessage = viewModel.errorMessage ?? playbackCoordinator.errorMessage
+                PlayerStageSurface(
+                    coordinator: playbackCoordinator,
+                    isLoading: viewModel.isLoading,
+                    errorMessage: errorMessage,
+                    immersive: true,
+                    retry: viewModel.load
+                )
+                .ignoresSafeArea()
             }
         }
         .background(
@@ -195,12 +211,10 @@ private extension PlayerScreen {
     var scrollContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             if layoutState.isFullscreen {
-                // Fullscreen: no content visible, rect is overridden to fill screen
-                Color.clear
-                    .frame(height: 0)
-                    .anchorPreference(key: PlayerSurfaceBoundsKey.self, value: .bounds) { $0 }
+                // Fullscreen surface is in the ZStack overlay — nothing here
+                Color.clear.frame(height: 0)
             } else if layoutState.isTheaterMode {
-                // Theater: player spacer is IN the scroll so it scrolls with content
+                // Theater spacer: in scroll flow so player scrolls with content
                 Color.clear
                     .frame(maxWidth: .infinity)
                     .aspectRatio(16 / 9, contentMode: .fit)
@@ -257,20 +271,19 @@ private extension PlayerScreen {
     }
 
     func surfaceRect(anchor: Anchor<CGRect>?, proxy: GeometryProxy) -> CGRect? {
-        if layoutState.isFullscreen {
-            return CGRect(origin: .zero, size: proxy.size)
-        }
-        if layoutState.isTheaterMode {
-            let heightByWidth = proxy.size.width * 9.0 / 16.0
-            let surfaceHeight = min(heightByWidth, proxy.size.height)
-            let surfaceWidth = surfaceHeight * 16.0 / 9.0
+        if layoutState.isTheaterMode, let anchor {
+            let anchorRect = proxy[anchor]
+            // Clamp height to viewport so controls are never cut off
+            let h = min(anchorRect.height, proxy.size.height)
+            let w = h * 16.0 / 9.0
             return CGRect(
-                x: (proxy.size.width - surfaceWidth) / 2,
-                y: 0,
-                width: surfaceWidth,
-                height: surfaceHeight
+                x: (proxy.size.width - w) / 2,
+                y: anchorRect.minY,  // Tracks scroll — moves up when user scrolls down
+                width: w,
+                height: h
             )
         }
+        // Standard mode: use the placeholder anchor directly
         return anchor.map { proxy[$0] }
     }
 
@@ -557,17 +570,19 @@ private struct ActionFeedbackOverlay: View {
     // Settled position of the circle
     private var settledX: CGFloat {
         switch feedback {
-        case .seekForward, .frameForward: return 160
-        case .seekBackward, .frameBackward: return -160
+        case .seekForward, .frameForward: return 210
+        case .seekBackward, .frameBackward: return -210
         case .play, .pause: return 0
         }
     }
 
-    // Entry slide direction (additional offset that animates to 0)
+    // Entry slide: comes FROM the center toward the settled direction
+    // Forward: starts at 210-70=140 (left of settled), slides right to 210
+    // Backward: starts at -210+70=-140 (right of settled), slides left to -210
     private var entrySlideX: CGFloat {
         switch feedback {
-        case .seekForward, .frameForward: return 60
-        case .seekBackward, .frameBackward: return -60
+        case .seekForward, .frameForward: return -70
+        case .seekBackward, .frameBackward: return 70
         case .play, .pause: return 0
         }
     }
