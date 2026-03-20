@@ -182,14 +182,17 @@ final class MPVPlaybackEngine: NSObject {
         } catch {}
     }
 
-    /// Forces MPV to re-query the Metal layer's drawable size and recreate the Vulkan swapchain.
-    /// context_moltenvk.m has no check_events — the ONLY way to resize the swapchain is to
-    /// trigger moltenvk_reconfig via vo_reconfig2. We do this by rebuilding the video filter
-    /// chain ("vf set"), which calls reinit_video_filter_chain → vo_reconfig2 → moltenvk_reconfig.
-    /// moltenvk_reconfig reads p->layer.drawableSize (which we've already updated) and calls
+    /// Forces MPV to recreate the Vulkan swapchain at the current drawableSize.
+    /// context_moltenvk.m has no check_events — moltenvk_reconfig is the only resize path,
+    /// and it's only called via vo_reconfig2. We trigger vo_reconfig2 by making a REAL
+    /// filter chain change: "vf set lavfi=null" changes [] → [null] (not a no-op),
+    /// forcing reinit_video_filter_chain → vo_reconfig2 → moltenvk_reconfig.
+    /// moltenvk_reconfig reads p->layer.drawableSize (already updated) and calls
     /// ra_vk_ctx_resize to recreate the swapchain at the correct size.
+    /// Then "vf set """ restores the empty chain (triggers a second reconfig at same size).
     func forceDisplaySizeUpdate() {
         guard didLoadFile else { return }
+        try? command(["vf", "set", "lavfi=null"])
         try? command(["vf", "set", ""])
     }
 
