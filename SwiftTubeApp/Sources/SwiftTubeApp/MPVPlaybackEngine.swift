@@ -19,6 +19,7 @@ final class MPVPlaybackEngine: NSObject {
     private(set) var duration: Double = 0
     private(set) var isPlaying = false
     private(set) var isBuffering = false
+    private(set) var videoAspect: Double = 16.0 / 9.0
 
     init(request: MPVPlaybackRequest) {
         self.request = request
@@ -417,6 +418,8 @@ private extension MPVPlaybackEngine {
         duration = max(doubleProperty(MPVProperty.duration, from: mpv), 0)
         isBuffering = flagProperty(MPVProperty.pausedForCache, from: mpv)
         isPlaying = flagProperty(MPVProperty.pause, from: mpv) == false
+        let aspect = doubleProperty("video-params/aspect", from: mpv)
+        if aspect > 0 { videoAspect = aspect }
     }
 
     func doubleProperty(_ name: String, from handle: OpaquePointer) -> Double {

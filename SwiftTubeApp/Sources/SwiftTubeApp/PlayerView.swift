@@ -40,32 +40,32 @@ private final class ScrollForwarderView: NSView {
     override var acceptsFirstResponder: Bool { false }
 
     override func scrollWheel(with event: NSEvent) {
-        // Walk up the superview chain AND check siblings at each level —
-        // SwiftUI's NSScrollView is a sibling of the overlay NSView, not
-        // a direct ancestor of ScrollForwarderView.
-        var candidate: NSView? = superview
-        while let view = candidate {
-            if let scrollView = view as? NSScrollView {
-                scrollView.scrollWheel(with: event)
-                return
-            }
-            if let parent = view.superview {
-                for sibling in parent.subviews where sibling !== view {
-                    if let scrollView = sibling as? NSScrollView {
-                        scrollView.scrollWheel(with: event)
-                        return
-                    }
-                }
-            }
-            candidate = view.superview
+        // The NSScrollView backing SwiftUI's ScrollView is not necessarily an ancestor
+        // of this view — search the full window hierarchy (DFS) to find it reliably.
+        guard let window else { super.scrollWheel(with: event); return }
+        if let sv = Self.findScrollView(in: window.contentView) {
+            sv.scrollWheel(with: event)
+        } else {
+            super.scrollWheel(with: event)
         }
-        super.scrollWheel(with: event)
+    }
+
+    private static func findScrollView(in view: NSView?) -> NSScrollView? {
+        guard let view else { return nil }
+        for sub in view.subviews {
+            if let sv = sub as? NSScrollView { return sv }
+            if let found = findScrollView(in: sub) { return found }
+        }
+        return nil
     }
 }
 
 private struct ScrollForwarder: NSViewRepresentable {
     func makeNSView(context: Context) -> ScrollForwarderView { ScrollForwarderView() }
     func updateNSView(_ nsView: ScrollForwarderView, context: Context) {}
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: ScrollForwarderView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
 }
 
 private struct PlayerSurfaceBoundsKey: PreferenceKey {
@@ -83,6 +83,8 @@ struct PlayerScreen: View {
     @StateObject private var layoutState: PlayerLayoutState
     @State private var playbackCoordinator: PlayerPlaybackCoordinator
     @State private var isDescriptionExpanded = false
+    @State private var topBarHovered = false
+    @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
 
@@ -141,10 +143,31 @@ struct PlayerScreen: View {
             viewModel.stop()
             playbackCoordinator.stop()
         }
+        .toolbar(toolbarVisibility, for: .windowToolbar)
+        .overlay(alignment: .top) {
+            // Sensor strip that reveals the toolbar when the cursor reaches the top of
+            // the window in theater mode. .ignoresSafeArea extends it into the title bar
+            // area so the strip covers the full top edge regardless of toolbar visibility.
+            if settings.hideTopBarInImmersiveMode && layoutState.isTheaterMode && !layoutState.isFullscreen {
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .contentShape(Rectangle())
+                    .onHover { topBarHovered = $0 }
+                    .ignoresSafeArea(edges: .top)
+            }
+        }
     }
 }
 
 private extension PlayerScreen {
+    private var toolbarVisibility: Visibility {
+        guard settings.hideTopBarInImmersiveMode,
+              layoutState.isTheaterMode,
+              !layoutState.isFullscreen else { return .visible }
+        return topBarHovered ? .visible : .hidden
+    }
+
     var standardPlayerColumnMaxWidth: CGFloat {
         980
     }
@@ -389,97 +412,149 @@ private struct PlayerStageSurface: View {
     let retry: () -> Void
 
     var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(Color.black.opacity(0.94))
+        GeometryReader { geo in
+            let pad = Self.sidePad(for: geo.size, aspect: coordinator.videoAspect)
 
-            ScrollForwarder()
+            ZStack {
+                Rectangle()
+                    .fill(Color.black.opacity(0.94))
 
-            if let engine = coordinator.mpvEngine {
-                MPVMetalRenderView(engine: engine, onLayoutChange: {})
-            }
+                ScrollForwarder()
 
-            if coordinator.shouldShowPlaybackErrorOverlay,
-               let errorMessage {
-                PlayerStageErrorOverlay(message: errorMessage, retry: retry)
-            } else if coordinator.shouldShowPlaybackLoadingOverlay {
-                PlayerStageLoadingOverlay(text: isLoading ? "Loading video..." : coordinator.playbackLoadingText)
-            }
-
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    coordinator.togglePlayback()
+                if let engine = coordinator.mpvEngine {
+                    MPVMetalRenderView(engine: engine, onLayoutChange: {})
                 }
 
-            if let feedback = coordinator.actionFeedback {
-                ActionFeedbackOverlay(feedback: feedback, generation: coordinator.feedbackGeneration)
-                    .id(feedbackID(feedback))
-                    .allowsHitTesting(false)
-            }
+                if coordinator.shouldShowPlaybackErrorOverlay,
+                   let errorMessage {
+                    PlayerStageErrorOverlay(message: errorMessage, retry: retry)
+                } else if coordinator.shouldShowPlaybackLoadingOverlay {
+                    PlayerStageLoadingOverlay(text: isLoading ? "Loading video..." : coordinator.playbackLoadingText)
+                }
 
-            if coordinator.mpvEngine != nil {
-                PlayerChromeOverlay(
-                    coordinator: coordinator,
-                    edgeToEdge: immersive
-                )
+                // Tap anywhere to toggle play; hover restricted to the video content area
+                // so the side letterbox bars don't trigger controls.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        coordinator.togglePlayback()
+                    }
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            let inVideo = location.x >= pad && location.x <= geo.size.width - pad
+                            coordinator.setHovering(inVideo)
+                            if inVideo { coordinator.handlePointerMovement() }
+                        case .ended:
+                            coordinator.setHovering(false)
+                        }
+                    }
+
+                if let feedback = coordinator.actionFeedback {
+                    ActionFeedbackOverlay(feedback: feedback, generation: coordinator.feedbackGeneration)
+                        .id(feedbackID(feedback))
+                        .allowsHitTesting(false)
+                }
+
+                if coordinator.mpvEngine != nil {
+                    PlayerChromeOverlay(
+                        coordinator: coordinator,
+                        edgeToEdge: immersive,
+                        sidePad: pad
+                    )
+                }
+
+                if coordinator.keyboardLocked {
+                    Label("Keyboard locked", systemImage: "keyboard.badge.ellipsis")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(.black.opacity(0.72)))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .padding(.top, 16)
+                        .allowsHitTesting(false)
+                }
             }
-        }
-        .focusable()
-        .focusEffectDisabled()
-        .onKeyPress(.space) {
-            coordinator.togglePlayback()
-            return .handled
-        }
-        .onKeyPress(characters: .init(charactersIn: "k")) { _ in
-            coordinator.togglePlayback()
-            return .handled
-        }
-        .onKeyPress(.leftArrow) {
-            coordinator.seekRelative(-5)
-            return .handled
-        }
-        .onKeyPress(.rightArrow) {
-            coordinator.seekRelative(5)
-            return .handled
-        }
-        .onKeyPress(characters: .init(charactersIn: "j")) { _ in
-            coordinator.seekRelative(-10)
-            return .handled
-        }
-        .onKeyPress(characters: .init(charactersIn: "l")) { _ in
-            coordinator.seekRelative(10)
-            return .handled
-        }
-        .onKeyPress(characters: .init(charactersIn: ",")) { _ in
-            coordinator.stepFrame(direction: -1)
-            return .handled
-        }
-        .onKeyPress(characters: .init(charactersIn: ".")) { _ in
-            coordinator.stepFrame(direction: 1)
-            return .handled
-        }
-        .onKeyPress(characters: .init(charactersIn: "t")) { _ in
-            coordinator.toggleTheaterMode()
-            return .handled
-        }
-        .onKeyPress(characters: .init(charactersIn: "f")) { _ in
-            coordinator.toggleFullscreen()
-            return .handled
-        }
-        .onKeyPress(characters: .init(charactersIn: "c")) { _ in
-            coordinator.toggleSubtitles()
-            return .handled
+            .focusable()
+            .focusEffectDisabled()
+            // Lock key fires regardless of keyboard lock state.
+            .onKeyPress(characters: .init(charactersIn: "`\\zx")) { press in
+                guard let lockChar = AppSettings.shared.keyboardLockKey.character,
+                      press.characters == String(lockChar) else { return .ignored }
+                coordinator.keyboardLocked.toggle()
+                return .handled
+            }
+            .onKeyPress(.space) {
+                guard !coordinator.keyboardLocked else { return .ignored }
+                coordinator.togglePlayback()
+                return .handled
+            }
+            .onKeyPress(characters: .init(charactersIn: "k")) { _ in
+                guard !coordinator.keyboardLocked else { return .ignored }
+                coordinator.togglePlayback()
+                return .handled
+            }
+            .onKeyPress(.leftArrow) {
+                guard !coordinator.keyboardLocked else { return .ignored }
+                coordinator.seekRelative(-Double(AppSettings.shared.arrowSeekSeconds))
+                return .handled
+            }
+            .onKeyPress(.rightArrow) {
+                guard !coordinator.keyboardLocked else { return .ignored }
+                coordinator.seekRelative(Double(AppSettings.shared.arrowSeekSeconds))
+                return .handled
+            }
+            .onKeyPress(characters: .init(charactersIn: "j")) { _ in
+                guard !coordinator.keyboardLocked else { return .ignored }
+                coordinator.seekRelative(-Double(AppSettings.shared.jlSeekSeconds))
+                return .handled
+            }
+            .onKeyPress(characters: .init(charactersIn: "l")) { _ in
+                guard !coordinator.keyboardLocked else { return .ignored }
+                coordinator.seekRelative(Double(AppSettings.shared.jlSeekSeconds))
+                return .handled
+            }
+            .onKeyPress(characters: .init(charactersIn: ",")) { _ in
+                guard !coordinator.keyboardLocked else { return .ignored }
+                if let secs = AppSettings.shared.commaSeekMode.seconds {
+                    coordinator.seekRelative(-secs)
+                } else {
+                    coordinator.stepFrame(direction: -1)
+                }
+                return .handled
+            }
+            .onKeyPress(characters: .init(charactersIn: ".")) { _ in
+                guard !coordinator.keyboardLocked else { return .ignored }
+                if let secs = AppSettings.shared.commaSeekMode.seconds {
+                    coordinator.seekRelative(secs)
+                } else {
+                    coordinator.stepFrame(direction: 1)
+                }
+                return .handled
+            }
+            .onKeyPress(characters: .init(charactersIn: "t")) { _ in
+                guard !coordinator.keyboardLocked else { return .ignored }
+                coordinator.toggleTheaterMode()
+                return .handled
+            }
+            .onKeyPress(characters: .init(charactersIn: "f")) { _ in
+                guard !coordinator.keyboardLocked else { return .ignored }
+                coordinator.toggleFullscreen()
+                return .handled
+            }
+            .onKeyPress(characters: .init(charactersIn: "c")) { _ in
+                guard !coordinator.keyboardLocked else { return .ignored }
+                coordinator.toggleSubtitles()
+                return .handled
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onHover { hovering in
-            coordinator.setHovering(hovering)
-        }
-        .onContinuousHover { phase in
-            if case .active = phase {
-                coordinator.handlePointerMovement()
-            }
-        }
+    }
+
+    private static func sidePad(for size: CGSize, aspect: Double) -> CGFloat {
+        let videoWidth = min(size.width, size.height * aspect)
+        return max(0, (size.width - videoWidth) / 2)
     }
 }
 
@@ -617,6 +692,7 @@ private struct ActionFeedbackOverlay: View {
 private struct PlayerChromeOverlay: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
     let edgeToEdge: Bool
+    let sidePad: CGFloat
 
     var body: some View {
         ZStack {
@@ -650,13 +726,13 @@ private struct PlayerChromeOverlay: View {
 
                     Spacer()
                 }
-                .padding(.horizontal, edgeToEdge ? 20 : 18)
+                .padding(.horizontal, (edgeToEdge ? 20 : 18) + sidePad)
                 .padding(.top, edgeToEdge ? 20 : 18)
 
                 Spacer()
 
                 PlayerControlBar(coordinator: coordinator)
-                    .padding(.horizontal, edgeToEdge ? 20 : 18)
+                    .padding(.horizontal, (edgeToEdge ? 20 : 18) + sidePad)
                     .padding(.bottom, edgeToEdge ? 20 : 18)
             }
         }

@@ -260,45 +260,41 @@ private func automaticStartupMPVSortKey(for stream: StreamInfo) -> (Int, Int, In
 
 private func automaticStartupMPVSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
     let audioStream = preferredStartupMPVAudioStream(for: playback)
+    let preferredHeight = AppSettings.shared.defaultQuality.preferredHeight
 
     func buildSelection(for stream: StreamInfo?) -> ManualPlaybackSelection? {
-        guard let stream, isMPVStartupVideoStream(stream) else {
-            return nil
-        }
+        guard let stream, isMPVStartupVideoStream(stream) else { return nil }
         guard stream.hasAudio || (audioStream != nil && !hasConflictingHeaders(video: stream, audio: audioStream)) else {
             return nil
         }
-
-        return ManualPlaybackSelection(
-            stream: stream,
-            audioStream: stream.hasAudio ? nil : audioStream
-        )
+        return ManualPlaybackSelection(stream: stream, audioStream: stream.hasAudio ? nil : audioStream)
     }
 
-    if let selection = buildSelection(for: playback.preferredVideoStream) {
-        return selection
-    }
-
-    if let selection = buildSelection(for: playback.preferredMuxedStream) {
-        return selection
-    }
-
-    if let selection = buildSelection(for: playback.bestStream) {
-        return selection
-    }
-
-    return playback.streams
+    let candidates = playback.streams
         .filter(isMPVStartupVideoStream)
         .filter { stream in
             stream.hasAudio || (audioStream != nil && !hasConflictingHeaders(video: stream, audio: audioStream))
         }
-        .max { automaticStartupMPVSortKey(for: $0) < automaticStartupMPVSortKey(for: $1) }
-        .map { stream in
-            ManualPlaybackSelection(
-                stream: stream,
-                audioStream: stream.hasAudio ? nil : audioStream
-            )
+
+    // When a quality preference is set, find the best stream at or below that height.
+    if let preferredHeight {
+        let atOrBelow = candidates.filter { ($0.height ?? 0) <= preferredHeight }
+        if let best = atOrBelow.max(by: { automaticStartupMPVSortKey(for: $0) < automaticStartupMPVSortKey(for: $1) }) {
+            return ManualPlaybackSelection(stream: best, audioStream: best.hasAudio ? nil : audioStream)
         }
+        // Nothing at/below; fall back to the lowest stream above as a safety net.
+        if let fallback = candidates.min(by: { ($0.height ?? 0) < ($1.height ?? 0) }) {
+            return ManualPlaybackSelection(stream: fallback, audioStream: fallback.hasAudio ? nil : audioStream)
+        }
+    }
+
+    if let selection = buildSelection(for: playback.preferredVideoStream) { return selection }
+    if let selection = buildSelection(for: playback.preferredMuxedStream) { return selection }
+    if let selection = buildSelection(for: playback.bestStream) { return selection }
+
+    return candidates
+        .max { automaticStartupMPVSortKey(for: $0) < automaticStartupMPVSortKey(for: $1) }
+        .map { ManualPlaybackSelection(stream: $0, audioStream: $0.hasAudio ? nil : audioStream) }
 }
 
 @MainActor
@@ -337,6 +333,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var selectedSubtitleOptionID = SubtitleOption.offID
     @Published private(set) var actionFeedback: ActionFeedback? = nil
     @Published private(set) var feedbackGeneration = 0
+    @Published var keyboardLocked = false
+    @Published private(set) var videoAspect: Double = 16.0 / 9.0
     @Published var volume: Double = 0.9 {
         didSet {
             applyVolume()
@@ -498,6 +496,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         selectedSubtitleOptionID = SubtitleOption.offID
         currentPlayback = nil
         layoutState.isTheaterMode = false
+        keyboardLocked = false
+        videoAspect = 16.0 / 9.0
         lastInteractionAt = Date()
         lastPointerMovementAt = .distantPast
         scheduleMPVStop(mpvEngine, pauseFirst: true)
@@ -1073,6 +1073,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             duration = sanitizeSeconds(snapshot.duration)
         }
         isPlaying = snapshot.isPlaying
+        if engine.videoAspect > 0 { videoAspect = engine.videoAspect }
     }
 
     private func mpvRequest(for selection: ManualPlaybackSelection) throws -> MPVPlaybackRequest {

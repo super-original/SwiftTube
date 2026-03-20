@@ -19,5 +19,9 @@ struct SwiftTubeApp: App {
                 }
         }
         .windowToolbarStyle(.unified(showsTitle: false))
+
+        Settings {
+            SettingsView()
+        }
     }
 }
