@@ -200,6 +200,7 @@ private extension PlayerScreen {
                 Color.black
                     .frame(maxWidth: .infinity)
                     .aspectRatio(16 / 9, contentMode: .fit)
+                    .anchorPreference(key: PlayerSurfaceBoundsKey.self, value: .bounds) { $0 }
 
                 standardContent
                     .padding(24)
@@ -246,10 +247,11 @@ private extension PlayerScreen {
         if layoutState.isFullscreen {
             return CGRect(origin: .zero, size: proxy.size)
         }
-        if layoutState.isTheaterMode {
+        if layoutState.isTheaterMode, let anchor {
+            let anchorRect = proxy[anchor]
             let w = proxy.size.width
             let h = min(w * 9.0 / 16.0, proxy.size.height)
-            return CGRect(x: 0, y: 0, width: w, height: h)
+            return CGRect(x: 0, y: anchorRect.minY, width: w, height: h)
         }
         return anchor.map { proxy[$0] }
     }
@@ -407,7 +409,7 @@ private struct PlayerStageSurface: View {
                 }
 
             if let feedback = coordinator.actionFeedback {
-                ActionFeedbackOverlay(feedback: feedback)
+                ActionFeedbackOverlay(feedback: feedback, generation: coordinator.feedbackGeneration)
                     .id(feedbackID(feedback))
                     .allowsHitTesting(false)
             }
@@ -465,8 +467,6 @@ private struct PlayerStageSurface: View {
             coordinator.toggleSubtitles()
             return .handled
         }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(16 / 9, contentMode: .fit)
         .onHover { hovering in
             coordinator.setHovering(hovering)
         }
@@ -519,6 +519,7 @@ private struct PlayerStageErrorOverlay: View {
 
 private struct ActionFeedbackOverlay: View {
     let feedback: ActionFeedback
+    let generation: Int
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     @State private var appeared = false
@@ -542,8 +543,8 @@ private struct ActionFeedbackOverlay: View {
 
     private var entrySlideX: CGFloat {
         switch feedback {
-        case .seekForward, .frameForward: return -80
-        case .seekBackward, .frameBackward: return 80
+        case .seekForward, .frameForward: return -30
+        case .seekBackward, .frameBackward: return 30
         case .play, .pause: return 0
         }
     }
@@ -598,8 +599,8 @@ private struct ActionFeedbackOverlay: View {
                 if isSeek { slideX = 0 }
             }
         }
-        .onChange(of: feedback) { _, _ in
-            // Replay the slide-in on every accumulation tap
+        .onChange(of: generation) { _, _ in
+            // Replay the slide-in on every tap (seeks, frame steps, etc.)
             slideX = entrySlideX
             withAnimation(.easeOut(duration: 0.15)) {
                 slideX = 0

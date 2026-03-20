@@ -336,6 +336,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var subtitleOptions: [SubtitleOption] = []
     @Published private(set) var selectedSubtitleOptionID = SubtitleOption.offID
     @Published private(set) var actionFeedback: ActionFeedback? = nil
+    @Published private(set) var feedbackGeneration = 0
     @Published var volume: Double = 0.9 {
         didSet {
             applyVolume()
@@ -959,12 +960,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                         return .keepWatching
                     }
 
-                    guard self.isHoveringStage else {
-                        return .hide
-                    }
-
                     let idleTime = Date().timeIntervalSince(self.lastInteractionAt)
-                    return idleTime >= Timing.inactivityHideDelay ? .hide : .keepWatching
+                    let timeout = self.isHoveringStage ? Timing.inactivityHideDelay : 0.8
+                    return idleTime >= timeout ? .hide : .keepWatching
                 }
 
                 switch result {
@@ -1205,6 +1203,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
 
         actionFeedback = resolved
+        feedbackGeneration += 1
         feedbackDismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 800_000_000)
             guard !Task.isCancelled else { return }
