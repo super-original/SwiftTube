@@ -21,6 +21,7 @@ final class MPVRenderContainerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        autoresizingMask = [.width, .height]
         metalLayer.framebufferOnly = true
         metalLayer.backgroundColor = NSColor.black.cgColor
         layer = metalLayer

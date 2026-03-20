@@ -467,6 +467,7 @@ private struct PlayerStageSurface: View {
             coordinator.toggleSubtitles()
             return .handled
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onHover { hovering in
             coordinator.setHovering(hovering)
         }
