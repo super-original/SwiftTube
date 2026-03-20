@@ -355,6 +355,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var menuInteractionTask: Task<Void, Never>? = nil
     private var mpvStateTask: Task<Void, Never>? = nil
     private var feedbackDismissTask: Task<Void, Never>? = nil
+    private var geometryChangeTask: Task<Void, Never>? = nil
     private var lastInteractionAt = Date()
     private var lastPointerMovementAt = Date.distantPast
 
@@ -484,6 +485,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         stopHideMonitor()
         menuInteractionTask?.cancel()
         mpvStateTask?.cancel()
+        geometryChangeTask?.cancel()
         errorMessage = nil
         isPreparingInitialPlayback = false
         controlsVisible = true
@@ -681,7 +683,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         window?.toggleFullScreen(nil)
     }
 
-    func handlePlayerGeometryChange() {}
+    func handlePlayerGeometryChange() {
+        // Debounce: fire 100ms after the last resize event so we catch the final size
+        // after animations complete, not every intermediate frame.
+        geometryChangeTask?.cancel()
+        geometryChangeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            guard !Task.isCancelled else { return }
+            self?.mpvEngine?.forceDisplaySizeUpdate()
+        }
+    }
 
     func toggleSubtitles() {
         noteInteraction()

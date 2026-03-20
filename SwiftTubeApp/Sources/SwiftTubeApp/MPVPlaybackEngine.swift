@@ -182,6 +182,16 @@ final class MPVPlaybackEngine: NSObject {
         } catch {}
     }
 
+    /// Forces MPV to re-query the Metal layer's drawable size and recreate the Vulkan swapchain.
+    /// MoltenVK doesn't always signal VK_ERROR_OUT_OF_DATE_KHR when drawableSize changes,
+    /// so we trigger a full VO reconfig via a video-aspect-override toggle which calls
+    /// reinit_video_chain_src → vo_reconfig2 → ra_ctx_resize → swapchain recreation.
+    func forceDisplaySizeUpdate() {
+        guard let mpv, didLoadFile else { return }
+        mpv_set_property_string(mpv, "video-aspect-override", "1.7778")
+        mpv_set_property_string(mpv, "video-aspect-override", "no")
+    }
+
     func stopSafely() async {
         guard isStopping == false else { return }
         isStopping = true

@@ -17,6 +17,7 @@ final class MPVMetalLayer: CAMetalLayer {
 final class MPVRenderContainerView: NSView {
     let metalLayer = MPVMetalLayer()
     var onLayoutChange: (() -> Void)?
+    private var lastDrawableSize: CGSize = .zero
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -32,17 +33,34 @@ final class MPVRenderContainerView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    // Called immediately when frame changes — update the Metal layer right away
+    // so the drawable size is current before MPV renders the next frame.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        applyMetalLayerSize()
+    }
+
     override func layout() {
         super.layout()
-        let scale = window?.screen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
-        metalLayer.frame = bounds
-        metalLayer.contentsScale = scale
-        metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
-        onLayoutChange?()
+        applyMetalLayerSize()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
+    }
+
+    private func applyMetalLayerSize() {
+        let scale = window?.screen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        let newDrawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        // Only fire the callback when the size actually changes to avoid redundant reconfigs
+        guard newDrawableSize != lastDrawableSize,
+              Int(newDrawableSize.width) > 1,
+              Int(newDrawableSize.height) > 1 else { return }
+        lastDrawableSize = newDrawableSize
+        metalLayer.frame = bounds
+        metalLayer.contentsScale = scale
+        metalLayer.drawableSize = newDrawableSize
+        onLayoutChange?()
     }
 }
 
