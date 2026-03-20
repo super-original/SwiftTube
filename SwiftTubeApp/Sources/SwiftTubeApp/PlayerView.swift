@@ -88,48 +88,30 @@ struct PlayerScreen: View {
     }
 
     var body: some View {
-        ZStack {
-            ScrollView {
-                scrollContent
-            }
-            .scrollDisabled(layoutState.isFullscreen)
-            .background(
-                (usesImmersiveLayout ? Color.black : Color(NSColor.windowBackgroundColor))
-                    .ignoresSafeArea()
-            )
-            // Theater + standard: anchor-based surface that scrolls with content
-            .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
-                if !layoutState.isFullscreen {
-                    GeometryReader { proxy in
-                        if let rect = surfaceRect(anchor: anchor, proxy: proxy) {
-                            let errorMessage = viewModel.errorMessage ?? playbackCoordinator.errorMessage
-                            PlayerStageSurface(
-                                coordinator: playbackCoordinator,
-                                isLoading: viewModel.isLoading,
-                                errorMessage: errorMessage,
-                                immersive: layoutState.isTheaterMode,
-                                retry: viewModel.load
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: layoutState.isTheaterMode ? 0 : 22))
-                            .shadow(color: layoutState.isTheaterMode ? .clear : .black.opacity(0.18), radius: 22, y: 10)
-                            .frame(width: rect.width, height: rect.height)
-                            .position(x: rect.midX, y: rect.midY)
-                        }
-                    }
-                }
-            }
-
-            // Fullscreen: entirely separate surface that fills the whole screen
-            if layoutState.isFullscreen {
-                let errorMessage = viewModel.errorMessage ?? playbackCoordinator.errorMessage
-                PlayerStageSurface(
-                    coordinator: playbackCoordinator,
-                    isLoading: viewModel.isLoading,
-                    errorMessage: errorMessage,
-                    immersive: true,
-                    retry: viewModel.load
-                )
+        ScrollView {
+            scrollContent
+        }
+        .scrollDisabled(layoutState.isFullscreen)
+        .background(
+            (usesImmersiveLayout ? Color.black : Color(NSColor.windowBackgroundColor))
                 .ignoresSafeArea()
+        )
+        .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
+            GeometryReader { proxy in
+                if let rect = surfaceRect(anchor: anchor, proxy: proxy) {
+                    let errorMessage = viewModel.errorMessage ?? playbackCoordinator.errorMessage
+                    PlayerStageSurface(
+                        coordinator: playbackCoordinator,
+                        isLoading: viewModel.isLoading,
+                        errorMessage: errorMessage,
+                        immersive: usesImmersiveLayout,
+                        retry: viewModel.load
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: usesImmersiveLayout ? 0 : 22))
+                    .shadow(color: usesImmersiveLayout ? .clear : .black.opacity(0.18), radius: 22, y: 10)
+                    .frame(width: rect.width, height: rect.height)
+                    .position(x: rect.midX, y: rect.midY)
+                }
             }
         }
         .background(
@@ -211,14 +193,13 @@ private extension PlayerScreen {
     var scrollContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             if layoutState.isFullscreen {
-                // Fullscreen surface is in the ZStack overlay — nothing here
+                // Fullscreen: surface fills viewport via surfaceRect
                 Color.clear.frame(height: 0)
             } else if layoutState.isTheaterMode {
-                // Theater spacer: in scroll flow so player scrolls with content
+                // Spacer pushes content below the fixed player
                 Color.clear
                     .frame(maxWidth: .infinity)
                     .aspectRatio(16 / 9, contentMode: .fit)
-                    .anchorPreference(key: PlayerSurfaceBoundsKey.self, value: .bounds) { $0 }
 
                 immersiveContent
                     .padding(.top, 24)
@@ -271,19 +252,16 @@ private extension PlayerScreen {
     }
 
     func surfaceRect(anchor: Anchor<CGRect>?, proxy: GeometryProxy) -> CGRect? {
-        if layoutState.isTheaterMode, let anchor {
-            let anchorRect = proxy[anchor]
-            // Clamp height to viewport so controls are never cut off
-            let h = min(anchorRect.height, proxy.size.height)
-            let w = h * 16.0 / 9.0
-            return CGRect(
-                x: (proxy.size.width - w) / 2,
-                y: anchorRect.minY,  // Tracks scroll — moves up when user scrolls down
-                width: w,
-                height: h
-            )
+        if layoutState.isFullscreen {
+            let w = proxy.size.width
+            let h = proxy.size.height
+            return CGRect(x: w / 2, y: h / 2, width: w, height: h)
         }
-        // Standard mode: use the placeholder anchor directly
+        if layoutState.isTheaterMode {
+            let w = proxy.size.width
+            let h = min(w * 9.0 / 16.0, proxy.size.height)
+            return CGRect(x: w / 2, y: h / 2, width: w, height: h)
+        }
         return anchor.map { proxy[$0] }
     }
 
@@ -554,11 +532,9 @@ private struct ActionFeedbackOverlay: View {
     let feedback: ActionFeedback
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
-    // Play/pause: zoom-in from center
-    // Seek: slide-in from the seek direction
-    @State private var scale: CGFloat = 0.5
-    @State private var opacity: Double = 0
-    @State private var slideX: CGFloat = 0  // extra slide offset (animated away)
+    @State private var appeared = false
+    @State private var slideX: CGFloat = 0
+    @State private var bounceCount = 0
 
     private var isSeek: Bool {
         switch feedback {
@@ -570,19 +546,16 @@ private struct ActionFeedbackOverlay: View {
     // Settled position of the circle
     private var settledX: CGFloat {
         switch feedback {
-        case .seekForward, .frameForward: return 210
-        case .seekBackward, .frameBackward: return -210
+        case .seekForward, .frameForward: return 260
+        case .seekBackward, .frameBackward: return -260
         case .play, .pause: return 0
         }
     }
 
-    // Entry slide: comes FROM the center toward the settled direction
-    // Forward: starts at 210-70=140 (left of settled), slides right to 210
-    // Backward: starts at -210+70=-140 (right of settled), slides left to -210
     private var entrySlideX: CGFloat {
         switch feedback {
-        case .seekForward, .frameForward: return -70
-        case .seekBackward, .frameBackward: return 70
+        case .seekForward, .frameForward: return -80
+        case .seekBackward, .frameBackward: return 80
         case .play, .pause: return 0
         }
     }
@@ -626,35 +599,25 @@ private struct ActionFeedbackOverlay: View {
             glass: .regular,
             shape: Circle()
         )
-        .scaleEffect(scale)
-        .opacity(opacity)
+        .scaleEffect(appeared ? 1.0 : 0.5)
+        .opacity(appeared ? 1.0 : 0.0)
         .offset(x: settledX + slideX)
+        .keyframeAnimator(initialValue: CGFloat(1.0), trigger: bounceCount) { content, value in
+            content.scaleEffect(value)
+        } keyframes: { _ in
+            SpringKeyframe(1.25, duration: 0.15, spring: .snappy(duration: 0.15))
+            SpringKeyframe(1.0, duration: 0.25, spring: .bouncy(duration: 0.2))
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             slideX = entrySlideX
-            if isSeek {
-                // Slide in from direction + fade in
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.7)) {
-                    scale = 1.0
-                    opacity = 1.0
-                    slideX = 0
-                }
-            } else {
-                // Zoom in from center
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.55)) {
-                    scale = 1.0
-                    opacity = 1.0
-                }
+            withAnimation(.easeOut(duration: 0.15)) {
+                appeared = true
+                if isSeek { slideX = 0 }
             }
         }
         .onChange(of: feedback) { _, _ in
-            // Accumulation bounce
-            withAnimation(.spring(response: 0.12, dampingFraction: 0.35)) {
-                scale = 1.18
-            }
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.65).delay(0.06)) {
-                scale = 1.0
-            }
+            bounceCount += 1
         }
     }
 }

@@ -1206,7 +1206,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         actionFeedback = resolved
         feedbackDismissTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            try? await Task.sleep(nanoseconds: 800_000_000)
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.2)) {
                 self?.actionFeedback = nil
