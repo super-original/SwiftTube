@@ -677,6 +677,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     func toggleTheaterMode() {
+        let entering = !layoutState.isTheaterMode
+        // Set fullSizeContentView before the SwiftUI layout change so that
+        // .ignoresSafeArea(edges: .top) can fill the title bar area in the same frame.
+        if entering && AppSettings.shared.hideTopBarInImmersiveMode {
+            window?.styleMask.insert(.fullSizeContentView)
+        } else if !entering {
+            window?.styleMask.remove(.fullSizeContentView)
+        }
         withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
             if layoutState.isFullscreen {
                 window?.toggleFullScreen(nil)
@@ -939,7 +947,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
             layoutState.isFullscreen = true
         }
-        applyImmersiveToolbarState()
+        // Do not touch toolbar in fullscreen — macOS handles auto-hide natively.
     }
 
     @objc private func handleWindowDidExitFullScreen(_ notification: Notification) {
@@ -947,7 +955,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
             layoutState.isFullscreen = false
         }
-        applyImmersiveToolbarState()
+        // Toolbar restored automatically by macOS on fullscreen exit.
     }
 
     private func startHideMonitorIfNeeded() {
@@ -1296,7 +1304,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     // MARK: - Toolbar hiding (NSWindow)
 
     func applyImmersiveToolbarState() {
-        let shouldHide = (layoutState.isTheaterMode || layoutState.isFullscreen)
+        // Only manage the toolbar for theater mode — fullscreen has native macOS
+        // toolbar auto-hide behaviour and we must not interfere with it.
+        let shouldHide = layoutState.isTheaterMode
+                         && !layoutState.isFullscreen
                          && AppSettings.shared.hideTopBarInImmersiveMode
         if shouldHide {
             hideWindowToolbar()
@@ -1319,14 +1330,19 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func restoreToolbarIfNeeded() {
-        guard toolbarIsHidden else { return }
+        guard toolbarIsHidden else {
+            // Even if toolbar wasn't hidden via our code, ensure fullSizeContentView
+            // is removed when exiting theater mode.
+            window?.styleMask.remove(.fullSizeContentView)
+            return
+        }
         toolbarIsHidden = false
         toolbarRevealTask?.cancel()
         toolbarRevealTask = nil
         uninstallMouseMoveMonitor()
+        window?.styleMask.remove(.fullSizeContentView)
         window?.titlebarAppearsTransparent = false
         window?.titleVisibility = .visible
-        window?.styleMask.remove(.fullSizeContentView)
         window?.toolbar?.isVisible = true
         for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window?.standardWindowButton(b)?.alphaValue = 1

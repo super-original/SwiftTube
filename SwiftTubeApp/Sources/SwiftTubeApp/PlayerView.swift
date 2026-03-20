@@ -52,6 +52,7 @@ struct PlayerScreen: View {
     @StateObject private var layoutState: PlayerLayoutState
     @State private var playbackCoordinator: PlayerPlaybackCoordinator
     @State private var isDescriptionExpanded = false
+    @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
 
@@ -68,8 +69,11 @@ struct PlayerScreen: View {
             scrollContent
         }
         .scrollDisabled(layoutState.isFullscreen)
+        // When toolbar is hidden in theater mode via fullSizeContentView, extend
+        // the scroll view under the title bar area so the video fills it.
+        .ignoresSafeArea(edges: layoutState.isTheaterMode && settings.hideTopBarInImmersiveMode ? .top : [])
         .background(
-            ((layoutState.isFullscreen || layoutState.isTheaterMode) ? Color.black : Color(NSColor.windowBackgroundColor))
+            (layoutState.isFullscreen ? Color.black : Color(NSColor.windowBackgroundColor))
                 .ignoresSafeArea()
         )
         .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
