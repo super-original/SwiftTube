@@ -35,6 +35,33 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(keyboardLockKey.rawValue, forKey: "keyboardLockKey") }
     }
 
+    // MARK: - Key bindings (single lowercase character, empty = disabled)
+
+    @Published var playPauseKey: String {
+        didSet { defaults.set(playPauseKey, forKey: "playPauseKey") }
+    }
+    @Published var seekBackKey: String {
+        didSet { defaults.set(seekBackKey, forKey: "seekBackKey") }
+    }
+    @Published var seekFwdKey: String {
+        didSet { defaults.set(seekFwdKey, forKey: "seekFwdKey") }
+    }
+    @Published var frameBackKey: String {
+        didSet { defaults.set(frameBackKey, forKey: "frameBackKey") }
+    }
+    @Published var frameFwdKey: String {
+        didSet { defaults.set(frameFwdKey, forKey: "frameFwdKey") }
+    }
+    @Published var theaterKey: String {
+        didSet { defaults.set(theaterKey, forKey: "theaterKey") }
+    }
+    @Published var fullscreenKey: String {
+        didSet { defaults.set(fullscreenKey, forKey: "fullscreenKey") }
+    }
+    @Published var subtitleKey: String {
+        didSet { defaults.set(subtitleKey, forKey: "subtitleKey") }
+    }
+
     // MARK: - Init
 
     init() {
@@ -46,11 +73,22 @@ final class AppSettings: ObservableObject {
         self.jlSeekSeconds = jl > 0 ? jl : 10
         self.commaSeekMode = SeekMode(rawValue: defaults.string(forKey: "commaSeekMode") ?? "") ?? .frame
         self.keyboardLockKey = KeyboardLockKey(rawValue: defaults.string(forKey: "keyboardLockKey") ?? "") ?? .disabled
+
+        let _pp = defaults.string(forKey: "playPauseKey")  ?? ""; self.playPauseKey  = _pp.isEmpty ? "k" : _pp
+        let _sb = defaults.string(forKey: "seekBackKey")   ?? ""; self.seekBackKey   = _sb.isEmpty ? "j" : _sb
+        let _sf = defaults.string(forKey: "seekFwdKey")    ?? ""; self.seekFwdKey    = _sf.isEmpty ? "l" : _sf
+        let _fb = defaults.string(forKey: "frameBackKey")  ?? ""; self.frameBackKey  = _fb.isEmpty ? "," : _fb
+        let _ff = defaults.string(forKey: "frameFwdKey")   ?? ""; self.frameFwdKey   = _ff.isEmpty ? "." : _ff
+        let _th = defaults.string(forKey: "theaterKey")    ?? ""; self.theaterKey    = _th.isEmpty ? "t" : _th
+        let _fs = defaults.string(forKey: "fullscreenKey") ?? ""; self.fullscreenKey = _fs.isEmpty ? "f" : _fs
+        let _su = defaults.string(forKey: "subtitleKey")   ?? ""; self.subtitleKey   = _su.isEmpty ? "c" : _su
     }
 
     // MARK: - Types
 
     static let seekSecondsOptions = [5, 10, 15, 30, 60]
+
+
 
     enum DefaultQuality: String, CaseIterable, Identifiable {
         case auto   = "Auto"

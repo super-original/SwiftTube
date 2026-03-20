@@ -36,37 +36,6 @@ final class WindowResolverView: NSView {
     }
 }
 
-private final class ScrollForwarderView: NSView {
-    override var acceptsFirstResponder: Bool { false }
-
-    override func scrollWheel(with event: NSEvent) {
-        // The NSScrollView backing SwiftUI's ScrollView is not necessarily an ancestor
-        // of this view — search the full window hierarchy (DFS) to find it reliably.
-        guard let window else { super.scrollWheel(with: event); return }
-        if let sv = Self.findScrollView(in: window.contentView) {
-            sv.scrollWheel(with: event)
-        } else {
-            super.scrollWheel(with: event)
-        }
-    }
-
-    private static func findScrollView(in view: NSView?) -> NSScrollView? {
-        guard let view else { return nil }
-        for sub in view.subviews {
-            if let sv = sub as? NSScrollView { return sv }
-            if let found = findScrollView(in: sub) { return found }
-        }
-        return nil
-    }
-}
-
-private struct ScrollForwarder: NSViewRepresentable {
-    func makeNSView(context: Context) -> ScrollForwarderView { ScrollForwarderView() }
-    func updateNSView(_ nsView: ScrollForwarderView, context: Context) {}
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: ScrollForwarderView, context: Context) -> CGSize? {
-        proposal.replacingUnspecifiedDimensions()
-    }
-}
 
 private struct PlayerSurfaceBoundsKey: PreferenceKey {
     static let defaultValue: Anchor<CGRect>? = nil
@@ -83,8 +52,6 @@ struct PlayerScreen: View {
     @StateObject private var layoutState: PlayerLayoutState
     @State private var playbackCoordinator: PlayerPlaybackCoordinator
     @State private var isDescriptionExpanded = false
-    @State private var topBarHovered = false
-    @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
 
@@ -143,31 +110,10 @@ struct PlayerScreen: View {
             viewModel.stop()
             playbackCoordinator.stop()
         }
-        .toolbar(toolbarVisibility, for: .windowToolbar)
-        .overlay(alignment: .top) {
-            // Sensor strip that reveals the toolbar when the cursor reaches the top of
-            // the window in theater mode. .ignoresSafeArea extends it into the title bar
-            // area so the strip covers the full top edge regardless of toolbar visibility.
-            if settings.hideTopBarInImmersiveMode && layoutState.isTheaterMode && !layoutState.isFullscreen {
-                Color.clear
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .contentShape(Rectangle())
-                    .onHover { topBarHovered = $0 }
-                    .ignoresSafeArea(edges: .top)
-            }
-        }
     }
 }
 
 private extension PlayerScreen {
-    private var toolbarVisibility: Visibility {
-        guard settings.hideTopBarInImmersiveMode,
-              layoutState.isTheaterMode,
-              !layoutState.isFullscreen else { return .visible }
-        return topBarHovered ? .visible : .hidden
-    }
-
     var standardPlayerColumnMaxWidth: CGFloat {
         980
     }
@@ -406,6 +352,7 @@ private func feedbackID(_ feedback: ActionFeedback) -> String {
 
 private struct PlayerStageSurface: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
+    @ObservedObject private var settings = AppSettings.shared
     let isLoading: Bool
     let errorMessage: String?
     let immersive: Bool
@@ -419,8 +366,6 @@ private struct PlayerStageSurface: View {
                 Rectangle()
                     .fill(Color.black.opacity(0.94))
 
-                ScrollForwarder()
-
                 if let engine = coordinator.mpvEngine {
                     MPVMetalRenderView(engine: engine, onLayoutChange: {})
                 }
@@ -432,21 +377,26 @@ private struct PlayerStageSurface: View {
                     PlayerStageLoadingOverlay(text: isLoading ? "Loading video..." : coordinator.playbackLoadingText)
                 }
 
-                // Tap anywhere to toggle play; hover restricted to the video content area
-                // so the side letterbox bars don't trigger controls.
+                // Tap to toggle play. onHover handles enter/exit; onContinuousHover
+                // handles position-aware letterbox filtering only. Splitting these
+                // prevents flicker when onContinuousHover fires .ended as the cursor
+                // moves over child controls (buttons, sliders).
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture {
                         coordinator.togglePlayback()
                     }
+                    .onHover { hovering in
+                        if !hovering { coordinator.setHovering(false) }
+                    }
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
-                            let inVideo = location.x >= pad && location.x <= geo.size.width - pad
+                            let inVideo = pad < 1 || (location.x >= pad && location.x <= geo.size.width - pad)
                             coordinator.setHovering(inVideo)
                             if inVideo { coordinator.handlePointerMovement() }
                         case .ended:
-                            coordinator.setHovering(false)
+                            break // let onHover handle the real exit
                         }
                     }
 
@@ -490,60 +440,60 @@ private struct PlayerStageSurface: View {
                 coordinator.togglePlayback()
                 return .handled
             }
-            .onKeyPress(characters: .init(charactersIn: "k")) { _ in
+            .onKeyPress(characters: .init(charactersIn: settings.playPauseKey)) { _ in
                 guard !coordinator.keyboardLocked else { return .ignored }
                 coordinator.togglePlayback()
                 return .handled
             }
             .onKeyPress(.leftArrow) {
                 guard !coordinator.keyboardLocked else { return .ignored }
-                coordinator.seekRelative(-Double(AppSettings.shared.arrowSeekSeconds))
+                coordinator.seekRelative(-Double(settings.arrowSeekSeconds))
                 return .handled
             }
             .onKeyPress(.rightArrow) {
                 guard !coordinator.keyboardLocked else { return .ignored }
-                coordinator.seekRelative(Double(AppSettings.shared.arrowSeekSeconds))
+                coordinator.seekRelative(Double(settings.arrowSeekSeconds))
                 return .handled
             }
-            .onKeyPress(characters: .init(charactersIn: "j")) { _ in
+            .onKeyPress(characters: .init(charactersIn: settings.seekBackKey)) { _ in
                 guard !coordinator.keyboardLocked else { return .ignored }
-                coordinator.seekRelative(-Double(AppSettings.shared.jlSeekSeconds))
+                coordinator.seekRelative(-Double(settings.jlSeekSeconds))
                 return .handled
             }
-            .onKeyPress(characters: .init(charactersIn: "l")) { _ in
+            .onKeyPress(characters: .init(charactersIn: settings.seekFwdKey)) { _ in
                 guard !coordinator.keyboardLocked else { return .ignored }
-                coordinator.seekRelative(Double(AppSettings.shared.jlSeekSeconds))
+                coordinator.seekRelative(Double(settings.jlSeekSeconds))
                 return .handled
             }
-            .onKeyPress(characters: .init(charactersIn: ",")) { _ in
+            .onKeyPress(characters: .init(charactersIn: settings.frameBackKey)) { _ in
                 guard !coordinator.keyboardLocked else { return .ignored }
-                if let secs = AppSettings.shared.commaSeekMode.seconds {
+                if let secs = settings.commaSeekMode.seconds {
                     coordinator.seekRelative(-secs)
                 } else {
                     coordinator.stepFrame(direction: -1)
                 }
                 return .handled
             }
-            .onKeyPress(characters: .init(charactersIn: ".")) { _ in
+            .onKeyPress(characters: .init(charactersIn: settings.frameFwdKey)) { _ in
                 guard !coordinator.keyboardLocked else { return .ignored }
-                if let secs = AppSettings.shared.commaSeekMode.seconds {
+                if let secs = settings.commaSeekMode.seconds {
                     coordinator.seekRelative(secs)
                 } else {
                     coordinator.stepFrame(direction: 1)
                 }
                 return .handled
             }
-            .onKeyPress(characters: .init(charactersIn: "t")) { _ in
+            .onKeyPress(characters: .init(charactersIn: settings.theaterKey)) { _ in
                 guard !coordinator.keyboardLocked else { return .ignored }
                 coordinator.toggleTheaterMode()
                 return .handled
             }
-            .onKeyPress(characters: .init(charactersIn: "f")) { _ in
+            .onKeyPress(characters: .init(charactersIn: settings.fullscreenKey)) { _ in
                 guard !coordinator.keyboardLocked else { return .ignored }
                 coordinator.toggleFullscreen()
                 return .handled
             }
-            .onKeyPress(characters: .init(charactersIn: "c")) { _ in
+            .onKeyPress(characters: .init(charactersIn: settings.subtitleKey)) { _ in
                 guard !coordinator.keyboardLocked else { return .ignored }
                 coordinator.toggleSubtitles()
                 return .handled

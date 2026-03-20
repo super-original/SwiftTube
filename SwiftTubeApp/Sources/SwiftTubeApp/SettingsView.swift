@@ -80,19 +80,37 @@ private struct ControlsTab: View {
                 }
                 .pickerStyle(.menu)
 
-                Picker("J / L keys", selection: $settings.jlSeekSeconds) {
+                KeyBindingRow(label: "Seek back key", binding: $settings.seekBackKey)
+                KeyBindingRow(label: "Seek forward key", binding: $settings.seekFwdKey)
+
+                Picker("Seek back/forward amount", selection: $settings.jlSeekSeconds) {
                     ForEach(AppSettings.seekSecondsOptions, id: \.self) { s in
                         Text("\(s)s").tag(s)
                     }
                 }
                 .pickerStyle(.menu)
 
-                Picker(", / . keys", selection: $settings.commaSeekMode) {
+                KeyBindingRow(label: "Frame back key", binding: $settings.frameBackKey)
+                KeyBindingRow(label: "Frame forward key", binding: $settings.frameFwdKey)
+
+                Picker(", / . mode", selection: $settings.commaSeekMode) {
                     ForEach(AppSettings.SeekMode.allCases) { mode in
                         Text(mode.label).tag(mode)
                     }
                 }
                 .pickerStyle(.menu)
+            }
+
+            Section("Playback") {
+                KeyBindingRow(label: "Play / Pause (alt)", binding: $settings.playPauseKey)
+                Text("Space always toggles play/pause. This sets an additional key.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Player") {
+                KeyBindingRow(label: "Theater mode", binding: $settings.theaterKey)
+                KeyBindingRow(label: "Fullscreen", binding: $settings.fullscreenKey)
+                KeyBindingRow(label: "Subtitles", binding: $settings.subtitleKey)
             }
 
             Section("Keyboard Lock") {
@@ -110,5 +128,21 @@ private struct ControlsTab: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+}
+
+private struct KeyBindingRow: View {
+    let label: String
+    @Binding var binding: String
+
+    var body: some View {
+        LabeledContent(label) {
+            TextField("", text: Binding(
+                get: { binding },
+                set: { binding = String($0.prefix(1).lowercased()) }
+            ))
+            .frame(width: 40)
+            .multilineTextAlignment(.center)
+        }
     }
 }
