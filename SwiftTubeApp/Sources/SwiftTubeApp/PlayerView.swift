@@ -69,7 +69,7 @@ struct PlayerScreen: View {
         }
         .scrollDisabled(layoutState.isFullscreen)
         .background(
-            (layoutState.isFullscreen ? Color.black : Color(NSColor.windowBackgroundColor))
+            ((layoutState.isFullscreen || layoutState.isTheaterMode) ? Color.black : Color(NSColor.windowBackgroundColor))
                 .ignoresSafeArea()
         )
         .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
@@ -172,8 +172,9 @@ private extension PlayerScreen {
                 // Fullscreen: surface fills viewport via surfaceRect
                 Color.clear.frame(height: 0)
             } else if layoutState.isTheaterMode {
-                // Black spacer pushes content below the full-width player
-                Color.black
+                // Transparent spacer reserves the 16:9 slot for the overlay.
+                // Must be clear — a black spacer would show below the overlay when scrolled.
+                Color.clear
                     .frame(maxWidth: .infinity)
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .anchorPreference(key: PlayerSurfaceBoundsKey.self, value: .bounds) { $0 }
@@ -377,17 +378,15 @@ private struct PlayerStageSurface: View {
                     PlayerStageLoadingOverlay(text: isLoading ? "Loading video..." : coordinator.playbackLoadingText)
                 }
 
-                // Tap to toggle play. onHover handles enter/exit; onContinuousHover
-                // handles position-aware letterbox filtering only. Splitting these
-                // prevents flicker when onContinuousHover fires .ended as the cursor
-                // moves over child controls (buttons, sliders).
+                // Tap to toggle play. Only onContinuousHover is used for hover state —
+                // onHover is intentionally omitted because it fires .false when the cursor
+                // moves to a child SwiftUI control (button, slider), causing rapid
+                // show/hide flicker. .ended is ignored for the same reason; the
+                // coordinator's hide monitor handles idle timeout naturally.
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture {
                         coordinator.togglePlayback()
-                    }
-                    .onHover { hovering in
-                        if !hovering { coordinator.setHovering(false) }
                     }
                     .onContinuousHover { phase in
                         switch phase {
@@ -396,7 +395,7 @@ private struct PlayerStageSurface: View {
                             coordinator.setHovering(inVideo)
                             if inVideo { coordinator.handlePointerMovement() }
                         case .ended:
-                            break // let onHover handle the real exit
+                            break // spurious when cursor moves to child controls; ignore
                         }
                     }
 

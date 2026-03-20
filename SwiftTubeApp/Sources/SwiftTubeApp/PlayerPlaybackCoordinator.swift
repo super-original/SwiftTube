@@ -1309,8 +1309,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         guard let window, !toolbarIsHidden else { return }
         toolbarIsHidden = true
         window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.styleMask.insert(.fullSizeContentView)
         window.toolbar?.isVisible = false
-        window.standardWindowButton(.closeButton)?.superview?.alphaValue = 0
+        for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            window.standardWindowButton(b)?.alphaValue = 0
+        }
         installMouseMoveMonitor()
     }
 
@@ -1321,8 +1325,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         toolbarRevealTask = nil
         uninstallMouseMoveMonitor()
         window?.titlebarAppearsTransparent = false
+        window?.titleVisibility = .visible
+        window?.styleMask.remove(.fullSizeContentView)
         window?.toolbar?.isVisible = true
-        window?.standardWindowButton(.closeButton)?.superview?.alphaValue = 1
+        for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            window?.standardWindowButton(b)?.alphaValue = 1
+        }
     }
 
     private func installMouseMoveMonitor() {
@@ -1345,7 +1353,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             toolbarRevealTask = nil
             window.titlebarAppearsTransparent = false
             window.toolbar?.isVisible = true
-            window.standardWindowButton(.closeButton)?.superview?.alphaValue = 1
+            for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+                window.standardWindowButton(b)?.alphaValue = 1
+            }
         } else if window.toolbar?.isVisible == true {
             guard toolbarRevealTask == nil else { return }
             toolbarRevealTask = Task { @MainActor [weak self] in
@@ -1353,7 +1363,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 guard !Task.isCancelled, let self, self.toolbarIsHidden else { return }
                 self.window?.titlebarAppearsTransparent = true
                 self.window?.toolbar?.isVisible = false
-                self.window?.standardWindowButton(.closeButton)?.superview?.alphaValue = 0
+                for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+                    self.window?.standardWindowButton(b)?.alphaValue = 0
+                }
                 self.toolbarRevealTask = nil
             }
         }
