@@ -22,27 +22,14 @@ final class MPVRenderContainerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        autoresizingMask = [.width, .height]
         metalLayer.framebufferOnly = true
         metalLayer.backgroundColor = NSColor.black.cgColor
-        // Layer-hosting: the metal layer IS the view's backing layer.
-        // AppKit places it in the layer tree at the view's position.
         layer = metalLayer
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-
-    // When first added to a superview, fill it immediately.
-    // autoresizingMask = [.width, .height] does proportional resize, so if the view
-    // starts at .zero (from loadView's init(frame: .zero)) it stays at .zero forever.
-    // Setting the frame here bootstraps the proportional fill correctly.
-    override func viewDidMoveToSuperview() {
-        super.viewDidMoveToSuperview()
-        guard let sv = superview, sv.bounds.width > 1, sv.bounds.height > 1 else { return }
-        frame = sv.bounds
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -69,7 +56,38 @@ final class MPVRenderContainerView: NSView {
         metalLayer.frame = CGRect(origin: .zero, size: size)
         metalLayer.contentsScale = scale
         metalLayer.drawableSize = newDrawableSize
+        PlaybackDebugLogger.log("mpv render surface bounds size=\(Int(size.width))x\(Int(size.height)) drawable=\(Int(newDrawableSize.width))x\(Int(newDrawableSize.height))")
         onLayoutChange?()
+    }
+}
+
+// Thin NSView wrapper. NSViewRepresentable gives SwiftUI direct frame control —
+// it calls setFrame:/setFrameSize: directly when the overlay rect changes.
+// We propagate that size immediately to MPVRenderContainerView so drawableSize
+// is always current before moltenvk_reconfig reads it.
+@MainActor
+final class MPVSurfaceHostView: NSView {
+    let renderView: MPVRenderContainerView
+
+    init(renderView: MPVRenderContainerView) {
+        self.renderView = renderView
+        super.init(frame: .zero)
+        addSubview(renderView)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        // Directly propagate to the render view — no autoresizing ambiguity.
+        if newSize.width > 1, newSize.height > 1 {
+            renderView.frame = CGRect(origin: .zero, size: newSize)
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 }
 
@@ -122,17 +140,21 @@ final class MPVRenderViewController: NSViewController {
     }
 }
 
-struct MPVMetalRenderView: NSViewControllerRepresentable {
+struct MPVMetalRenderView: NSViewRepresentable {
     let engine: MPVPlaybackEngine
     let onLayoutChange: () -> Void
 
-    func makeNSViewController(context: Context) -> MPVRenderViewController {
-        let controller = engine.renderController
-        controller.configure(onLayoutChange: onLayoutChange)
-        return controller
+    func makeNSView(context: Context) -> MPVSurfaceHostView {
+        engine.renderController.configure(onLayoutChange: onLayoutChange)
+        let renderView = engine.renderController.view as! MPVRenderContainerView
+        return MPVSurfaceHostView(renderView: renderView)
     }
 
-    func updateNSViewController(_ controller: MPVRenderViewController, context: Context) {
-        controller.configure(onLayoutChange: onLayoutChange)
+    func updateNSView(_ nsView: MPVSurfaceHostView, context: Context) {
+        nsView.renderView.onLayoutChange = onLayoutChange
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: MPVSurfaceHostView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
     }
 }
