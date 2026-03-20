@@ -15,6 +15,7 @@
           "glass" : true,
           "image-name" : "FG SVG.svg",
           "name" : "FG SVG",
+          "opacity" : 1,
           "position" : {
             "scale" : 25,
             "translation-in-points" : [
@@ -25,7 +26,20 @@
         },
         {
           "fill" : {
-            "solid" : "display-p3:0.43137,0.22353,0.97255,1.00000"
+            "linear-gradient" : [
+              "display-p3:0.00000,0.77647,0.65490,1.00000",
+              "display-p3:0.03922,0.51765,1.00000,1.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 0
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 0.7
+              }
+            }
           },
           "image-name" : "BG SVG.svg",
           "name" : "BG SVG",
