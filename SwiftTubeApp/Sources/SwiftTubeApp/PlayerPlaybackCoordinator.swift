@@ -684,13 +684,26 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     func handlePlayerGeometryChange() {
-        // Debounce: fire 100ms after the last resize event so we catch the final size
-        // after animations complete, not every intermediate frame.
+        // Debounce: wait for size to settle after animations complete.
         geometryChangeTask?.cancel()
         geometryChangeTask = Task { @MainActor [weak self] in
+            // Wait for the surface to reach its final size
             try? await Task.sleep(nanoseconds: 100_000_000)
+            guard !Task.isCancelled, let self else { return }
+
+            // Queue a real filter chain change ([] → [lavfi=null]) so the next
+            // decode cycle runs reinit_video_filter_chain → vo_reconfig2 → moltenvk_reconfig.
+            // Returns in ~20ms; the actual async rebuild happens on the next frame.
+            self.mpvEngine?.triggerSwapchainResize()
+
+            // Give the decode cycle time to process the filter change and run
+            // moltenvk_reconfig before we clean up. 300ms >> one frame at 30fps.
+            try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
-            self?.mpvEngine?.forceDisplaySizeUpdate()
+
+            // Restore empty filter chain (triggers a second reconfig at the same
+            // correct drawableSize — no visible change).
+            self.mpvEngine?.cleanupFilterChain()
         }
     }
 
