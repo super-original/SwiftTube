@@ -355,8 +355,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var menuInteractionTask: Task<Void, Never>? = nil
     private var mpvStateTask: Task<Void, Never>? = nil
     private var feedbackDismissTask: Task<Void, Never>? = nil
-    private var geometryChangeTask: Task<Void, Never>? = nil
-    private var hasReloadedForCurrentImmersiveMode = false
     private var lastInteractionAt = Date()
     private var lastPointerMovementAt = Date.distantPast
 
@@ -486,7 +484,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         stopHideMonitor()
         menuInteractionTask?.cancel()
         mpvStateTask?.cancel()
-        geometryChangeTask?.cancel()
         errorMessage = nil
         isPreparingInitialPlayback = false
         controlsVisible = true
@@ -665,7 +662,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     func toggleTheaterMode() {
-        hasReloadedForCurrentImmersiveMode = false
         withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
             if layoutState.isFullscreen {
                 window?.toggleFullScreen(nil)
@@ -676,7 +672,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     func toggleFullscreen() {
-        hasReloadedForCurrentImmersiveMode = false
         noteInteraction()
         if layoutState.isTheaterMode {
             withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
@@ -684,44 +679,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             }
         }
         window?.toggleFullScreen(nil)
-    }
-
-    func handlePlayerGeometryChange() {
-        // Debounce: wait for surface to settle at its final size.
-        geometryChangeTask?.cancel()
-        geometryChangeTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            guard !Task.isCancelled, let self else { return }
-
-            // Only force-reload when in an immersive mode, and only once per mode
-            // entry. Without this guard, a second reload fires when the surface
-            // transitions between fullscreen (1440x848) and theater (1440x740),
-            // running moltenvk_reconfig while the surface is shrinking back to
-            // standard size — which overwrites the correct swapchain.
-            guard self.layoutState.isTheaterMode || self.layoutState.isFullscreen else { return }
-            guard !self.hasReloadedForCurrentImmersiveMode else { return }
-            guard let engine = self.mpvEngine else { return }
-
-            // Reload the current file at the current position. This is the only
-            // reliable trigger for moltenvk_reconfig: file load always calls
-            // vo_reconfig2 fresh, which reads the now-correct drawableSize and
-            // recreates the Vulkan swapchain at the theater/fullscreen dimensions.
-            // This is the same mechanism used by quality switching.
-            self.hasReloadedForCurrentImmersiveMode = true
-            let time = self.currentTime
-            let wasPlaying = self.isPlaying
-            self.mpvStateTask?.cancel()
-
-            do {
-                try await engine.reloadCurrentFile(seekTo: time)
-                guard !Task.isCancelled else { return }
-                engine.setVolume(self.volume)
-                if wasPlaying { engine.play() } else { engine.pause() }
-                self.startPollingMPVState(using: engine)
-            } catch {
-                // Reload failed (e.g. stream expired) — ignore silently
-            }
-        }
     }
 
     func toggleSubtitles() {
@@ -962,7 +919,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     @objc private func handleWindowDidEnterFullScreen(_ notification: Notification) {
         guard notification.object as? NSWindow === window else { return }
-        hasReloadedForCurrentImmersiveMode = false
         withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
             layoutState.isFullscreen = true
         }
@@ -970,7 +926,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     @objc private func handleWindowDidExitFullScreen(_ notification: Notification) {
         guard notification.object as? NSWindow === window else { return }
-        hasReloadedForCurrentImmersiveMode = false
         withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
             layoutState.isFullscreen = false
         }

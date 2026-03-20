@@ -39,16 +39,23 @@ final class WindowResolverView: NSView {
 private final class ScrollForwarderView: NSView {
     override var acceptsFirstResponder: Bool { false }
 
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        nil
-    }
-
     override func scrollWheel(with event: NSEvent) {
+        // Walk up the superview chain AND check siblings at each level —
+        // SwiftUI's NSScrollView is a sibling of the overlay NSView, not
+        // a direct ancestor of ScrollForwarderView.
         var candidate: NSView? = superview
         while let view = candidate {
             if let scrollView = view as? NSScrollView {
                 scrollView.scrollWheel(with: event)
                 return
+            }
+            if let parent = view.superview {
+                for sibling in parent.subviews where sibling !== view {
+                    if let scrollView = sibling as? NSScrollView {
+                        scrollView.scrollWheel(with: event)
+                        return
+                    }
+                }
             }
             candidate = view.superview
         }
@@ -387,12 +394,9 @@ private struct PlayerStageSurface: View {
                 .fill(Color.black.opacity(0.94))
 
             ScrollForwarder()
-                .allowsHitTesting(false)
 
             if let engine = coordinator.mpvEngine {
-                MPVMetalRenderView(engine: engine, onLayoutChange: {
-                    coordinator.handlePlayerGeometryChange()
-                })
+                MPVMetalRenderView(engine: engine, onLayoutChange: {})
             }
 
             if coordinator.shouldShowPlaybackErrorOverlay,
