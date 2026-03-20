@@ -93,7 +93,7 @@ struct PlayerScreen: View {
         }
         .scrollDisabled(layoutState.isFullscreen)
         .background(
-            (usesImmersiveLayout ? Color.black : Color(NSColor.windowBackgroundColor))
+            (layoutState.isFullscreen ? Color.black : Color(NSColor.windowBackgroundColor))
                 .ignoresSafeArea()
         )
         .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
@@ -196,30 +196,19 @@ private extension PlayerScreen {
                 // Fullscreen: surface fills viewport via surfaceRect
                 Color.clear.frame(height: 0)
             } else if layoutState.isTheaterMode {
-                // Spacer pushes content below the fixed player
-                Color.clear
+                // Black spacer pushes content below the full-width player
+                Color.black
                     .frame(maxWidth: .infinity)
                     .aspectRatio(16 / 9, contentMode: .fit)
 
-                immersiveContent
-                    .padding(.top, 24)
+                standardContent
+                    .padding(24)
             } else {
                 standardContent
                     .padding(24)
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-    }
-
-    var immersiveContent: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            headerSection
-            descriptionSection
-            commentsSection
-            recommendationsColumn
-        }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 24)
     }
 
     var standardContent: some View {
@@ -243,7 +232,9 @@ private extension PlayerScreen {
 
     var mainColumn: some View {
         VStack(alignment: .leading, spacing: 24) {
-            standardPlayerStagePlaceholder
+            if !layoutState.isTheaterMode {
+                standardPlayerStagePlaceholder
+            }
             headerSection
             descriptionSection
             commentsSection
@@ -253,14 +244,12 @@ private extension PlayerScreen {
 
     func surfaceRect(anchor: Anchor<CGRect>?, proxy: GeometryProxy) -> CGRect? {
         if layoutState.isFullscreen {
-            let w = proxy.size.width
-            let h = proxy.size.height
-            return CGRect(x: w / 2, y: h / 2, width: w, height: h)
+            return CGRect(origin: .zero, size: proxy.size)
         }
         if layoutState.isTheaterMode {
             let w = proxy.size.width
             let h = min(w * 9.0 / 16.0, proxy.size.height)
-            return CGRect(x: w / 2, y: h / 2, width: w, height: h)
+            return CGRect(x: 0, y: 0, width: w, height: h)
         }
         return anchor.map { proxy[$0] }
     }
@@ -534,7 +523,6 @@ private struct ActionFeedbackOverlay: View {
 
     @State private var appeared = false
     @State private var slideX: CGFloat = 0
-    @State private var bounceCount = 0
 
     private var isSeek: Bool {
         switch feedback {
@@ -546,8 +534,8 @@ private struct ActionFeedbackOverlay: View {
     // Settled position of the circle
     private var settledX: CGFloat {
         switch feedback {
-        case .seekForward, .frameForward: return 260
-        case .seekBackward, .frameBackward: return -260
+        case .seekForward, .frameForward: return 310
+        case .seekBackward, .frameBackward: return -310
         case .play, .pause: return 0
         }
     }
@@ -602,12 +590,6 @@ private struct ActionFeedbackOverlay: View {
         .scaleEffect(appeared ? 1.0 : 0.5)
         .opacity(appeared ? 1.0 : 0.0)
         .offset(x: settledX + slideX)
-        .keyframeAnimator(initialValue: CGFloat(1.0), trigger: bounceCount) { content, value in
-            content.scaleEffect(value)
-        } keyframes: { _ in
-            SpringKeyframe(1.25, duration: 0.15, spring: .snappy(duration: 0.15))
-            SpringKeyframe(1.0, duration: 0.25, spring: .bouncy(duration: 0.2))
-        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             slideX = entrySlideX
@@ -617,7 +599,11 @@ private struct ActionFeedbackOverlay: View {
             }
         }
         .onChange(of: feedback) { _, _ in
-            bounceCount += 1
+            // Replay the slide-in on every accumulation tap
+            slideX = entrySlideX
+            withAnimation(.easeOut(duration: 0.15)) {
+                slideX = 0
+            }
         }
     }
 }
