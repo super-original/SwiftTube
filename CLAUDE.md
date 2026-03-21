@@ -81,6 +81,15 @@ All playback uses `MPVPlaybackEngine` via MPVKit (libmpv). The previous AVFounda
   - Runs `swift build`, copies the binary + resources, embeds frameworks, and codesigns
   - Reads version from `VERSION` file, writes `Info.plist` with `CFBundleShortVersionString`
 
+## Workflow rules (always follow)
+    - After every code or config change: run `git add <files> && git
+    commit`
+    - After every material app change: bump `SwiftTubeApp/VERSION`
+    (e.g. 0.6.1 → 0.6.2) **before** committing
+    - After every VERSION bump: rebuild the app bundle with `cd
+    SwiftTubeApp && zsh build_app.sh`
+    - Never bundle unrelated changes into one commit
+
 ## Dependencies
 
 Swift: `MPVKit` (>= 0.41.0) for libmpv video playback

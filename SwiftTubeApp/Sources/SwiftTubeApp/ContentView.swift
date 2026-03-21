@@ -22,7 +22,7 @@ struct ContentView: View {
                 .environmentObject(authSession)
         }
         .toolbar {
-            ToolbarItemGroup(placement: .navigation) {
+            ToolbarItem(placement: .navigation) {
                 Button {
                     searchViewModel.clear()
                     if case .home = navigation.currentRoute {
@@ -34,9 +34,11 @@ struct ContentView: View {
                     BrandToolbarLabel()
                 }
                 .buttonStyle(.plain)
+            }
 
-                Divider()
+            ToolbarSpacer(.fixed)
 
+            ToolbarItemGroup(placement: .navigation) {
                 Button(action: navigation.goBack) {
                     Label("Back", systemImage: "chevron.left")
                 }
@@ -511,7 +513,7 @@ private struct ToolbarSearchField: NSViewRepresentable {
     var onClear: () -> Void
 
     func makeNSView(context: Context) -> NSSearchField {
-        let field = NSSearchField()
+        let field = ResignableSearchField()
         field.placeholderString = placeholder
         field.delegate = context.coordinator
         field.focusRingType = .default
@@ -534,6 +536,53 @@ private struct ToolbarSearchField: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
+    }
+
+    /// NSSearchField subclass that resigns first responder when
+    /// clicking outside, matching native macOS search bar behaviour.
+    final class ResignableSearchField: NSSearchField {
+        private nonisolated(unsafe) var clickMonitor: Any?
+
+        override func becomeFirstResponder() -> Bool {
+            let result = super.becomeFirstResponder()
+            if result { installClickOutsideMonitor() }
+            return result
+        }
+
+        override func resignFirstResponder() -> Bool {
+            let result = super.resignFirstResponder()
+            removeClickOutsideMonitor()
+            return result
+        }
+
+        private func installClickOutsideMonitor() {
+            guard clickMonitor == nil else { return }
+            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                guard let self, let fieldEditor = self.currentEditor() else { return event }
+                let locationInField = self.convert(event.locationInWindow, from: nil)
+                if !self.bounds.contains(locationInField) {
+                    // Also check the field editor (which might be slightly different)
+                    let locationInEditor = fieldEditor.convert(event.locationInWindow, from: nil)
+                    if !fieldEditor.bounds.contains(locationInEditor) {
+                        self.window?.makeFirstResponder(nil)
+                    }
+                }
+                return event
+            }
+        }
+
+        private func removeClickOutsideMonitor() {
+            if let monitor = clickMonitor {
+                NSEvent.removeMonitor(monitor)
+                clickMonitor = nil
+            }
+        }
+
+        deinit {
+            if let monitor = clickMonitor {
+                NSEvent.removeMonitor(monitor)
+            }
+        }
     }
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
