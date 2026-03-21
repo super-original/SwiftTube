@@ -27,6 +27,12 @@ struct RecommendationsResponse: Codable, Sendable {
     let note: String?
 }
 
+struct SearchResponse: Codable, Sendable {
+    let items: [VideoItem]
+    let continuation: String?
+    let query: String
+}
+
 struct StreamInfo: Codable, Hashable, Sendable {
     let url: String
     let formatId: String?

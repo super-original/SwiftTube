@@ -18,6 +18,17 @@ final class BackendClient {
         return try await performRequest(url: url)
     }
 
+    func fetchSearch(query: String, continuation: String? = nil) async throws -> SearchResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("search"), resolvingAgainstBaseURL: false)
+        var queryItems = [URLQueryItem(name: "q", value: query)]
+        if let continuation {
+            queryItems.append(URLQueryItem(name: "continuation", value: continuation))
+        }
+        components?.queryItems = queryItems
+        let url = components?.url ?? baseURL.appendingPathComponent("search")
+        return try await performRequest(url: url)
+    }
+
     func fetchVideo(id: String) async throws -> VideoPlayback {
         let url = baseURL.appendingPathComponent("video/")
             .appendingPathComponent(id)

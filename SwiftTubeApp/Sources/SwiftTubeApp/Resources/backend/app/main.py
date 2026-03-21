@@ -15,6 +15,7 @@ from .models import (
     BrowserAuthRequest,
     CommentsResponse,
     RecommendationsResponse,
+    SearchResponse,
     VideoPlayback,
 )
 from .parse import (
@@ -147,6 +148,36 @@ def recommendations(
             token = None
 
     return RecommendationsResponse(items=items, continuation=token, note=note)
+
+
+@app.get("/search", response_model=SearchResponse)
+def search(
+    q: str = Query(min_length=1),
+    continuation: Optional[str] = Query(default=None, min_length=1),
+) -> SearchResponse:
+    using_auth = auth_manager.is_authenticated
+    client_web, _ = _build_clients(use_auth=using_auth)
+
+    try:
+        if continuation:
+            data = client_web.search(continuation=continuation)
+        else:
+            data = client_web.search(query=q)
+    except RequestError as exc:
+        if not using_auth:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        auth_manager.clear()
+        try:
+            if continuation:
+                data = public_client_web.search(continuation=continuation)
+            else:
+                data = public_client_web.search(query=q)
+        except RequestError as fallback_exc:
+            raise HTTPException(status_code=502, detail=str(fallback_exc)) from fallback_exc
+
+    items = extract_video_items(data)
+    token = extract_continuation_token(data)
+    return SearchResponse(items=items, continuation=token, query=q)
 
 
 def _video_info(

@@ -97,6 +97,12 @@ class VideoPlayback(BaseModel):
     subtitles: List[SubtitleTrack] = Field(default_factory=list)
 
 
+class SearchResponse(BaseModel):
+    items: List[VideoItem] = Field(default_factory=list)
+    continuation: Optional[str] = None
+    query: str = ""
+
+
 class AuthStatusResponse(BaseModel):
     authenticated: bool = False
     browser: Optional[str] = None

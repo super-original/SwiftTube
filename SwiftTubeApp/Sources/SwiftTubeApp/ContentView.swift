@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var viewModel = HomeViewModel()
+    @StateObject private var searchViewModel = SearchViewModel()
     @EnvironmentObject private var backend: BackendManager
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
@@ -34,10 +35,18 @@ struct ContentView: View {
             }
 
             ToolbarItem(placement: .principal) {
-                Button(action: navigation.showHome) {
-                    BrandToolbarLabel()
+                HStack(spacing: 12) {
+                    Button {
+                        searchViewModel.clear()
+                        navigation.showHome()
+                    } label: {
+                        BrandToolbarLabel()
+                    }
+                    .buttonStyle(.plain)
+
+                    SearchBarView(searchViewModel: searchViewModel, navigation: navigation)
+                        .frame(maxWidth: 420)
                 }
-                .buttonStyle(.plain)
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
@@ -89,11 +98,14 @@ private extension ContentView {
     var homeScreen: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                if let notice = viewModel.notice {
-                    NoticeBanner(text: notice)
+                if searchViewModel.isActive {
+                    searchContentView
+                } else {
+                    if let notice = viewModel.notice {
+                        NoticeBanner(text: notice)
+                    }
+                    contentView
                 }
-
-                contentView
             }
             .padding(24)
         }
@@ -138,6 +150,62 @@ private extension ContentView {
             }
 
             if viewModel.isLoading {
+                ProgressView("Loading more...")
+                    .padding(.top, 16)
+            }
+        }
+    }
+
+    @ViewBuilder
+    var searchContentView: some View {
+        HStack {
+            Text("Results for \"\(searchViewModel.query)\"")
+                .font(.title3.weight(.semibold))
+            Spacer()
+            Button("Clear") {
+                searchViewModel.clear()
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
+
+        if searchViewModel.results.isEmpty {
+            if searchViewModel.isSearching {
+                placeholderGrid
+            } else if let error = searchViewModel.errorMessage {
+                EmptyStateView(
+                    title: "Search failed",
+                    message: error,
+                    actionTitle: "Try Again"
+                ) {
+                    searchViewModel.submit(navigation: navigation)
+                }
+            } else {
+                EmptyStateView(
+                    title: "No results",
+                    message: "No videos found for \"\(searchViewModel.query)\".",
+                    actionTitle: "Clear Search"
+                ) {
+                    searchViewModel.clear()
+                }
+            }
+        } else {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                ForEach(searchViewModel.results, id: \.id) { video in
+                    Button {
+                        navigation.showVideo(video)
+                    } label: {
+                        VideoCard(video: video)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onAppear {
+                        searchViewModel.loadMoreIfNeeded(currentVideo: video)
+                    }
+                }
+            }
+
+            if searchViewModel.isSearching {
                 ProgressView("Loading more...")
                     .padding(.top, 16)
             }
@@ -423,6 +491,47 @@ private struct NoticeBanner: View {
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(NSColor.controlBackgroundColor))
+        )
+    }
+}
+
+private struct SearchBarView: View {
+    @ObservedObject var searchViewModel: SearchViewModel
+    @ObservedObject var navigation: AppNavigationModel
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .font(.caption)
+
+            TextField("Search or paste YouTube URL", text: $searchViewModel.query)
+                .textFieldStyle(.plain)
+                .font(.subheadline)
+                .onSubmit {
+                    searchViewModel.submit(navigation: navigation)
+                }
+
+            if !searchViewModel.query.isEmpty {
+                Button {
+                    searchViewModel.clear()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color(NSColor.separatorColor), lineWidth: 0.5)
         )
     }
 }
