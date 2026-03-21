@@ -450,37 +450,38 @@ private struct PlayerStageSurface: View {
                 return .handled
             }
             .onKeyPress(.space) {
-                guard !coordinator.keyboardLocked else { return .ignored }
+                // Return .handled even when locked so macOS doesn't play the error beep.
+                guard !coordinator.keyboardLocked else { return .handled }
                 coordinator.togglePlayback()
                 return .handled
             }
             .onKeyPress(characters: .init(charactersIn: settings.playPauseKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .ignored }
+                guard !coordinator.keyboardLocked else { return .handled }
                 coordinator.togglePlayback()
                 return .handled
             }
             .onKeyPress(.leftArrow) {
-                guard !coordinator.keyboardLocked else { return .ignored }
+                guard !coordinator.keyboardLocked else { return .handled }
                 coordinator.seekRelative(-Double(settings.arrowSeekSeconds))
                 return .handled
             }
             .onKeyPress(.rightArrow) {
-                guard !coordinator.keyboardLocked else { return .ignored }
+                guard !coordinator.keyboardLocked else { return .handled }
                 coordinator.seekRelative(Double(settings.arrowSeekSeconds))
                 return .handled
             }
             .onKeyPress(characters: .init(charactersIn: settings.seekBackKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .ignored }
+                guard !coordinator.keyboardLocked else { return .handled }
                 coordinator.seekRelative(-Double(settings.jlSeekSeconds))
                 return .handled
             }
             .onKeyPress(characters: .init(charactersIn: settings.seekFwdKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .ignored }
+                guard !coordinator.keyboardLocked else { return .handled }
                 coordinator.seekRelative(Double(settings.jlSeekSeconds))
                 return .handled
             }
             .onKeyPress(characters: .init(charactersIn: settings.frameBackKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .ignored }
+                guard !coordinator.keyboardLocked else { return .handled }
                 if let secs = settings.commaSeekMode.seconds {
                     coordinator.seekRelative(-secs)
                 } else {
@@ -489,7 +490,7 @@ private struct PlayerStageSurface: View {
                 return .handled
             }
             .onKeyPress(characters: .init(charactersIn: settings.frameFwdKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .ignored }
+                guard !coordinator.keyboardLocked else { return .handled }
                 if let secs = settings.commaSeekMode.seconds {
                     coordinator.seekRelative(secs)
                 } else {
@@ -498,26 +499,27 @@ private struct PlayerStageSurface: View {
                 return .handled
             }
             .onKeyPress(characters: .init(charactersIn: settings.theaterKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .ignored }
+                guard !coordinator.keyboardLocked else { return .handled }
                 coordinator.toggleTheaterMode()
                 return .handled
             }
             .onKeyPress(characters: .init(charactersIn: settings.fullscreenKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .ignored }
+                guard !coordinator.keyboardLocked else { return .handled }
                 coordinator.toggleFullscreen()
                 return .handled
             }
             .onKeyPress(characters: .init(charactersIn: settings.subtitleKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .ignored }
+                guard !coordinator.keyboardLocked else { return .handled }
                 coordinator.toggleSubtitles()
                 return .handled
             }
-            // Catch-all: absorb every remaining key press so macOS never plays the
-            // system error beep (e.g. for unrecognised keys or when keyboard is locked).
-            .onKeyPress(phases: .down) { _ in .handled }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { isFocused = true }
+        .onAppear {
+            // Defer by one run-loop cycle so the view is fully in the window
+            // hierarchy before we programmatically transfer keyboard focus.
+            DispatchQueue.main.async { isFocused = true }
+        }
     }
 
     private static func sidePad(for size: CGSize, aspect: Double) -> CGFloat {
@@ -828,26 +830,26 @@ private struct PlayerControlBar: View {
             )
             .disabled(coordinator.duration <= 0)
             .accessibilityLabel("Playback position")
-            .overlay(
-                // Transparent hover-tracking layer; measures the slider width and
-                // computes a 0…1 fraction for the scrub-preview thumbnail.
+            // Measure the slider's rendered width so ScrubPreviewPositioned can
+            // compute the exact horizontal position of the thumbnail.
+            .background(
                 GeometryReader { geo in
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onContinuousHover { phase in
-                            switch phase {
-                            case .active(let loc):
-                                guard coordinator.duration > 0 else { return }
-                                sliderWidth = geo.size.width
-                                let trackInset: CGFloat = 10
-                                let trackW = max(1, geo.size.width - trackInset * 2)
-                                coordinator.scrubHoverFraction = max(0, min(1, (loc.x - trackInset) / trackW))
-                            case .ended:
-                                coordinator.scrubHoverFraction = nil
-                            }
-                        }
+                    Color.clear.onAppear { sliderWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, w in sliderWidth = w }
                 }
             )
+            // Track hover directly on the Slider so it never blocks clicks/drags.
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let loc):
+                    guard coordinator.duration > 0, sliderWidth > 0 else { return }
+                    let trackInset: CGFloat = 10
+                    let trackW = max(1, sliderWidth - trackInset * 2)
+                    coordinator.scrubHoverFraction = max(0, min(1, (loc.x - trackInset) / trackW))
+                case .ended:
+                    coordinator.scrubHoverFraction = nil
+                }
+            }
 
             Text(coordinator.remainingTimeText)
                 .frame(width: timeLabelWidth, alignment: .trailing)
