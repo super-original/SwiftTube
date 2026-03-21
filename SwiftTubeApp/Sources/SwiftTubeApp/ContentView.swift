@@ -33,9 +33,9 @@ struct ContentView: View {
                 } label: {
                     BrandToolbarLabel()
                 }
+                .buttonStyle(.glass)
             }
-
-            ToolbarSpacer(.fixed, placement: .navigation)
+            .sharedBackgroundVisibility(.hidden)
 
             ToolbarItemGroup(placement: .navigation) {
                 Button(action: navigation.goBack) {
