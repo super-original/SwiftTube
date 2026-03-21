@@ -32,21 +32,24 @@ struct ContentView: View {
                     Label("Forward", systemImage: "chevron.right")
                 }
                 .disabled(!navigation.canGoForward)
+
+                Button {
+                    searchViewModel.clear()
+                    navigation.showHome()
+                } label: {
+                    BrandToolbarLabel()
+                }
+                .buttonStyle(.plain)
             }
 
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 12) {
-                    Button {
-                        searchViewModel.clear()
-                        navigation.showHome()
-                    } label: {
-                        BrandToolbarLabel()
-                    }
-                    .buttonStyle(.plain)
-
-                    SearchBarView(searchViewModel: searchViewModel, navigation: navigation)
-                        .frame(maxWidth: 420)
-                }
+                ToolbarSearchField(
+                    text: $searchViewModel.query,
+                    placeholder: "Search or paste YouTube URL",
+                    onSubmit: { searchViewModel.submit(navigation: navigation) },
+                    onClear: { searchViewModel.clear() }
+                )
+                .frame(minWidth: 260, maxWidth: 480)
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
@@ -159,7 +162,7 @@ private extension ContentView {
     @ViewBuilder
     var searchContentView: some View {
         HStack {
-            Text("Results for \"\(searchViewModel.query)\"")
+            Text("Results for \"\(searchViewModel.lastQuery)\"")
                 .font(.title3.weight(.semibold))
             Spacer()
             Button("Clear") {
@@ -495,44 +498,67 @@ private struct NoticeBanner: View {
     }
 }
 
-private struct SearchBarView: View {
-    @ObservedObject var searchViewModel: SearchViewModel
-    @ObservedObject var navigation: AppNavigationModel
+private struct ToolbarSearchField: NSViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+    var onSubmit: () -> Void
+    var onClear: () -> Void
 
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-                .font(.caption)
+    func makeNSView(context: Context) -> NSSearchField {
+        let field = NSSearchField()
+        field.placeholderString = placeholder
+        field.delegate = context.coordinator
+        field.focusRingType = .default
+        field.bezelStyle = .roundedBezel
+        field.controlSize = .regular
+        field.font = .systemFont(ofSize: NSFont.systemFontSize(for: .regular))
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return field
+    }
 
-            TextField("Search or paste YouTube URL", text: $searchViewModel.query)
-                .textFieldStyle(.plain)
-                .font(.subheadline)
-                .onSubmit {
-                    searchViewModel.submit(navigation: navigation)
-                }
+    func updateNSView(_ nsView: NSSearchField, context: Context) {
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+    }
 
-            if !searchViewModel.query.isEmpty {
-                Button {
-                    searchViewModel.clear()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var parent: ToolbarSearchField
+
+        init(_ parent: ToolbarSearchField) {
+            self.parent = parent
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSSearchField else { return }
+            parent.text = field.stringValue
+            if field.stringValue.isEmpty {
+                parent.onClear()
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color(NSColor.separatorColor), lineWidth: 0.5)
-        )
+
+        func control(
+            _ control: NSControl,
+            textView: NSTextView,
+            doCommandBy commandSelector: Selector
+        ) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                parent.onSubmit()
+                return true
+            }
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                parent.text = ""
+                (control as? NSSearchField)?.stringValue = ""
+                parent.onClear()
+                return true
+            }
+            return false
+        }
     }
 }
 

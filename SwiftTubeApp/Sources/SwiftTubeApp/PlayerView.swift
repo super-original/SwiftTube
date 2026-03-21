@@ -379,39 +379,22 @@ private struct PlayerStageSurface: View {
                     PlayerStageLoadingOverlay(text: isLoading ? "Loading video..." : coordinator.playbackLoadingText)
                 }
 
-                // Tap to toggle play. onHover drives enter/exit with an 80ms debounce
-                // so spurious false events (when cursor briefly moves to a child control)
-                // are absorbed before calling setHovering(false). onContinuousHover
-                // handles position-aware letterbox filtering; its .ended is ignored.
+                // Tap-to-toggle layer. Hover enter/exit is tracked on the
+                // parent ZStack so moving to child controls doesn't trigger
+                // a spurious exit. onContinuousHover here tracks pointer
+                // position for letterbox filtering and auto-hide reset.
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture {
                         coordinator.togglePlayback()
                     }
-                    .onHover { hovering in
-                        if hovering {
-                            hoverExitTask?.cancel()
-                            hoverExitTask = nil
-                            coordinator.setHovering(true)
-                        } else {
-                            hoverExitTask?.cancel()
-                            hoverExitTask = Task { @MainActor in
-                                try? await Task.sleep(nanoseconds: 80_000_000)
-                                guard !Task.isCancelled else { return }
-                                coordinator.setHovering(false)
-                            }
-                        }
-                    }
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
-                            hoverExitTask?.cancel()
-                            hoverExitTask = nil
                             let inVideo = pad < 1 || (location.x >= pad && location.x <= geo.size.width - pad)
-                            coordinator.setHovering(inVideo)
                             if inVideo { coordinator.handlePointerMovement() }
                         case .ended:
-                            break // let onHover handle the real exit
+                            break
                         }
                     }
 
@@ -439,6 +422,20 @@ private struct PlayerStageSurface: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .padding(.top, 16)
                         .allowsHitTesting(false)
+                }
+            }
+            .onHover { hovering in
+                if hovering {
+                    hoverExitTask?.cancel()
+                    hoverExitTask = nil
+                    coordinator.setHovering(true)
+                } else {
+                    hoverExitTask?.cancel()
+                    hoverExitTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 80_000_000)
+                        guard !Task.isCancelled else { return }
+                        coordinator.setHovering(false)
+                    }
                 }
             }
             .focusable()

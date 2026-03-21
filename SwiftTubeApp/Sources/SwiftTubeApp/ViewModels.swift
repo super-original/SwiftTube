@@ -58,7 +58,7 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var isActive = false
 
     private var continuation: String? = nil
-    private var lastQuery: String = ""
+    @Published private(set) var lastQuery: String = ""
 
     func submit(navigation: AppNavigationModel) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
