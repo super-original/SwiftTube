@@ -21,8 +21,8 @@ struct ContentView: View {
             AuthConnectionSheet()
                 .environmentObject(authSession)
         }
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
+        .toolbar(id: "main") {
+            ToolbarItem(id: "brand", placement: .navigation) {
                 Button {
                     searchViewModel.clear()
                     if case .home = navigation.currentRoute {
@@ -36,21 +36,23 @@ struct ContentView: View {
                 .buttonStyle(.plain)
             }
 
-            ToolbarSpacer(.fixed, placement: .navigation)
+            ToolbarSpacer(.fixed)
 
-            ToolbarItemGroup(placement: .navigation) {
+            ToolbarItem(id: "back", placement: .navigation) {
                 Button(action: navigation.goBack) {
                     Label("Back", systemImage: "chevron.left")
                 }
                 .disabled(!navigation.canGoBack)
+            }
 
+            ToolbarItem(id: "forward", placement: .navigation) {
                 Button(action: navigation.goForward) {
                     Label("Forward", systemImage: "chevron.right")
                 }
                 .disabled(!navigation.canGoForward)
             }
 
-            ToolbarItem(placement: .principal) {
+            ToolbarItem(id: "search", placement: .principal) {
                 ToolbarSearchField(
                     text: $searchViewModel.query,
                     placeholder: "Search or paste YouTube URL",
@@ -60,19 +62,23 @@ struct ContentView: View {
                 .frame(minWidth: 300, maxWidth: 540)
             }
 
-            ToolbarItemGroup(placement: .primaryAction) {
+            ToolbarItem(id: "auth", placement: .primaryAction) {
                 Button {
                     authSession.isSheetPresented = true
                 } label: {
                     AuthToolbarLabel(status: authSession.status)
                 }
                 .disabled(!backend.isRunning)
+            }
 
+            ToolbarItem(id: "refresh", placement: .primaryAction) {
                 Button(action: viewModel.reload) {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(!backend.isRunning)
+            }
 
+            ToolbarItem(id: "status", placement: .primaryAction) {
                 BackendToolbarStatus(state: backend.state)
             }
         }
