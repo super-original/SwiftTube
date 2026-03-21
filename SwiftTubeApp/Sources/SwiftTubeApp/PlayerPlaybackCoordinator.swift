@@ -336,6 +336,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var feedbackGeneration = 0
     @Published var keyboardLocked = false
     @Published private(set) var videoAspect: Double = 16.0 / 9.0
+    @Published private(set) var storyboard: StoryboardSpec? = nil
+    /// Non-nil while the cursor hovers over the scrubber track (0…1 fraction of track width).
+    @Published var scrubHoverFraction: Double? = nil
     @Published var volume: Double = 0.9 {
         didSet {
             applyVolume()
@@ -455,12 +458,21 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var currentTimeText: String {
-        formatTime(currentTime)
+        formatTime(isScrubbing ? scrubPosition : currentTime)
     }
 
     var remainingTimeText: String {
         guard duration > 0 else { return "--:--" }
-        return "-\(formatTime(max(duration - currentTime, 0)))"
+        let t = isScrubbing ? scrubPosition : currentTime
+        return "-\(formatTime(max(duration - t, 0)))"
+    }
+
+    /// Fraction (0…1) to use for the scrub preview thumbnail.
+    /// Returns the hover fraction when hovering, or derives it from scrubPosition during active drag.
+    var scrubPreviewFraction: Double? {
+        if let hover = scrubHoverFraction { return hover }
+        if isScrubbing, scrubberUpperBound > 0 { return scrubPosition / scrubberUpperBound }
+        return nil
     }
 
     var scrubberUpperBound: Double {
@@ -511,6 +523,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         layoutState.isTheaterMode = false
         keyboardLocked = false
         videoAspect = 16.0 / 9.0
+        storyboard = nil
+        scrubHoverFraction = nil
         lastInteractionAt = Date()
         lastPointerMovementAt = .distantPast
         restoreToolbarIfNeeded()
@@ -808,6 +822,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             currentTime = 0
             scrubPosition = 0
             duration = 0
+            storyboard = playback.storyboard
             startPollingMPVState(using: engine)
             refreshQualityOptions(for: playback)
             loadSubtitleTracks(for: playback, engine: engine)

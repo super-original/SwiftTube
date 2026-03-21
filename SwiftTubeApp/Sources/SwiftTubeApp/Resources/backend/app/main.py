@@ -24,6 +24,7 @@ from .parse import (
     extract_comments_token,
     extract_continuation_token,
     extract_related_videos,
+    extract_storyboard,
     extract_video_items,
     extract_watch_metadata,
     parse_streams,
@@ -223,6 +224,7 @@ def _video_info(
 
     watch_metadata = extract_watch_metadata(watch_data)
     related_videos = extract_related_videos(watch_data, current_video_id=video_id)
+    storyboard = extract_storyboard(player_data)
 
     primary_streams = parse_streams(player_data)
     supplemental_streams = [parse_streams(data) for data in supplemental_player_data]
@@ -279,6 +281,7 @@ def _video_info(
             bestStreamUrl=(player_bundle.best_stream or best).url if (player_bundle.best_stream or best) else None,
             bestStream=player_bundle.best_stream or best,
             subtitles=player_bundle.subtitles,
+            storyboard=storyboard,
         )
 
     if not playback_bundle.streams and not player_streams:
@@ -318,6 +321,7 @@ def _video_info(
         bestStreamUrl=resolved_best_stream.url if resolved_best_stream else None,
         bestStream=resolved_best_stream,
         subtitles=resolved_bundle.subtitles,
+        storyboard=storyboard,
     )
 
 

@@ -355,6 +355,7 @@ private struct PlayerStageSurface: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
     @ObservedObject private var settings = AppSettings.shared
     @State private var hoverExitTask: Task<Void, Never>? = nil
+    @FocusState private var isFocused: Bool
     let isLoading: Bool
     let errorMessage: String?
     let immersive: Bool
@@ -440,6 +441,7 @@ private struct PlayerStageSurface: View {
             }
             .focusable()
             .focusEffectDisabled()
+            .focused($isFocused)
             // Lock key fires regardless of keyboard lock state.
             .onKeyPress(characters: .init(charactersIn: "`\\zx")) { press in
                 guard let lockChar = AppSettings.shared.keyboardLockKey.character,
@@ -510,8 +512,12 @@ private struct PlayerStageSurface: View {
                 coordinator.toggleSubtitles()
                 return .handled
             }
+            // Catch-all: absorb every remaining key press so macOS never plays the
+            // system error beep (e.g. for unrecognised keys or when keyboard is locked).
+            .onKeyPress(phases: .down) { _ in .handled }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { isFocused = true }
     }
 
     private static func sidePad(for size: CGSize, aspect: Double) -> CGFloat {
@@ -697,6 +703,19 @@ private struct PlayerChromeOverlay: View {
                     .padding(.horizontal, (edgeToEdge ? 20 : 18) + sidePad)
                     .padding(.bottom, edgeToEdge ? 20 : 18)
             }
+
+            // Scrub-preview thumbnail (hover/drag over timeline).
+            if coordinator.scrubPreviewFraction != nil, coordinator.storyboard != nil {
+                GeometryReader { geo in
+                    ScrubPreviewPositioned(
+                        coordinator: coordinator,
+                        edgeToEdge: edgeToEdge,
+                        sidePad: sidePad,
+                        stageSize: geo.size
+                    )
+                }
+                .allowsHitTesting(false)
+            }
         }
         .opacity(coordinator.controlsVisible ? 1 : 0)
         .allowsHitTesting(coordinator.controlsVisible)
@@ -710,6 +729,7 @@ private struct PlayerControlBar: View {
     @Namespace private var playPauseNamespace
     @State private var isQualityPopoverPresented = false
     @State private var isSubtitlePopoverPresented = false
+    @State private var sliderWidth: CGFloat = 0
 
     private let compactControlHeight: CGFloat = 38
     private let circularButtonLabelSize: CGFloat = 30
@@ -801,10 +821,33 @@ private struct PlayerControlBar: View {
                 in: 0...coordinator.scrubberUpperBound,
                 onEditingChanged: { isEditing in
                     coordinator.setScrubbing(isEditing)
+                    if !isEditing {
+                        coordinator.scrubHoverFraction = nil
+                    }
                 }
             )
             .disabled(coordinator.duration <= 0)
             .accessibilityLabel("Playback position")
+            .overlay(
+                // Transparent hover-tracking layer; measures the slider width and
+                // computes a 0…1 fraction for the scrub-preview thumbnail.
+                GeometryReader { geo in
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onContinuousHover { phase in
+                            switch phase {
+                            case .active(let loc):
+                                guard coordinator.duration > 0 else { return }
+                                sliderWidth = geo.size.width
+                                let trackInset: CGFloat = 10
+                                let trackW = max(1, geo.size.width - trackInset * 2)
+                                coordinator.scrubHoverFraction = max(0, min(1, (loc.x - trackInset) / trackW))
+                            case .ended:
+                                coordinator.scrubHoverFraction = nil
+                            }
+                        }
+                }
+            )
 
             Text(coordinator.remainingTimeText)
                 .frame(width: timeLabelWidth, alignment: .trailing)
@@ -1272,6 +1315,131 @@ private struct RecommendationRow: View {
                 .fill(Color(NSColor.controlBackgroundColor))
         )
         .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Scrub preview thumbnail
+
+/// Positions the scrub-preview popup over the scrubber track inside the stage.
+private struct ScrubPreviewPositioned: View {
+    @ObservedObject var coordinator: PlayerPlaybackCoordinator
+    let edgeToEdge: Bool
+    let sidePad: CGFloat
+    let stageSize: CGSize
+
+    // Must match constants in PlayerControlBar.
+    private let timeLabelWidth: CGFloat = 54
+    private let controlRowHeight: CGFloat = 38
+    private let scrubberRowHeight: CGFloat = 38
+    private let rowSpacing: CGFloat = 10
+
+    var body: some View {
+        if let fraction = coordinator.scrubPreviewFraction,
+           let spec = coordinator.storyboard,
+           coordinator.duration > 0 {
+            let hoverTime = min(fraction * coordinator.duration, coordinator.duration)
+
+            // Compute the horizontal centre of the hovered position on the stage.
+            // Layout: edgePad | controlBarPad(14) | timeLabel(54) | spacing(12) | [track] | …
+            let edgePad = CGFloat(edgeToEdge ? 20 : 18) + sidePad
+            let innerOffset: CGFloat = 14 + timeLabelWidth + 12 + 10   // ~90 pt (includes ~10 pt track inset)
+            let trackLeft = edgePad + innerOffset
+            let trackRight = stageSize.width - edgePad - innerOffset
+            let thumbX = trackLeft + fraction * max(0, trackRight - trackLeft)
+            let tileW = CGFloat(spec.tileWidth)
+            let tileH = CGFloat(spec.tileHeight)
+            let clampedX = min(max(thumbX, tileW / 2 + 8), stageSize.width - tileW / 2 - 8)
+
+            // Vertical position: just above the scrubber row.
+            let bottomPad = CGFloat(edgeToEdge ? 20 : 18)
+            let popupY = stageSize.height - bottomPad - scrubberRowHeight - 10 - tileH / 2
+
+            ScrubPreviewBubble(spec: spec, time: hoverTime)
+                .position(x: clampedX, y: popupY)
+        }
+    }
+}
+
+/// Thumbnail + timestamp label shown above the scrubber during hover/drag.
+private struct ScrubPreviewBubble: View {
+    let spec: StoryboardSpec
+    let time: Double
+
+    var body: some View {
+        VStack(spacing: 5) {
+            ScrubPreviewTile(spec: spec, time: time)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                )
+
+            Text(formatTimestamp(time))
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.black.opacity(0.72)))
+        }
+        .shadow(color: .black.opacity(0.55), radius: 10, y: 4)
+    }
+
+    private func formatTimestamp(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let total = Int(seconds.rounded(.down))
+        let h = total / 3_600
+        let m = (total % 3_600) / 60
+        let s = total % 60
+        if h > 0 { return "\(h):\(String(format: "%02d", m)):\(String(format: "%02d", s))" }
+        return "\(m):\(String(format: "%02d", s))"
+    }
+}
+
+/// Downloads the correct sprite-sheet file and crops the individual tile for the given timestamp.
+private struct ScrubPreviewTile: View {
+    let spec: StoryboardSpec
+    let time: Double
+
+    @State private var tile: CGImage? = nil
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.82)
+            if let tile {
+                Image(decorative: tile, scale: 1)
+                    .resizable()
+                    .frame(width: CGFloat(spec.tileWidth), height: CGFloat(spec.tileHeight))
+            }
+        }
+        .frame(width: CGFloat(spec.tileWidth), height: CGFloat(spec.tileHeight))
+        .task(id: tileTaskID) {
+            await loadTile()
+        }
+    }
+
+    private var tileTaskID: String {
+        guard let info = spec.tileInfo(at: time) else { return "" }
+        return "\(info.url.absoluteString)/\(info.col)/\(info.row)"
+    }
+
+    private func loadTile() async {
+        guard let info = spec.tileInfo(at: time) else { return }
+        do {
+            let decoded = try await ImageCache.shared.loadDecodedImage(from: info.url)
+            guard !Task.isCancelled else { return }
+            let cropRect = CGRect(
+                x: CGFloat(info.col * spec.tileWidth),
+                y: CGFloat(info.row * spec.tileHeight),
+                width: CGFloat(spec.tileWidth),
+                height: CGFloat(spec.tileHeight)
+            )
+            if let cropped = decoded.cgImage.cropping(to: cropRect) {
+                tile = cropped
+            }
+        } catch {
+            // Image unavailable; tile stays dark.
+        }
     }
 }
 

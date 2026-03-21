@@ -74,6 +74,27 @@ struct CommentsResponse: Codable, Sendable {
     let commentCountText: String?
 }
 
+struct StoryboardSpec: Codable, Sendable {
+    let urls: [String]           // one URL per sprite-sheet file (file index = array index)
+    let tileWidth: Int
+    let tileHeight: Int
+    let cols: Int
+    let rows: Int
+    let intervalSeconds: Double
+
+    /// Returns the sprite-sheet URL, column, and row for the tile that covers `seconds`.
+    func tileInfo(at seconds: Double) -> (url: URL, col: Int, row: Int)? {
+        guard intervalSeconds > 0, cols > 0, rows > 0, !urls.isEmpty else { return nil }
+        let frameIndex = Int(seconds / intervalSeconds)
+        let framesPerFile = cols * rows
+        let fileIndex = frameIndex / framesPerFile
+        guard fileIndex < urls.count else { return nil }
+        let posInFile = frameIndex % framesPerFile
+        guard let url = URL(string: urls[fileIndex]) else { return nil }
+        return (url, posInFile % cols, posInFile / cols)
+    }
+}
+
 struct SubtitleTrack: Codable, Hashable, Sendable {
     let language: String
     let label: String
@@ -106,6 +127,7 @@ struct VideoPlayback: Codable, Sendable {
     let bestStreamUrl: String?
     let bestStream: StreamInfo?
     let subtitles: [SubtitleTrack]?
+    let storyboard: StoryboardSpec?
 
     var channelAvatarURL: URL? {
         guard let channelAvatarUrl else { return nil }

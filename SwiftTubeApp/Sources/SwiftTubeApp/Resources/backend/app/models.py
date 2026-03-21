@@ -95,6 +95,7 @@ class VideoPlayback(BaseModel):
     bestStreamUrl: Optional[str] = None
     bestStream: Optional[StreamInfo] = None
     subtitles: List[SubtitleTrack] = Field(default_factory=list)
+    storyboard: Optional["StoryboardSpec"] = None
 
 
 class SearchResponse(BaseModel):
@@ -112,3 +113,13 @@ class AuthStatusResponse(BaseModel):
 
 class BrowserAuthRequest(BaseModel):
     browser: str
+
+
+class StoryboardSpec(BaseModel):
+    """Storyboard sprite-sheet spec for scrub preview thumbnails."""
+    urls: List[str]           # one URL per sprite-sheet file (indexed by file number)
+    tileWidth: int            # width of a single thumbnail tile in pixels
+    tileHeight: int           # height of a single thumbnail tile in pixels
+    cols: int                 # columns of tiles per sprite sheet
+    rows: int                 # rows of tiles per sprite sheet
+    intervalSeconds: float    # seconds between consecutive frames

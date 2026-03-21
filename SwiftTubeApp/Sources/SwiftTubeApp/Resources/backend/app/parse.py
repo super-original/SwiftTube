@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
-from .models import CommentItem, StreamInfo, Thumbnail, VideoItem
+from .models import CommentItem, StoryboardSpec, StreamInfo, Thumbnail, VideoItem
 
 
 def iter_nodes(obj: Any) -> Iterable[Any]:
@@ -738,3 +738,65 @@ def extract_comments(data: Any, limit: int = 8) -> List[CommentItem]:
             break
 
     return comments
+
+
+def extract_storyboard(player_data: Any) -> Optional[StoryboardSpec]:
+    """Parse storyboard spec from InnerTube player response (playerStoryboardSpecRenderer).
+
+    The spec string format after '#' is pipe-separated level entries:
+        count/cols/rows/interval_ms|count/cols/rows/interval_ms|...
+    The URL template contains '$L' (level index) and '$N' (file index).
+    We pick the highest-quality level available and pre-expand the file URLs.
+    """
+    if not isinstance(player_data, dict):
+        return None
+
+    spec_str = (
+        player_data
+        .get("storyboards", {})
+        .get("playerStoryboardSpecRenderer", {})
+        .get("spec")
+    )
+    if not isinstance(spec_str, str) or not spec_str:
+        return None
+
+    url_template, _, levels_str = spec_str.partition("#")
+    if not levels_str:
+        return None
+
+    # Parse all valid levels; last valid entry = highest quality.
+    best: Optional[tuple[int, int, int, int, int]] = None  # (level_idx, count, cols, rows, ms)
+    for i, level in enumerate(levels_str.split("|")):
+        parts = level.split("/")
+        if len(parts) < 4:
+            continue
+        try:
+            count, cols, rows, interval_ms = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+        except (ValueError, IndexError):
+            continue
+        if count > 0 and cols > 0 and rows > 0 and interval_ms > 0:
+            best = (i, count, cols, rows, interval_ms)
+
+    if best is None:
+        return None
+
+    level_idx, count, cols, rows, interval_ms = best
+
+    # Substitute the level into the URL template; keep $N for per-file substitution.
+    level_url = url_template.replace("$L", str(level_idx)).replace("$M", "default")
+
+    # Standard tile sizes for YouTube's storyboard3 format per level.
+    _tile_sizes = [(120, 68), (160, 90), (240, 135)]
+    tile_w, tile_h = _tile_sizes[min(level_idx, len(_tile_sizes) - 1)]
+
+    # Pre-build the full list of sprite-sheet URLs (replace $N with file index).
+    urls = [level_url.replace("$N", str(i)) for i in range(count)]
+
+    return StoryboardSpec(
+        urls=urls,
+        tileWidth=tile_w,
+        tileHeight=tile_h,
+        cols=cols,
+        rows=rows,
+        intervalSeconds=interval_ms / 1000.0,
+    )
