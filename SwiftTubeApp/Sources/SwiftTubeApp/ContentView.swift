@@ -35,6 +35,8 @@ struct ContentView: View {
                 }
             }
 
+            ToolbarSpacer(.fixed, placement: .navigation)
+
             ToolbarItemGroup(placement: .navigation) {
                 Button(action: navigation.goBack) {
                     Label("Back", systemImage: "chevron.left")
@@ -73,7 +75,6 @@ struct ContentView: View {
                 BackendToolbarStatus(state: backend.state)
             }
         }
-        .background(ToolbarSpaceInjector())
         .task(id: backend.state) {
             if backend.isRunning {
                 await authSession.loadStatus()
@@ -644,49 +645,5 @@ private struct PlaceholderCard: View {
                 .fill(Color(NSColor.controlBackgroundColor))
         )
         .redacted(reason: .placeholder)
-    }
-}
-
-/// Injects an NSToolbar `.space` item after the first toolbar item
-/// to force Liquid Glass pill separation between the brand and nav arrows.
-private struct ToolbarSpaceInjector: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = SpaceInjectorView()
-        view.setFrameSize(.zero)
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
-
-    final class SpaceInjectorView: NSView {
-        private var observer: Any?
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            injectSpace()
-            // Re-inject whenever the toolbar updates its items
-            observer = NotificationCenter.default.addObserver(
-                forName: NSWindow.didUpdateNotification,
-                object: window,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.injectSpace()
-                }
-            }
-        }
-
-        override func removeFromSuperview() {
-            if let observer { NotificationCenter.default.removeObserver(observer) }
-            super.removeFromSuperview()
-        }
-
-        private func injectSpace() {
-            guard let toolbar = window?.toolbar else { return }
-            let ids = toolbar.items.map(\.itemIdentifier)
-            // Only inject if there isn't already a space at position 1
-            guard ids.count >= 2, ids[1] != .space else { return }
-            toolbar.insertItem(withItemIdentifier: .space, at: 1)
-        }
     }
 }
