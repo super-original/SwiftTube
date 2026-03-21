@@ -51,6 +51,8 @@ struct ContentView: View {
                 .disabled(!navigation.canGoForward)
             }
 
+            ToolbarSpacer(.flexible)
+
             ToolbarItem(id: "search", placement: .principal) {
                 ToolbarSearchField(
                     text: $searchViewModel.query,
