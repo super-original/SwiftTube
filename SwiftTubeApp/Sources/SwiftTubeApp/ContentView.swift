@@ -21,39 +21,38 @@ struct ContentView: View {
             AuthConnectionSheet()
                 .environmentObject(authSession)
         }
-        .toolbar(id: "main") {
-            ToolbarItem(id: "brand") {
-                Button {
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Menu {
+                    Button("Refresh Feed", systemImage: "arrow.clockwise") {
+                        viewModel.reload()
+                    }
+                } label: {
+                    BrandToolbarLabel()
+                } primaryAction: {
                     searchViewModel.clear()
                     if case .home = navigation.currentRoute {
                         viewModel.reload()
                     } else {
                         navigation.showHome()
                     }
-                } label: {
-                    BrandToolbarLabel()
                 }
+                .menuIndicator(.hidden)
             }
 
-            ToolbarSpacer(.fixed)
-
-            ToolbarItem(id: "back") {
+            ToolbarItemGroup(placement: .navigation) {
                 Button(action: navigation.goBack) {
                     Label("Back", systemImage: "chevron.left")
                 }
                 .disabled(!navigation.canGoBack)
-            }
 
-            ToolbarItem(id: "forward") {
                 Button(action: navigation.goForward) {
                     Label("Forward", systemImage: "chevron.right")
                 }
                 .disabled(!navigation.canGoForward)
             }
 
-            ToolbarSpacer(.flexible)
-
-            ToolbarItem(id: "search", placement: .principal) {
+            ToolbarItem(placement: .principal) {
                 ToolbarSearchField(
                     text: $searchViewModel.query,
                     placeholder: "Search or paste YouTube URL",
@@ -63,23 +62,19 @@ struct ContentView: View {
                 .frame(minWidth: 300, maxWidth: 540)
             }
 
-            ToolbarItem(id: "auth", placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     authSession.isSheetPresented = true
                 } label: {
                     AuthToolbarLabel(status: authSession.status)
                 }
                 .disabled(!backend.isRunning)
-            }
 
-            ToolbarItem(id: "refresh", placement: .primaryAction) {
                 Button(action: viewModel.reload) {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(!backend.isRunning)
-            }
 
-            ToolbarItem(id: "status", placement: .primaryAction) {
                 BackendToolbarStatus(state: backend.state)
             }
         }
