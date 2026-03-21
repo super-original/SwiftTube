@@ -815,30 +815,33 @@ private struct PlayerControlBar: View {
             Text(coordinator.currentTimeText)
                 .frame(width: timeLabelWidth, alignment: .leading)
 
-            Slider(
-                value: Binding(
-                    get: { coordinator.scrubPosition },
-                    set: { coordinator.updateScrubPosition($0) }
-                ),
-                in: 0...coordinator.scrubberUpperBound,
-                onEditingChanged: { isEditing in
-                    coordinator.setScrubbing(isEditing)
-                    if !isEditing {
-                        coordinator.scrubHoverFraction = nil
+            // Wrap in ZStack so onContinuousHover sits on the *container*, not the
+            // Slider itself — AppKit's NSSlider modal drag loop suppresses mouseMoved
+            // events when applied directly, so the container approach is reliable
+            // for both passive hover and active drag.
+            ZStack {
+                Slider(
+                    value: Binding(
+                        get: { coordinator.scrubPosition },
+                        set: { coordinator.updateScrubPosition($0) }
+                    ),
+                    in: 0...coordinator.scrubberUpperBound,
+                    onEditingChanged: { isEditing in
+                        coordinator.setScrubbing(isEditing)
+                        if !isEditing { coordinator.scrubHoverFraction = nil }
                     }
-                }
-            )
-            .disabled(coordinator.duration <= 0)
-            .accessibilityLabel("Playback position")
-            // Measure the slider's rendered width so ScrubPreviewPositioned can
-            // compute the exact horizontal position of the thumbnail.
+                )
+                .disabled(coordinator.duration <= 0)
+                .accessibilityLabel("Playback position")
+            }
+            // Measure the ZStack width (= Slider width) without affecting layout.
             .background(
                 GeometryReader { geo in
-                    Color.clear.onAppear { sliderWidth = geo.size.width }
+                    Color.clear
+                        .onAppear { sliderWidth = geo.size.width }
                         .onChange(of: geo.size.width) { _, w in sliderWidth = w }
                 }
             )
-            // Track hover directly on the Slider so it never blocks clicks/drags.
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let loc):

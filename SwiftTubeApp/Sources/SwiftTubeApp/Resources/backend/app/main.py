@@ -48,13 +48,23 @@ app.add_middleware(
 
 public_client_web = InnerTube("WEB")
 public_client_player = InnerTube("WEB_PARENT_TOOLS")
+# Separate WEB client used exclusively for /player requests (storyboard data).
+# Must be a distinct instance from public_client_web to allow concurrent calls.
+public_client_web_player = InnerTube("WEB")
 auth_manager = BrowserAuthManager()
 
 
-def _build_clients(use_auth: bool) -> tuple[InnerTube, InnerTube]:
+def _build_clients(use_auth: bool) -> tuple[InnerTube, InnerTube, InnerTube]:
+    """Return (web_client, player_client, web_player_client).
+    web_player_client is a WEB client used solely for /player to get storyboard data.
+    """
     if use_auth and auth_manager.is_authenticated:
-        return auth_manager.build_client("WEB"), auth_manager.build_client("WEB_PARENT_TOOLS")
-    return public_client_web, public_client_player
+        return (
+            auth_manager.build_client("WEB"),
+            auth_manager.build_client("WEB_PARENT_TOOLS"),
+            auth_manager.build_client("WEB"),
+        )
+    return public_client_web, public_client_player, public_client_web_player
 
 
 def _load_recommendations(
@@ -185,15 +195,22 @@ def _video_info(
     video_id: str,
     client_web: InnerTube,
     client_player: InnerTube,
+    client_web_player: Optional[InnerTube] = None,
     playback_auth: Optional[dict] = None,
     supplemental_player_clients: Optional[list[InnerTube]] = None,
 ) -> VideoPlayback:
     supplemental_player_clients = supplemental_player_clients or []
 
-    with ThreadPoolExecutor(max_workers=3 + len(supplemental_player_clients)) as executor:
+    # +1 slot for the WEB /player call that carries storyboard data.
+    max_workers = 4 + len(supplemental_player_clients)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         watch_future = executor.submit(client_web.next, video_id=video_id)
         playback_future = executor.submit(extract_playback, video_id, playback_auth)
         player_future = executor.submit(client_player.player, video_id)
+        # WEB client /player response reliably contains playerStoryboardSpecRenderer.
+        web_player_future = executor.submit(
+            (client_web_player or client_web).player, video_id
+        )
         supplemental_player_futures = [
             executor.submit(client.player, video_id) for client in supplemental_player_clients
         ]
@@ -215,6 +232,12 @@ def _video_info(
         except RequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+        web_player_data: dict = {}
+        try:
+            web_player_data = web_player_future.result() or {}
+        except Exception:
+            pass
+
         supplemental_player_data = []
         for future in supplemental_player_futures:
             try:
@@ -224,7 +247,8 @@ def _video_info(
 
     watch_metadata = extract_watch_metadata(watch_data)
     related_videos = extract_related_videos(watch_data, current_video_id=video_id)
-    storyboard = extract_storyboard(player_data)
+    # WEB client response is the authoritative source for storyboard spec.
+    storyboard = extract_storyboard(web_player_data) or extract_storyboard(player_data)
 
     primary_streams = parse_streams(player_data)
     supplemental_streams = [parse_streams(data) for data in supplemental_player_data]
@@ -347,19 +371,25 @@ def _comments_info(video_id: str, client_web: InnerTube) -> CommentsResponse:
 def video_info(video_id: str) -> VideoPlayback:
     using_auth = auth_manager.is_authenticated
     if using_auth:
-        client_web, client_player = _build_clients(use_auth=True)
+        client_web, client_player, client_web_player = _build_clients(use_auth=True)
         try:
             return _video_info(
                 video_id,
                 client_web,
                 client_player,
-                auth_manager.playback_options(),
+                client_web_player=client_web_player,
+                playback_auth=auth_manager.playback_options(),
                 supplemental_player_clients=[auth_manager.build_client("MWEB")],
             )
         except RequestError:
             auth_manager.clear()
 
-    return _video_info(video_id, public_client_web, public_client_player)
+    return _video_info(
+        video_id,
+        public_client_web,
+        public_client_player,
+        client_web_player=public_client_web_player,
+    )
 
 
 @app.get("/video/{video_id}/comments", response_model=CommentsResponse)

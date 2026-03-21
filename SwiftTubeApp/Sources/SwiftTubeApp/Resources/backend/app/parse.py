@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -741,12 +742,26 @@ def extract_comments(data: Any, limit: int = 8) -> List[CommentItem]:
 
 
 def extract_storyboard(player_data: Any) -> Optional[StoryboardSpec]:
-    """Parse storyboard spec from InnerTube player response (playerStoryboardSpecRenderer).
+    """Parse storyboard spec from InnerTube playerStoryboardSpecRenderer.
 
-    The spec string format after '#' is pipe-separated level entries:
-        count/cols/rows/interval_ms|count/cols/rows/interval_ms|...
-    The URL template contains '$L' (level index) and '$N' (file index).
-    We pick the highest-quality level available and pre-expand the file URLs.
+    The spec string format (confirmed from yt-dlp source + real player responses):
+        BASE_URL|L0_PARAMS|L1_PARAMS|L2_PARAMS
+
+    BASE_URL contains '$L' (level index) and '$N' (replaced by the level's name
+    template, which itself may contain '$M' for the sprite-sheet file index).
+
+    Each level's PARAMS is '#'-separated with exactly 8 fields:
+        width # height # frame_count # cols # rows # interval_ms # name_template # sigh
+
+    - width/height: pixel dimensions of a single thumbnail tile
+    - frame_count:  total thumbnail frames across all sprite-sheet files
+    - cols/rows:    grid layout of thumbnails within each sprite sheet
+    - interval_ms:  milliseconds between consecutive frames (0 for L0 = static strip)
+    - name_template: replaces $N in BASE_URL; may itself contain $M for file index
+                     (e.g. "M$M" → M0, M1, …)  or be a fixed string (e.g. "default")
+    - sigh:         URL signature appended as &sigh=…
+
+    We select the highest-quality level that has interval_ms > 0.
     """
     if not isinstance(player_data, dict):
         return None
@@ -760,37 +775,53 @@ def extract_storyboard(player_data: Any) -> Optional[StoryboardSpec]:
     if not isinstance(spec_str, str) or not spec_str:
         return None
 
-    url_template, _, levels_str = spec_str.partition("#")
-    if not levels_str:
+    parts = spec_str.split("|")
+    if len(parts) < 2:
         return None
 
-    # Parse all valid levels; last valid entry = highest quality.
-    best: Optional[tuple[int, int, int, int, int]] = None  # (level_idx, count, cols, rows, ms)
-    for i, level in enumerate(levels_str.split("|")):
-        parts = level.split("/")
-        if len(parts) < 4:
+    base_url = parts[0]
+    level_specs = parts[1:]  # index 0 = L0 (lowest quality), last = highest
+
+    # Walk levels; keep the last valid one (highest quality).
+    best = None
+    for level_idx, level_str in enumerate(level_specs):
+        fields = level_str.split("#")
+        if len(fields) < 8:
             continue
         try:
-            count, cols, rows, interval_ms = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+            tile_w = int(fields[0])
+            tile_h = int(fields[1])
+            frame_count = int(fields[2])
+            cols = int(fields[3])
+            rows = int(fields[4])
+            interval_ms = int(fields[5])
         except (ValueError, IndexError):
             continue
-        if count > 0 and cols > 0 and rows > 0 and interval_ms > 0:
-            best = (i, count, cols, rows, interval_ms)
+        if tile_w <= 0 or tile_h <= 0 or frame_count <= 0 or cols <= 0 or rows <= 0:
+            continue
+        if interval_ms <= 0:
+            continue  # L0 often has interval=0 (static overview strip, not time-correlated)
+        name_template = fields[6]
+        sigh = fields[7]
+        best = (level_idx, tile_w, tile_h, frame_count, cols, rows, interval_ms, name_template, sigh)
 
     if best is None:
         return None
 
-    level_idx, count, cols, rows, interval_ms = best
+    level_idx, tile_w, tile_h, frame_count, cols, rows, interval_ms, name_template, sigh = best
 
-    # Substitute the level into the URL template; keep $N for per-file substitution.
-    level_url = url_template.replace("$L", str(level_idx)).replace("$M", "default")
+    # Number of sprite-sheet files for this level.
+    frames_per_file = cols * rows
+    file_count = math.ceil(frame_count / frames_per_file)
 
-    # Standard tile sizes for YouTube's storyboard3 format per level.
-    _tile_sizes = [(120, 68), (160, 90), (240, 135)]
-    tile_w, tile_h = _tile_sizes[min(level_idx, len(_tile_sizes) - 1)]
-
-    # Pre-build the full list of sprite-sheet URLs (replace $N with file index).
-    urls = [level_url.replace("$N", str(i)) for i in range(count)]
+    # Build per-file URLs:
+    #   1. $L  → numeric level index
+    #   2. $N  → name_template (e.g. "M$M")
+    #   3. $M  → file index (0, 1, 2, …)
+    #   4. append &sigh=… signature
+    url_base = base_url.replace("$L", str(level_idx)).replace("$N", name_template)
+    sigh_suffix = f"&sigh={sigh}" if sigh else ""
+    urls = [url_base.replace("$M", str(j)) + sigh_suffix for j in range(file_count)]
 
     return StoryboardSpec(
         urls=urls,
