@@ -22,7 +22,7 @@ struct ContentView: View {
                 .environmentObject(authSession)
         }
         .toolbar(id: "main") {
-            ToolbarItem(id: "brand", placement: .navigation) {
+            ToolbarItem(id: "brand") {
                 Button {
                     searchViewModel.clear()
                     if case .home = navigation.currentRoute {
@@ -33,19 +33,18 @@ struct ContentView: View {
                 } label: {
                     BrandToolbarLabel()
                 }
-                .buttonStyle(.plain)
             }
 
             ToolbarSpacer(.fixed)
 
-            ToolbarItem(id: "back", placement: .navigation) {
+            ToolbarItem(id: "back") {
                 Button(action: navigation.goBack) {
                     Label("Back", systemImage: "chevron.left")
                 }
                 .disabled(!navigation.canGoBack)
             }
 
-            ToolbarItem(id: "forward", placement: .navigation) {
+            ToolbarItem(id: "forward") {
                 Button(action: navigation.goForward) {
                     Label("Forward", systemImage: "chevron.right")
                 }
@@ -312,10 +311,6 @@ private struct BrandToolbarLabel: View {
             Text("SwiftTube")
                 .font(.headline)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .foregroundStyle(.primary)
-        .contentShape(Capsule())
     }
 }
 
