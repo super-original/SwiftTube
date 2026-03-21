@@ -34,6 +34,7 @@ struct ContentView: View {
                     BrandToolbarLabel()
                 }
                 .buttonStyle(.glass)
+                .controlSize(.regular)
             }
             .sharedBackgroundVisibility(.hidden)
 
