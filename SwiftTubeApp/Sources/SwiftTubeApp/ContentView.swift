@@ -23,6 +23,20 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
+                Button {
+                    searchViewModel.clear()
+                    if case .home = navigation.currentRoute {
+                        viewModel.reload()
+                    } else {
+                        navigation.showHome()
+                    }
+                } label: {
+                    BrandToolbarLabel()
+                }
+                .buttonStyle(.plain)
+
+                Divider()
+
                 Button(action: navigation.goBack) {
                     Label("Back", systemImage: "chevron.left")
                 }
@@ -32,14 +46,6 @@ struct ContentView: View {
                     Label("Forward", systemImage: "chevron.right")
                 }
                 .disabled(!navigation.canGoForward)
-
-                Button {
-                    searchViewModel.clear()
-                    navigation.showHome()
-                } label: {
-                    BrandToolbarLabel()
-                }
-                .buttonStyle(.plain)
             }
 
             ToolbarItem(placement: .principal) {
@@ -49,7 +55,7 @@ struct ContentView: View {
                     onSubmit: { searchViewModel.submit(navigation: navigation) },
                     onClear: { searchViewModel.clear() }
                 )
-                .frame(minWidth: 260, maxWidth: 480)
+                .frame(minWidth: 300, maxWidth: 540)
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
@@ -512,7 +518,10 @@ private struct ToolbarSearchField: NSViewRepresentable {
         field.bezelStyle = .roundedBezel
         field.controlSize = .regular
         field.font = .systemFont(ofSize: NSFont.systemFontSize(for: .regular))
-        field.translatesAutoresizingMaskIntoConstraints = false
+        field.usesSingleLineMode = true
+        field.cell?.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return field
     }
@@ -552,9 +561,15 @@ private struct ToolbarSearchField: NSViewRepresentable {
                 return true
             }
             if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-                parent.text = ""
-                (control as? NSSearchField)?.stringValue = ""
-                parent.onClear()
+                if control.stringValue.isEmpty {
+                    // Empty field: just deselect
+                    control.window?.makeFirstResponder(nil)
+                } else {
+                    // Has text: clear it and the search results
+                    parent.text = ""
+                    (control as? NSSearchField)?.stringValue = ""
+                    parent.onClear()
+                }
                 return true
             }
             return false
