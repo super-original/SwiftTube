@@ -33,10 +33,10 @@ struct ContentView: View {
                 } label: {
                     BrandToolbarLabel()
                 }
-                .buttonStyle(.glass)
-                .controlSize(.regular)
+                .buttonStyle(.plain)
             }
-            .sharedBackgroundVisibility(.hidden)
+
+            ToolbarSpacer(.fixed)
 
             ToolbarItemGroup(placement: .navigation) {
                 Button(action: navigation.goBack) {
@@ -306,6 +306,10 @@ private struct BrandToolbarLabel: View {
             Text("SwiftTube")
                 .font(.headline)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .foregroundStyle(.primary)
+        .contentShape(Capsule())
     }
 }
 
