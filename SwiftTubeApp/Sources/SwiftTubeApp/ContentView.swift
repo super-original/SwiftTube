@@ -36,7 +36,7 @@ struct ContentView: View {
                 .buttonStyle(.plain)
             }
 
-            ToolbarSpacer(.fixed)
+            ToolbarSpacer(.fixed, placement: .navigation)
 
             ToolbarItemGroup(placement: .navigation) {
                 Button(action: navigation.goBack) {
