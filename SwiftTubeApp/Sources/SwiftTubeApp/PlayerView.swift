@@ -373,6 +373,13 @@ private struct PlayerStageSurface: View {
                     MPVMetalRenderView(engine: engine, onLayoutChange: {})
                 }
 
+                // During scrubbing, cover the video with a storyboard tile scaled to
+                // fill — same image data the hover popup uses, already cached, instant.
+                if coordinator.isScrubbing, let spec = coordinator.storyboard {
+                    ScrubVideoOverlay(spec: spec, time: coordinator.scrubPosition)
+                        .allowsHitTesting(false)
+                }
+
                 if coordinator.shouldShowPlaybackErrorOverlay,
                    let errorMessage {
                     PlayerStageErrorOverlay(message: errorMessage, retry: retry)
@@ -1327,6 +1334,53 @@ private struct RecommendationRow: View {
 }
 
 // MARK: - Scrub preview thumbnail
+
+/// Full-player storyboard overlay shown while dragging the scrubber.
+/// Covers the paused video with the low-res storyboard tile scaled to fill —
+/// uses the same ImageCache as the hover popup so tiles are already cached.
+private struct ScrubVideoOverlay: View {
+    let spec: StoryboardSpec
+    let time: Double
+
+    @State private var tile: CGImage? = nil
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let tile {
+                Image(decorative: tile, scale: 1)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: tileTaskID) {
+            await loadTile()
+        }
+    }
+
+    private var tileTaskID: String {
+        guard let info = spec.tileInfo(at: time) else { return "" }
+        return "\(info.url.absoluteString)/\(info.col)/\(info.row)"
+    }
+
+    private func loadTile() async {
+        guard let info = spec.tileInfo(at: time) else { return }
+        do {
+            let decoded = try await ImageCache.shared.loadDecodedImage(from: info.url)
+            guard !Task.isCancelled else { return }
+            let cropRect = CGRect(
+                x: CGFloat(info.col * spec.tileWidth),
+                y: CGFloat(info.row * spec.tileHeight),
+                width: CGFloat(spec.tileWidth),
+                height: CGFloat(spec.tileHeight)
+            )
+            if let cropped = decoded.cgImage.cropping(to: cropRect) {
+                tile = cropped
+            }
+        } catch {}
+    }
+}
 
 /// Positions the scrub-preview popup over the scrubber track inside the stage.
 private struct ScrubPreviewPositioned: View {

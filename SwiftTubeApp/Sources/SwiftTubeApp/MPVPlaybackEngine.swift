@@ -84,13 +84,6 @@ final class MPVPlaybackEngine: NSObject {
         }
     }
 
-    /// Fast keyframe seek for interactive scrubbing. Non-blocking; snaps to the nearest
-    /// keyframe so mpv can respond immediately. Call `seek(to:)` on drag-end for accuracy.
-    func fastSeek(to seconds: Double) {
-        guard mpv != nil, didLoadFile else { return }
-        try? command(["seek", String(max(seconds, 0)), "absolute", "keyframes"])
-    }
-
     func seek(to seconds: Double) async {
         currentTime = max(seconds, 0)
         do {
