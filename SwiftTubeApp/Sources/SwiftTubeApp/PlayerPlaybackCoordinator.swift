@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import SwiftUI
 
 struct ManualPlaybackSelection: Hashable, Sendable {
@@ -360,21 +359,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var lastInteractionAt = Date()
     private var lastPointerMovementAt = Date.distantPast
 
-    // Toolbar hiding via NSWindow
-    private var toolbarIsHidden = false
-    private var toolbarRevealTask: Task<Void, Never>? = nil
-    private var mouseMoveMonitor: Any? = nil
     private var scrollMonitor: Any? = nil
-    private var settingsCancellable: AnyCancellable? = nil
-    private var savedWindowBackgroundColor: NSColor? = nil
 
     init(layoutState: PlayerLayoutState = PlayerLayoutState()) {
         self.layoutState = layoutState
         super.init()
-        settingsCancellable = AppSettings.shared.$hideTopBarInImmersiveMode
-            .dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.applyImmersiveToolbarState() }
     }
 
     var playbackBadgeText: String {
@@ -527,7 +516,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         scrubHoverFraction = nil
         lastInteractionAt = Date()
         lastPointerMovementAt = .distantPast
-        restoreToolbarIfNeeded()
         scheduleMPVStop(mpvEngine, pauseFirst: true)
         mpvEngine = nil
     }
@@ -558,7 +546,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         self.window = window
         layoutState.isFullscreen = window?.styleMask.contains(.fullScreen) == true
         installScrollMonitor()
-        applyImmersiveToolbarState()
 
         if let window {
             NotificationCenter.default.addObserver(
@@ -699,7 +686,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             layoutState.isTheaterMode.toggle()
         }
         noteInteraction()
-        applyImmersiveToolbarState()
     }
 
     func toggleFullscreen() {
@@ -1307,92 +1293,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             return "\(hours):\(String(format: "%02d", minutes)):\(String(format: "%02d", remainder))"
         }
         return "\(minutes):\(String(format: "%02d", remainder))"
-    }
-
-    // MARK: - Toolbar hiding (NSWindow)
-
-    func applyImmersiveToolbarState() {
-        // Only manage the toolbar for theater mode — fullscreen has native macOS
-        // toolbar auto-hide behaviour and we must not interfere with it.
-        let shouldHide = layoutState.isTheaterMode
-                         && !layoutState.isFullscreen
-                         && AppSettings.shared.hideTopBarInImmersiveMode
-        if shouldHide {
-            hideWindowToolbar()
-        } else {
-            restoreToolbarIfNeeded()
-        }
-    }
-
-    private func hideWindowToolbar() {
-        guard let window, !toolbarIsHidden else { return }
-        toolbarIsHidden = true
-        savedWindowBackgroundColor = window.backgroundColor
-        // Make the transparent title bar area appear black so it blends with the video.
-        window.backgroundColor = .black
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.toolbar?.isVisible = false
-        for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            window.standardWindowButton(b)?.alphaValue = 0
-        }
-        installMouseMoveMonitor()
-    }
-
-    private func restoreToolbarIfNeeded() {
-        guard toolbarIsHidden else { return }
-        toolbarIsHidden = false
-        toolbarRevealTask?.cancel()
-        toolbarRevealTask = nil
-        uninstallMouseMoveMonitor()
-        if let saved = savedWindowBackgroundColor {
-            window?.backgroundColor = saved
-            savedWindowBackgroundColor = nil
-        }
-        window?.titlebarAppearsTransparent = false
-        window?.titleVisibility = .visible
-        window?.toolbar?.isVisible = true
-        for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            window?.standardWindowButton(b)?.alphaValue = 1
-        }
-    }
-
-    private func installMouseMoveMonitor() {
-        guard mouseMoveMonitor == nil else { return }
-        mouseMoveMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
-            self?.handleMouseMoveForToolbar(event)
-            return event
-        }
-    }
-
-    private func uninstallMouseMoveMonitor() {
-        if let m = mouseMoveMonitor { NSEvent.removeMonitor(m); mouseMoveMonitor = nil }
-    }
-
-    private func handleMouseMoveForToolbar(_ event: NSEvent) {
-        guard let window, toolbarIsHidden, event.window === window else { return }
-        let nearTop = event.locationInWindow.y >= window.frame.height - 56
-        if nearTop {
-            toolbarRevealTask?.cancel()
-            toolbarRevealTask = nil
-            window.titlebarAppearsTransparent = false
-            window.toolbar?.isVisible = true
-            for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-                window.standardWindowButton(b)?.alphaValue = 1
-            }
-        } else if window.toolbar?.isVisible == true {
-            guard toolbarRevealTask == nil else { return }
-            toolbarRevealTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                guard !Task.isCancelled, let self, self.toolbarIsHidden else { return }
-                self.window?.titlebarAppearsTransparent = true
-                self.window?.toolbar?.isVisible = false
-                for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-                    self.window?.standardWindowButton(b)?.alphaValue = 0
-                }
-                self.toolbarRevealTask = nil
-            }
-        }
     }
 
     // MARK: - Scroll forwarding (NSEvent)

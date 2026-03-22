@@ -7,13 +7,9 @@ struct SettingsView: View {
                 .tabItem { Label("Playback", systemImage: "play.circle") }
                 .tag(0)
 
-            PlayerTab()
-                .tabItem { Label("Player", systemImage: "tv") }
-                .tag(1)
-
             ControlsTab()
                 .tabItem { Label("Controls", systemImage: "keyboard") }
-                .tag(2)
+                .tag(1)
         }
         .frame(width: 480)
         .fixedSize(horizontal: true, vertical: false)
@@ -45,25 +41,6 @@ private struct PlaybackTab: View {
     }
 }
 
-// MARK: - Player Tab
-
-private struct PlayerTab: View {
-    @ObservedObject private var settings = AppSettings.shared
-
-    var body: some View {
-        Form {
-            Section("Theater & Fullscreen") {
-                Toggle("Auto-hide toolbar", isOn: $settings.hideTopBarInImmersiveMode)
-
-                Text("Hides the window toolbar in theater mode. Move the cursor to the top of the window to reveal it.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .padding()
-    }
-}
 
 // MARK: - Controls Tab
 

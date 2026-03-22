@@ -1334,9 +1334,9 @@ private struct ScrubPreviewPositioned: View {
 
     // Must match constants in PlayerControlBar.
     private let timeLabelWidth: CGFloat = 54
-    private let controlRowHeight: CGFloat = 38
     private let scrubberRowHeight: CGFloat = 38
-    private let rowSpacing: CGFloat = 10
+    // Fixed display width for the preview tile; height is derived from the tile's aspect ratio.
+    private let previewDisplayWidth: CGFloat = 120
 
     var body: some View {
         if let fraction = coordinator.scrubPreviewFraction,
@@ -1344,22 +1344,26 @@ private struct ScrubPreviewPositioned: View {
            coordinator.duration > 0 {
             let hoverTime = min(fraction * coordinator.duration, coordinator.duration)
 
-            // Compute the horizontal centre of the hovered position on the stage.
+            // Tile display dimensions (independent of raw storyboard pixel size).
+            let dispW = previewDisplayWidth
+            let dispH = spec.tileWidth > 0
+                ? previewDisplayWidth * CGFloat(spec.tileHeight) / CGFloat(spec.tileWidth)
+                : previewDisplayWidth * 9 / 16
+
+            // Horizontal centre of the hovered position on stage.
             // Layout: edgePad | controlBarPad(14) | timeLabel(54) | spacing(12) | [track] | …
             let edgePad = CGFloat(edgeToEdge ? 20 : 18) + sidePad
-            let innerOffset: CGFloat = 14 + timeLabelWidth + 12 + 10   // ~90 pt (includes ~10 pt track inset)
+            let innerOffset: CGFloat = 14 + timeLabelWidth + 12 + 10   // ~90 pt (includes track inset)
             let trackLeft = edgePad + innerOffset
             let trackRight = stageSize.width - edgePad - innerOffset
             let thumbX = trackLeft + fraction * max(0, trackRight - trackLeft)
-            let tileW = CGFloat(spec.tileWidth)
-            let tileH = CGFloat(spec.tileHeight)
-            let clampedX = min(max(thumbX, tileW / 2 + 8), stageSize.width - tileW / 2 - 8)
+            let clampedX = min(max(thumbX, dispW / 2 + 8), stageSize.width - dispW / 2 - 8)
 
-            // Vertical position: just above the scrubber row.
+            // Vertical: just above the scrubber row.
             let bottomPad = CGFloat(edgeToEdge ? 20 : 18)
-            let popupY = stageSize.height - bottomPad - scrubberRowHeight - 10 - tileH / 2
+            let popupY = stageSize.height - bottomPad - scrubberRowHeight - 10 - dispH / 2
 
-            ScrubPreviewBubble(spec: spec, time: hoverTime)
+            ScrubPreviewBubble(spec: spec, time: hoverTime, displayWidth: dispW, displayHeight: dispH)
                 .position(x: clampedX, y: popupY)
         }
     }
@@ -1369,13 +1373,15 @@ private struct ScrubPreviewPositioned: View {
 private struct ScrubPreviewBubble: View {
     let spec: StoryboardSpec
     let time: Double
+    let displayWidth: CGFloat
+    let displayHeight: CGFloat
 
     var body: some View {
         VStack(spacing: 5) {
-            ScrubPreviewTile(spec: spec, time: time)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+            ScrubPreviewTile(spec: spec, time: time, displayWidth: displayWidth, displayHeight: displayHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: 10)
                         .stroke(Color.white.opacity(0.25), lineWidth: 1)
                 )
 
@@ -1405,6 +1411,8 @@ private struct ScrubPreviewBubble: View {
 private struct ScrubPreviewTile: View {
     let spec: StoryboardSpec
     let time: Double
+    let displayWidth: CGFloat
+    let displayHeight: CGFloat
 
     @State private var tile: CGImage? = nil
 
@@ -1414,10 +1422,10 @@ private struct ScrubPreviewTile: View {
             if let tile {
                 Image(decorative: tile, scale: 1)
                     .resizable()
-                    .frame(width: CGFloat(spec.tileWidth), height: CGFloat(spec.tileHeight))
+                    .frame(width: displayWidth, height: displayHeight)
             }
         }
-        .frame(width: CGFloat(spec.tileWidth), height: CGFloat(spec.tileHeight))
+        .frame(width: displayWidth, height: displayHeight)
         .task(id: tileTaskID) {
             await loadTile()
         }

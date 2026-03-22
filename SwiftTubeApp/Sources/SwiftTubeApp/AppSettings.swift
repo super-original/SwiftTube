@@ -5,12 +5,6 @@ final class AppSettings: ObservableObject {
 
     private let defaults = UserDefaults.standard
 
-    // MARK: - Player
-
-    @Published var hideTopBarInImmersiveMode: Bool {
-        didSet { defaults.set(hideTopBarInImmersiveMode, forKey: "hideTopBarInImmersiveMode") }
-    }
-
     // MARK: - Playback
 
     @Published var defaultQuality: DefaultQuality {
@@ -65,7 +59,6 @@ final class AppSettings: ObservableObject {
     // MARK: - Init
 
     init() {
-        self.hideTopBarInImmersiveMode = defaults.bool(forKey: "hideTopBarInImmersiveMode")
         self.defaultQuality = DefaultQuality(rawValue: defaults.string(forKey: "defaultQuality") ?? "") ?? .auto
         let arrow = defaults.integer(forKey: "arrowSeekSeconds")
         self.arrowSeekSeconds = arrow > 0 ? arrow : 5
