@@ -347,6 +347,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private let layoutState: PlayerLayoutState
     private var lastNonZeroVolume = 0.9
     private var isScrubbing = false
+    private var wasPlayingBeforeScrub = false
     private var isMenuInteractionActive = false
     private var isHoveringStage = false
     private var currentPlayback: VideoPlayback? = nil
@@ -515,6 +516,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         videoAspect = 16.0 / 9.0
         storyboard = nil
         scrubHoverFraction = nil
+        wasPlayingBeforeScrub = false
         lastInteractionAt = Date()
         lastPointerMovementAt = .distantPast
         lastScrubSeekAt = .distantPast
@@ -596,6 +598,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         if isEditing {
             scrubPosition = currentTime
             stopHideMonitor()
+            // Pause the video so fast seeks show a held frame rather than
+            // briefly playing from each keyframe before the next seek arrives.
+            wasPlayingBeforeScrub = isPlaying
+            if isPlaying {
+                mpvEngine?.pause()
+                isPlaying = false
+            }
             return
         }
 
@@ -1065,10 +1074,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func seekToScrubPosition() {
+        let shouldResume = wasPlayingBeforeScrub
         Task { [weak self] in
             guard let self, let mpvEngine else { return }
             let target = min(scrubPosition, scrubberUpperBound)
             await mpvEngine.seek(to: target)
+            // Restore play state that was saved when scrubbing began.
+            if shouldResume {
+                mpvEngine.play()
+                isPlaying = true
+            }
             syncMPVState(using: mpvEngine)
             currentTime = target
             scrubPosition = target
