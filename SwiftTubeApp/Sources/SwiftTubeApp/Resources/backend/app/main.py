@@ -123,7 +123,7 @@ def recommendations(
 ) -> RecommendationsResponse:
     note: Optional[str] = None
     using_auth = auth_manager.is_authenticated
-    client_web, _ = _build_clients(use_auth=using_auth)
+    client_web, _, _wpc = _build_clients(use_auth=using_auth)
 
     try:
         items, token = _load_recommendations(client_web, continuation)
@@ -167,7 +167,7 @@ def search(
     continuation: Optional[str] = Query(default=None, min_length=1),
 ) -> SearchResponse:
     using_auth = auth_manager.is_authenticated
-    client_web, _ = _build_clients(use_auth=using_auth)
+    client_web, _, _wpc = _build_clients(use_auth=using_auth)
 
     try:
         if continuation:
@@ -396,7 +396,7 @@ def video_info(video_id: str) -> VideoPlayback:
 def video_comments(video_id: str) -> CommentsResponse:
     using_auth = auth_manager.is_authenticated
     if using_auth:
-        client_web, _ = _build_clients(use_auth=True)
+        client_web, _, _wpc = _build_clients(use_auth=True)
         try:
             return _comments_info(video_id, client_web)
         except RequestError:
