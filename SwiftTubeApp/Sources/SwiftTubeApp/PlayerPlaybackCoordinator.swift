@@ -458,10 +458,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     /// Fraction (0…1) to use for the scrub preview thumbnail.
-    /// Returns the hover fraction when hovering, or derives it from scrubPosition during active drag.
+    /// isScrubbing takes priority over scrubHoverFraction: a queued hover event can
+    /// arrive after drag-start and reset scrubHoverFraction to the initial position,
+    /// so when actively dragging we always derive the fraction from scrubPosition.
     var scrubPreviewFraction: Double? {
-        if let hover = scrubHoverFraction { return hover }
         if isScrubbing, scrubberUpperBound > 0 { return scrubPosition / scrubberUpperBound }
+        if let hover = scrubHoverFraction { return hover }
         return nil
     }
 
