@@ -855,10 +855,6 @@ private struct PlayerControlBar: View {
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let loc):
-                    // Ignore hover events while dragging: the drag modal loop can
-                    // queue a stale event at the initial position that would freeze
-                    // the popup. isScrubbing takes over via the fallback path.
-                    guard !coordinator.isScrubbing else { return }
                     guard coordinator.duration > 0, sliderWidth > 0 else { return }
                     let trackInset: CGFloat = 10
                     let trackW = max(1, sliderWidth - trackInset * 2)
