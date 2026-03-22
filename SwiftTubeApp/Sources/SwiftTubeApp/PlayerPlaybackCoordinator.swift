@@ -358,6 +358,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var feedbackDismissTask: Task<Void, Never>? = nil
     private var lastInteractionAt = Date()
     private var lastPointerMovementAt = Date.distantPast
+    private var lastScrubSeekAt = Date.distantPast
 
     private var scrollMonitor: Any? = nil
 
@@ -516,6 +517,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         scrubHoverFraction = nil
         lastInteractionAt = Date()
         lastPointerMovementAt = .distantPast
+        lastScrubSeekAt = .distantPast
         scheduleMPVStop(mpvEngine, pauseFirst: true)
         mpvEngine = nil
     }
@@ -603,6 +605,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     func updateScrubPosition(_ value: Double) {
         scrubPosition = value
         noteInteraction()
+        // Fast keyframe seek so the video frame updates in real-time while dragging.
+        // Throttled to ~10 fps so mpv isn't flooded with seek commands.
+        guard isScrubbing, let mpvEngine else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastScrubSeekAt) >= 0.1 else { return }
+        lastScrubSeekAt = now
+        mpvEngine.fastSeek(to: value)
     }
 
     func beginMenuInteraction() {

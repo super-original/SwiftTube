@@ -828,7 +828,10 @@ private struct PlayerControlBar: View {
                     in: 0...coordinator.scrubberUpperBound,
                     onEditingChanged: { isEditing in
                         coordinator.setScrubbing(isEditing)
-                        if !isEditing { coordinator.scrubHoverFraction = nil }
+                        // Always clear the hover fraction so scrubPreviewFraction falls
+                        // through to the isScrubbing path, which tracks scrubPosition
+                        // in real-time rather than the frozen initial hover position.
+                        coordinator.scrubHoverFraction = nil
                     }
                 )
                 .disabled(coordinator.duration <= 0)
