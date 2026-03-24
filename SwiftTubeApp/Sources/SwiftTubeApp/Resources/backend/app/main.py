@@ -14,19 +14,35 @@ from .models import (
     AuthStatusResponse,
     BrowserAuthRequest,
     CommentsResponse,
+    PlaylistMutationRequest,
+    PlaylistMutationResponse,
+    PlaylistOptionsResponse,
+    RatingRequest,
+    RatingResponse,
     RecommendationsResponse,
     SearchResponse,
+    SubscriptionRequest,
+    SubscriptionResponse,
     VideoPlayback,
+    WatchLaterRequest,
+    WatchLaterResponse,
 )
 from .parse import (
     extract_browse_ids_from_guide,
     extract_comments,
     extract_comments_token,
     extract_continuation_token,
+    extract_playlist_options,
+    extract_playlist_option_commands,
+    extract_rating_commands,
+    extract_rating_state,
     extract_related_videos,
+    extract_subscription_commands,
+    extract_subscription_state,
     extract_storyboard,
     extract_video_items,
     extract_watch_metadata,
+    extract_watch_page_save_command,
     parse_streams,
     pick_best_stream,
 )
@@ -65,6 +81,32 @@ def _build_clients(use_auth: bool) -> tuple[InnerTube, InnerTube, InnerTube]:
             auth_manager.build_client("WEB"),
         )
     return public_client_web, public_client_player, public_client_web_player
+
+
+def _dispatch_inner_tube_command(client: InnerTube, command) -> dict:
+    return client.adaptor.dispatch(f"/{command.apiPath}", body=command.payload)
+
+
+def _load_playlist_options(client_web: InnerTube, watch_data: dict) -> list:
+    save_command = extract_watch_page_save_command(watch_data)
+    if save_command is None:
+        return []
+    response = _dispatch_inner_tube_command(client_web, save_command)
+    return extract_playlist_options(response)
+
+
+def _load_playlist_sheet(client_web: InnerTube, watch_data: dict) -> dict:
+    save_command = extract_watch_page_save_command(watch_data)
+    if save_command is None:
+        raise HTTPException(status_code=404, detail="Playlist save options are unavailable for this video.")
+    return _dispatch_inner_tube_command(client_web, save_command)
+
+
+def _find_playlist_option(options: list, playlist_id: str):
+    for option in options:
+        if option.playlistId == playlist_id:
+            return option
+    return None
 
 
 def _load_recommendations(
@@ -246,6 +288,16 @@ def _video_info(
                 continue
 
     watch_metadata = extract_watch_metadata(watch_data)
+    subscription = extract_subscription_state(watch_data, watch_metadata)
+    rating = extract_rating_state(watch_data)
+    playlist_options = []
+    if auth_manager.is_authenticated and extract_watch_page_save_command(watch_data) is not None:
+        try:
+            playlist_options = _load_playlist_options(client_web, watch_data)
+        except RequestError:
+            playlist_options = []
+    watch_later = _find_playlist_option(playlist_options, "WL")
+    playlist_save_enabled = extract_watch_page_save_command(watch_data) is not None
     related_videos = extract_related_videos(watch_data, current_video_id=video_id)
     # WEB client response is the authoritative source for storyboard spec.
     storyboard = extract_storyboard(web_player_data) or extract_storyboard(player_data)
@@ -306,6 +358,10 @@ def _video_info(
             bestStream=player_bundle.best_stream or best,
             subtitles=player_bundle.subtitles,
             storyboard=storyboard,
+            subscription=subscription,
+            rating=rating,
+            watchLater=watch_later,
+            playlistSaveEnabled=playlist_save_enabled,
         )
 
     if not playback_bundle.streams and not player_streams:
@@ -346,6 +402,10 @@ def _video_info(
         bestStream=resolved_best_stream,
         subtitles=resolved_bundle.subtitles,
         storyboard=storyboard,
+        subscription=subscription,
+        rating=rating,
+        watchLater=watch_later,
+        playlistSaveEnabled=playlist_save_enabled,
     )
 
 
@@ -365,6 +425,25 @@ def _comments_info(video_id: str, client_web: InnerTube) -> CommentsResponse:
         comments=comments,
         commentCountText=watch_metadata.get("commentCountText"),
     )
+
+
+def _require_authenticated_web_client() -> InnerTube:
+    if not auth_manager.is_authenticated:
+        raise HTTPException(status_code=401, detail="Sign in to YouTube to use this action.")
+    return auth_manager.build_client("WEB")
+
+
+def _load_watch_data_for_actions(video_id: str) -> tuple[InnerTube, dict, dict]:
+    client_web = _require_authenticated_web_client()
+    try:
+        watch_data = client_web.next(video_id=video_id)
+    except RequestError as exc:
+        auth_manager.clear()
+        raise HTTPException(
+            status_code=401,
+            detail="Your saved YouTube session expired. Reconnect your browser session and try again.",
+        ) from exc
+    return client_web, watch_data, extract_watch_metadata(watch_data)
 
 
 @app.get("/video/{video_id}", response_model=VideoPlayback)
@@ -390,6 +469,143 @@ def video_info(video_id: str) -> VideoPlayback:
         public_client_player,
         client_web_player=public_client_web_player,
     )
+
+
+@app.get("/video/{video_id}/playlists", response_model=PlaylistOptionsResponse)
+def video_playlists(video_id: str) -> PlaylistOptionsResponse:
+    client_web, watch_data, _metadata = _load_watch_data_for_actions(video_id)
+    try:
+        options = extract_playlist_options(_load_playlist_sheet(client_web, watch_data))
+    except RequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return PlaylistOptionsResponse(options=options)
+
+
+@app.post("/video/{video_id}/subscription", response_model=SubscriptionResponse)
+def update_video_subscription(
+    video_id: str, request: SubscriptionRequest
+) -> SubscriptionResponse:
+    client_web, watch_data, metadata = _load_watch_data_for_actions(video_id)
+    subscription = extract_subscription_state(watch_data, metadata)
+    if subscription is None or not subscription.enabled:
+        raise HTTPException(status_code=404, detail="Subscribe controls are unavailable for this video.")
+
+    commands = extract_subscription_commands(watch_data)
+    command = commands["subscribe"] if request.subscribed else commands["unsubscribe"]
+    if command is None:
+        raise HTTPException(status_code=404, detail="This subscription action is unavailable right now.")
+
+    if subscription.subscribed != request.subscribed:
+        try:
+            _dispatch_inner_tube_command(client_web, command)
+        except RequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        watch_data = client_web.next(video_id=video_id)
+        metadata = extract_watch_metadata(watch_data)
+
+    return SubscriptionResponse(
+        subscription=extract_subscription_state(watch_data, metadata)
+    )
+
+
+@app.post("/video/{video_id}/rating", response_model=RatingResponse)
+def update_video_rating(video_id: str, request: RatingRequest) -> RatingResponse:
+    action = request.action.lower()
+    if action not in {"like", "dislike", "none"}:
+        raise HTTPException(status_code=400, detail="Rating action must be one of: like, dislike, none.")
+
+    client_web, watch_data, _metadata = _load_watch_data_for_actions(video_id)
+    rating = extract_rating_state(watch_data)
+    if rating is None:
+        raise HTTPException(status_code=404, detail="Like and dislike controls are unavailable for this video.")
+
+    commands = extract_rating_commands(watch_data)
+    command_key = {
+        "like": "removeLike" if rating.status == "LIKE" else "like",
+        "dislike": "removeDislike" if rating.status == "DISLIKE" else "dislike",
+        "none": "removeLike" if rating.status == "LIKE" else "removeDislike",
+    }[action]
+    command = commands.get(command_key)
+    if command is None:
+        raise HTTPException(status_code=404, detail="This rating action is unavailable right now.")
+
+    if not (
+        (action == "like" and rating.status == "LIKE")
+        or (action == "dislike" and rating.status == "DISLIKE")
+        or (action == "none" and rating.status == "INDIFFERENT")
+    ):
+        try:
+            _dispatch_inner_tube_command(client_web, command)
+        except RequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        watch_data = client_web.next(video_id=video_id)
+
+    return RatingResponse(rating=extract_rating_state(watch_data))
+
+
+@app.post("/video/{video_id}/watch-later", response_model=WatchLaterResponse)
+def update_watch_later(video_id: str, request: WatchLaterRequest) -> WatchLaterResponse:
+    client_web, watch_data, _metadata = _load_watch_data_for_actions(video_id)
+    try:
+        sheet = _load_playlist_sheet(client_web, watch_data)
+    except RequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    options = extract_playlist_options(sheet)
+    commands = extract_playlist_option_commands(sheet)
+    option = _find_playlist_option(options, "WL")
+    if option is None:
+        raise HTTPException(status_code=404, detail="Watch Later is unavailable for this account.")
+
+    if option.saved != request.saved:
+        command = commands.get("WL", {}).get("add" if request.saved else "remove")
+        if command is None:
+            raise HTTPException(status_code=404, detail="Watch Later mutation is unavailable right now.")
+        try:
+            _dispatch_inner_tube_command(client_web, command)
+        except RequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        watch_data = client_web.next(video_id=video_id)
+        try:
+            options = extract_playlist_options(_load_playlist_sheet(client_web, watch_data))
+        except RequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        option = _find_playlist_option(options, "WL")
+
+    return WatchLaterResponse(watchLater=option)
+
+
+@app.post("/video/{video_id}/playlist", response_model=PlaylistMutationResponse)
+def update_video_playlist(
+    video_id: str, request: PlaylistMutationRequest
+) -> PlaylistMutationResponse:
+    client_web, watch_data, _metadata = _load_watch_data_for_actions(video_id)
+    try:
+        sheet = _load_playlist_sheet(client_web, watch_data)
+    except RequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    options = extract_playlist_options(sheet)
+    commands = extract_playlist_option_commands(sheet)
+    option = _find_playlist_option(options, request.playlistId)
+    if option is None:
+        raise HTTPException(status_code=404, detail="That playlist was not found in your YouTube library.")
+
+    if option.saved != request.saved:
+        command = commands.get(request.playlistId, {}).get("add" if request.saved else "remove")
+        if command is None:
+            raise HTTPException(status_code=404, detail="That playlist mutation is unavailable right now.")
+        try:
+            _dispatch_inner_tube_command(client_web, command)
+        except RequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        watch_data = client_web.next(video_id=video_id)
+        try:
+            options = extract_playlist_options(_load_playlist_sheet(client_web, watch_data))
+        except RequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        option = _find_playlist_option(options, request.playlistId)
+
+    return PlaylistMutationResponse(playlist=option)
 
 
 @app.get("/video/{video_id}/comments", response_model=CommentsResponse)

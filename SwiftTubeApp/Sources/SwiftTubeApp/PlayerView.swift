@@ -194,6 +194,9 @@ struct PlayerScreen: View {
         .task(id: viewModel.playbackLoadID) {
             if let playback = viewModel.playback {
                 playbackCoordinator.configure(with: playback)
+                if authSession.status.authenticated, playback.playlistSaveEnabled {
+                    viewModel.loadPlaylistOptions()
+                }
             } else {
                 playbackCoordinator.reset()
             }
@@ -358,7 +361,193 @@ private extension PlayerScreen {
             if !metadataPills.isEmpty {
                 FlexiblePillRow(items: metadataPills)
             }
+
+            actionSection
         }
+    }
+
+    var actionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    subscribeButton
+                    likeDislikeControl
+                    shareMenu
+                    watchLaterButton
+                    playlistMenu
+                }
+                .padding(.vertical, 2)
+            }
+
+            if let actionMessage = viewModel.actionMessage, !actionMessage.isEmpty {
+                Text(actionMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    var subscribeButton: some View {
+        let subscription = playback?.subscription
+        let isSubscribed = subscription?.subscribed == true
+
+        return Button {
+            viewModel.toggleSubscription()
+        } label: {
+            Text(isSubscribed ? "Subscribed" : "Subscribe")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(isSubscribed ? Color.primary : Color.white)
+                .padding(.horizontal, 18)
+                .frame(height: 40)
+                .background(
+                    Capsule()
+                        .fill(isSubscribed ? Color(NSColor.controlBackgroundColor) : Color.red)
+                )
+        }
+        .buttonStyle(.plain)
+        .opacity((subscription?.enabled == true) ? 1 : 0.55)
+        .disabled(subscription?.enabled != true || viewModel.isMutatingSubscription)
+    }
+
+    var likeDislikeControl: some View {
+        let rating = playback?.rating
+        let isLiked = rating?.status == "LIKE"
+        let isDisliked = rating?.status == "DISLIKE"
+
+        return HStack(spacing: 0) {
+            Button {
+                viewModel.toggleRating("like")
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
+                    Text(rating?.likeCountText ?? "Like")
+                        .lineLimit(1)
+                }
+                .frame(height: 40)
+                .padding(.horizontal, 16)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(isLiked ? Color.accentColor : Color.primary)
+
+            Divider()
+                .frame(height: 20)
+
+            Button {
+                viewModel.toggleRating("dislike")
+            } label: {
+                Image(systemName: isDisliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                    .frame(width: 44, height: 40)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(isDisliked ? Color.accentColor : Color.primary)
+        }
+        .background(
+            Capsule()
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .overlay(
+            Capsule()
+                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+        )
+        .opacity(rating == nil ? 0.55 : 1)
+        .disabled(rating == nil || viewModel.isMutatingRating)
+    }
+
+    var shareMenu: some View {
+        Menu {
+            Button("Copy Link") {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(shareURL.absoluteString, forType: .string)
+            }
+
+            Button("Open in YouTube") {
+                NSWorkspace.shared.open(shareURL)
+            }
+        } label: {
+            playerActionPill(symbol: "square.and.arrow.up", title: "Share")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    var watchLaterButton: some View {
+        let isSaved = playback?.watchLater?.saved == true
+
+        return Button {
+            viewModel.toggleWatchLater()
+        } label: {
+            playerActionPill(
+                symbol: isSaved ? "clock.fill" : "clock",
+                title: isSaved ? "Saved" : "Watch later"
+            )
+        }
+        .buttonStyle(.plain)
+        .opacity(playback?.watchLater == nil ? 0.55 : 1)
+        .disabled(playback?.watchLater == nil || viewModel.isMutatingWatchLater)
+    }
+
+    var playlistMenu: some View {
+        Menu {
+            if viewModel.isLoadingPlaylistOptions {
+                ProgressView("Loading playlists...")
+            } else if viewModel.playlistOptions.isEmpty {
+                Text("No playlists available")
+            } else {
+                ForEach(viewModel.playlistOptions) { option in
+                    Button {
+                        viewModel.togglePlaylist(option)
+                    } label: {
+                        HStack {
+                            Text(option.title)
+                            if option.saved {
+                                Image(systemName: "checkmark")
+                            }
+                            if viewModel.playlistMutationIDs.contains(option.id) {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+                    .disabled(viewModel.playlistMutationIDs.contains(option.id))
+                }
+            }
+        } label: {
+            playerActionPill(symbol: "text.badge.plus", title: "Save to playlist")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(playback?.playlistSaveEnabled != true)
+        .opacity(playback?.playlistSaveEnabled == true ? 1 : 0.55)
+    }
+
+    func playerActionPill(symbol: String, title: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+            Text(title)
+                .lineLimit(1)
+        }
+        .font(.callout.weight(.semibold))
+        .padding(.horizontal, 16)
+        .frame(height: 40)
+        .background(
+            Capsule()
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .overlay(
+            Capsule()
+                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    var shareURL: URL {
+        var components = URLComponents(string: "https://youtube.com/watch")!
+        let seconds = max(0, Int(playbackCoordinator.currentTime.rounded(.down)))
+        components.queryItems = [
+            URLQueryItem(name: "v", value: playback?.id ?? video.id),
+            URLQueryItem(name: "t", value: String(seconds))
+        ]
+        return components.url!
     }
 
     var descriptionSection: some View {

@@ -5,6 +5,11 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+class InnerTubeCommand(BaseModel):
+    apiPath: str
+    payload: dict = Field(default_factory=dict)
+
+
 class Thumbnail(BaseModel):
     url: str
     width: Optional[int] = None
@@ -70,6 +75,27 @@ class CommentsResponse(BaseModel):
     commentCountText: Optional[str] = None
 
 
+class SubscriptionState(BaseModel):
+    channelId: str
+    buttonText: Optional[str] = None
+    subscribed: bool = False
+    enabled: bool = False
+    subscriberCountText: Optional[str] = None
+
+
+class RatingState(BaseModel):
+    status: str = "INDIFFERENT"
+    likeCountText: Optional[str] = None
+
+
+class PlaylistOption(BaseModel):
+    playlistId: str
+    title: str
+    privacy: Optional[str] = None
+    containsSelectedVideos: str = "NONE"
+    saved: bool = False
+
+
 class VideoPlayback(BaseModel):
     id: str
     title: Optional[str] = None
@@ -96,6 +122,10 @@ class VideoPlayback(BaseModel):
     bestStream: Optional[StreamInfo] = None
     subtitles: List[SubtitleTrack] = Field(default_factory=list)
     storyboard: Optional["StoryboardSpec"] = None
+    subscription: Optional[SubscriptionState] = None
+    rating: Optional[RatingState] = None
+    watchLater: Optional[PlaylistOption] = None
+    playlistSaveEnabled: bool = False
 
 
 class SearchResponse(BaseModel):
@@ -113,6 +143,43 @@ class AuthStatusResponse(BaseModel):
 
 class BrowserAuthRequest(BaseModel):
     browser: str
+
+
+class RatingRequest(BaseModel):
+    action: str
+
+
+class SubscriptionRequest(BaseModel):
+    subscribed: bool
+
+
+class WatchLaterRequest(BaseModel):
+    saved: bool
+
+
+class PlaylistMutationRequest(BaseModel):
+    playlistId: str
+    saved: bool
+
+
+class PlaylistOptionsResponse(BaseModel):
+    options: List[PlaylistOption] = Field(default_factory=list)
+
+
+class SubscriptionResponse(BaseModel):
+    subscription: Optional[SubscriptionState] = None
+
+
+class RatingResponse(BaseModel):
+    rating: Optional[RatingState] = None
+
+
+class WatchLaterResponse(BaseModel):
+    watchLater: Optional[PlaylistOption] = None
+
+
+class PlaylistMutationResponse(BaseModel):
+    playlist: Optional[PlaylistOption] = None
 
 
 class StoryboardSpec(BaseModel):

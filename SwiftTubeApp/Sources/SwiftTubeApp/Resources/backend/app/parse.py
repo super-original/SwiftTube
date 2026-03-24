@@ -4,7 +4,17 @@ import math
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
-from .models import CommentItem, StoryboardSpec, StreamInfo, Thumbnail, VideoItem
+from .models import (
+    CommentItem,
+    InnerTubeCommand,
+    PlaylistOption,
+    RatingState,
+    StoryboardSpec,
+    StreamInfo,
+    SubscriptionState,
+    Thumbnail,
+    VideoItem,
+)
 
 
 def iter_nodes(obj: Any) -> Iterable[Any]:
@@ -40,6 +50,148 @@ def get_content_text(obj: Any) -> Optional[str]:
     if isinstance(obj.get("content"), str):
         return obj["content"]
     return get_text(obj)
+
+
+def _first_dict(items: Any) -> Optional[dict]:
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                return item
+    return None
+
+
+def _command_metadata_api_path(endpoint: Any) -> Optional[str]:
+    if not isinstance(endpoint, dict):
+        return None
+    metadata = endpoint.get("commandMetadata", {}).get("webCommandMetadata", {})
+    api_path = metadata.get("apiUrl")
+    if isinstance(api_path, str) and api_path:
+        return api_path
+    return None
+
+
+def _normalize_api_path(api_path: Optional[str]) -> Optional[str]:
+    if not isinstance(api_path, str) or not api_path:
+        return None
+    return api_path.removeprefix("/youtubei/v1/")
+
+
+def _build_command(api_path: Optional[str], payload: dict) -> Optional[InnerTubeCommand]:
+    normalized_path = _normalize_api_path(api_path)
+    if normalized_path is None:
+        return None
+    return InnerTubeCommand(apiPath=normalized_path, payload=payload)
+
+
+def _normalize_subscribe_endpoint(endpoint: Any, *, unsubscribe: bool) -> Optional[InnerTubeCommand]:
+    if not isinstance(endpoint, dict):
+        return None
+    key = "unsubscribeEndpoint" if unsubscribe else "subscribeEndpoint"
+    raw = endpoint.get(key)
+    if not isinstance(raw, dict):
+        return None
+
+    payload: dict[str, Any] = {}
+    for field in ("channelIds", "siloName", "params", "botguardResponse"):
+        value = raw.get(field)
+        if value is not None:
+            payload[field] = value
+
+    if raw.get("feature") is not None:
+        payload["clientFeature"] = raw["feature"]
+
+    return _build_command(
+        _command_metadata_api_path(endpoint)
+        or ("subscription/unsubscribe" if unsubscribe else "subscription/subscribe"),
+        payload,
+    )
+
+
+def _normalize_like_endpoint(endpoint: Any) -> Optional[InnerTubeCommand]:
+    if not isinstance(endpoint, dict):
+        return None
+    raw = endpoint.get("likeEndpoint")
+    if not isinstance(raw, dict):
+        return None
+
+    payload: dict[str, Any] = {}
+    if raw.get("target") is not None:
+        payload["target"] = raw["target"]
+
+    status = raw.get("status")
+    params_field = {
+        "LIKE": "likeParams",
+        "DISLIKE": "dislikeParams",
+        "INDIFFERENT": "removeLikeParams",
+    }.get(status)
+    if params_field and raw.get(params_field) is not None:
+        payload["params"] = raw[params_field]
+
+    return _build_command(
+        _command_metadata_api_path(endpoint)
+        or {
+            "LIKE": "like/like",
+            "DISLIKE": "like/dislike",
+            "INDIFFERENT": "like/removelike",
+        }.get(status),
+        payload,
+    )
+
+
+def _normalize_add_to_playlist_endpoint(endpoint: Any) -> Optional[InnerTubeCommand]:
+    if not isinstance(endpoint, dict):
+        return None
+    raw = endpoint.get("addToPlaylistServiceEndpoint")
+    if not isinstance(raw, dict):
+        return None
+
+    video_ids = raw.get("videoIds")
+    if not isinstance(video_ids, list):
+        video_id = raw.get("videoId")
+        video_ids = [video_id] if isinstance(video_id, str) and video_id else []
+
+    payload: dict[str, Any] = {"videoIds": video_ids}
+    for field in ("playlistId", "params"):
+        value = raw.get(field)
+        if value is not None:
+            payload[field] = value
+    payload["excludeWatchLater"] = bool(raw.get("excludeWatchLater", False))
+
+    return _build_command(
+        _command_metadata_api_path(endpoint) or "playlist/get_add_to_playlist",
+        payload,
+    )
+
+
+def _normalize_playlist_edit_endpoint(endpoint: Any) -> Optional[InnerTubeCommand]:
+    if not isinstance(endpoint, dict):
+        return None
+    raw = endpoint.get("playlistEditEndpoint")
+    if not isinstance(raw, dict):
+        return None
+
+    payload: dict[str, Any] = {}
+    for field in ("playlistId", "actions", "params"):
+        value = raw.get(field)
+        if value is not None:
+            payload[field] = value
+
+    return _build_command(
+        _command_metadata_api_path(endpoint) or "browse/edit_playlist",
+        payload,
+    )
+
+
+def _find_innertube_command(commands: Any, endpoint_key: str) -> Optional[dict]:
+    if not isinstance(commands, list):
+        return None
+    for command in commands:
+        innertube_command = (
+            command.get("innertubeCommand") if isinstance(command, dict) else None
+        )
+        if isinstance(innertube_command, dict) and endpoint_key in innertube_command:
+            return innertube_command
+    return None
 
 
 def build_thumbnails(thumbnail_obj: Any) -> List[Thumbnail]:
@@ -648,6 +800,327 @@ def extract_watch_metadata(data: Any) -> Dict[str, Optional[str]]:
             )
 
     return metadata
+
+
+def extract_subscription_state(
+    data: Any, metadata: Optional[Dict[str, Optional[str]]] = None
+) -> Optional[SubscriptionState]:
+    metadata = metadata or {}
+
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+
+        subscribe_button = node.get("subscribeButton")
+        if not isinstance(subscribe_button, dict):
+            continue
+
+        renderer = subscribe_button.get("subscribeButtonRenderer")
+        if not isinstance(renderer, dict):
+            continue
+
+        channel_id = renderer.get("channelId")
+        if not isinstance(channel_id, str) or not channel_id:
+            continue
+
+        button_text = get_text(renderer.get("buttonText"))
+        return SubscriptionState(
+            channelId=channel_id,
+            buttonText=button_text,
+            subscribed=bool(renderer.get("subscribed")),
+            enabled=bool(renderer.get("enabled")),
+            subscriberCountText=metadata.get("subscriberCountText"),
+        )
+
+    return None
+
+
+def extract_rating_state(data: Any) -> Optional[RatingState]:
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+
+        view_model = node.get("segmentedLikeDislikeButtonViewModel")
+        if not isinstance(view_model, dict):
+            continue
+
+        like_vm = (
+            view_model.get("likeButtonViewModel", {})
+            .get("likeButtonViewModel", {})
+        )
+        dislike_vm = (
+            view_model.get("dislikeButtonViewModel", {})
+            .get("dislikeButtonViewModel", {})
+        )
+        if not isinstance(like_vm, dict) or not isinstance(dislike_vm, dict):
+            continue
+
+        like_toggle = (
+            like_vm.get("toggleButtonViewModel", {})
+            .get("toggleButtonViewModel", {})
+        )
+        dislike_toggle = (
+            dislike_vm.get("toggleButtonViewModel", {})
+            .get("toggleButtonViewModel", {})
+        )
+
+        status = (
+            like_vm.get("likeStatusEntity", {}).get("likeStatus")
+            or "INDIFFERENT"
+        )
+        like_count = (
+            like_toggle.get("defaultButtonViewModel", {})
+            .get("buttonViewModel", {})
+            .get("title")
+        )
+        if not isinstance(like_count, str):
+            like_count = None
+
+        if status not in {"LIKE", "DISLIKE", "INDIFFERENT"}:
+            status = "INDIFFERENT"
+
+        if isinstance(dislike_toggle, dict):
+            return RatingState(status=status, likeCountText=like_count)
+
+    return None
+
+
+def extract_watch_page_save_command(data: Any) -> Optional[InnerTubeCommand]:
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+
+        flexible_items = (
+            node.get("videoActions", {})
+            .get("menuRenderer", {})
+            .get("flexibleItems", [])
+        )
+        if not isinstance(flexible_items, list):
+            continue
+
+        for item in flexible_items:
+            renderer = item.get("menuFlexibleItemRenderer", {}) if isinstance(item, dict) else {}
+            service_endpoint = (
+                renderer.get("menuItem", {})
+                .get("menuServiceItemRenderer", {})
+                .get("serviceEndpoint")
+            )
+            normalized = _normalize_add_to_playlist_endpoint(service_endpoint)
+            if normalized is not None:
+                return normalized
+
+            on_tap = (
+                renderer.get("topLevelButton", {})
+                .get("buttonViewModel", {})
+                .get("onTap", {})
+                .get("serialCommand", {})
+                .get("commands", [])
+            )
+            normalized = _normalize_add_to_playlist_endpoint(
+                _find_innertube_command(on_tap, "addToPlaylistServiceEndpoint")
+            )
+            if normalized is not None:
+                return normalized
+
+    return None
+
+
+def extract_playlist_options(data: Any) -> List[PlaylistOption]:
+    options: List[PlaylistOption] = []
+    seen: set[str] = set()
+
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+        renderer = node.get("playlistAddToOptionRenderer")
+        if not isinstance(renderer, dict):
+            continue
+
+        playlist_id = renderer.get("playlistId")
+        if not isinstance(playlist_id, str) or not playlist_id or playlist_id in seen:
+            continue
+
+        title = get_text(renderer.get("title"))
+        if not title:
+            continue
+
+        contains_selected_videos = renderer.get("containsSelectedVideos")
+        if not isinstance(contains_selected_videos, str) or not contains_selected_videos:
+            contains_selected_videos = "NONE"
+
+        seen.add(playlist_id)
+        options.append(
+            PlaylistOption(
+                playlistId=playlist_id,
+                title=title,
+                privacy=renderer.get("privacy"),
+                containsSelectedVideos=contains_selected_videos,
+                saved=contains_selected_videos == "ALL",
+            )
+        )
+
+    return options
+
+
+def extract_playlist_option_commands(data: Any) -> Dict[str, Dict[str, Optional[InnerTubeCommand]]]:
+    commands: Dict[str, Dict[str, Optional[InnerTubeCommand]]] = {}
+
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+        renderer = node.get("playlistAddToOptionRenderer")
+        if not isinstance(renderer, dict):
+            continue
+
+        playlist_id = renderer.get("playlistId")
+        if not isinstance(playlist_id, str) or not playlist_id:
+            continue
+
+        commands[playlist_id] = {
+            "add": _normalize_playlist_edit_endpoint(
+                renderer.get("addToPlaylistServiceEndpoint")
+            ),
+            "remove": _normalize_playlist_edit_endpoint(
+                renderer.get("removeFromPlaylistServiceEndpoint")
+            ),
+        }
+
+    return commands
+
+
+def extract_subscription_commands(data: Any) -> Dict[str, Optional[InnerTubeCommand]]:
+    result: Dict[str, Optional[InnerTubeCommand]] = {
+        "subscribe": None,
+        "unsubscribe": None,
+    }
+
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+
+        subscribe_button = node.get("subscribeButton")
+        if not isinstance(subscribe_button, dict):
+            continue
+
+        renderer = subscribe_button.get("subscribeButtonRenderer")
+        if not isinstance(renderer, dict):
+            continue
+
+        result["subscribe"] = _normalize_subscribe_endpoint(
+            _first_dict(renderer.get("onSubscribeEndpoints")),
+            unsubscribe=False,
+        )
+
+        unsubscribe_command = _normalize_subscribe_endpoint(
+            _first_dict(renderer.get("onUnsubscribeEndpoints")),
+            unsubscribe=True,
+        )
+        if unsubscribe_command is None:
+            notification_button = renderer.get("notificationPreferenceButton", {})
+            command_executor = (
+                notification_button.get("subscriptionNotificationToggleButtonRenderer", {})
+                .get("command", {})
+                .get("commandExecutorCommand", {})
+                .get("commands", [])
+            )
+            signal_action = _first_dict(
+                (
+                    _find_innertube_command(command_executor, "signalServiceEndpoint")
+                    or {}
+                ).get("signalServiceEndpoint", {}).get("actions", [])
+            )
+            confirm_button_endpoint = (
+                signal_action.get("openPopupAction", {})
+                .get("popup", {})
+                .get("confirmDialogRenderer", {})
+                .get("confirmButton", {})
+                .get("buttonRenderer", {})
+                .get("serviceEndpoint")
+            ) if isinstance(signal_action, dict) else None
+            unsubscribe_command = _normalize_subscribe_endpoint(
+                confirm_button_endpoint,
+                unsubscribe=True,
+            )
+
+        result["unsubscribe"] = unsubscribe_command
+        return result
+
+    return result
+
+
+def extract_rating_commands(data: Any) -> Dict[str, Optional[InnerTubeCommand]]:
+    result: Dict[str, Optional[InnerTubeCommand]] = {
+        "like": None,
+        "dislike": None,
+        "removeLike": None,
+        "removeDislike": None,
+    }
+
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+
+        view_model = node.get("segmentedLikeDislikeButtonViewModel")
+        if not isinstance(view_model, dict):
+            continue
+
+        like_toggle = (
+            view_model.get("likeButtonViewModel", {})
+            .get("likeButtonViewModel", {})
+            .get("toggleButtonViewModel", {})
+            .get("toggleButtonViewModel", {})
+        )
+        dislike_toggle = (
+            view_model.get("dislikeButtonViewModel", {})
+            .get("dislikeButtonViewModel", {})
+            .get("toggleButtonViewModel", {})
+            .get("toggleButtonViewModel", {})
+        )
+
+        like_default_commands = (
+            like_toggle.get("defaultButtonViewModel", {})
+            .get("buttonViewModel", {})
+            .get("onTap", {})
+            .get("serialCommand", {})
+            .get("commands", [])
+        )
+        like_toggled_commands = (
+            like_toggle.get("toggledButtonViewModel", {})
+            .get("buttonViewModel", {})
+            .get("onTap", {})
+            .get("serialCommand", {})
+            .get("commands", [])
+        )
+        dislike_default_commands = (
+            dislike_toggle.get("defaultButtonViewModel", {})
+            .get("buttonViewModel", {})
+            .get("onTap", {})
+            .get("serialCommand", {})
+            .get("commands", [])
+        )
+        dislike_toggled_commands = (
+            dislike_toggle.get("toggledButtonViewModel", {})
+            .get("buttonViewModel", {})
+            .get("onTap", {})
+            .get("serialCommand", {})
+            .get("commands", [])
+        )
+
+        result["like"] = _normalize_like_endpoint(
+            _find_innertube_command(like_default_commands, "likeEndpoint")
+        )
+        result["removeLike"] = _normalize_like_endpoint(
+            _find_innertube_command(like_toggled_commands, "likeEndpoint")
+        )
+        result["dislike"] = _normalize_like_endpoint(
+            _find_innertube_command(dislike_default_commands, "likeEndpoint")
+        )
+        result["removeDislike"] = _normalize_like_endpoint(
+            _find_innertube_command(dislike_toggled_commands, "likeEndpoint")
+        )
+        return result
+
+    return result
 
 
 def extract_comments_token(data: Any) -> Optional[str]:

@@ -42,6 +42,53 @@ final class BackendClient {
         return try await performRequest(url: url)
     }
 
+    func fetchPlaylistOptions(id: String) async throws -> PlaylistOptionsResponse {
+        let url = baseURL.appendingPathComponent("video/")
+            .appendingPathComponent(id)
+            .appendingPathComponent("playlists")
+        return try await performRequest(url: url)
+    }
+
+    func updateSubscription(id: String, subscribed: Bool) async throws -> SubscriptionResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("video/")
+            .appendingPathComponent(id)
+            .appendingPathComponent("subscription"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["subscribed": subscribed])
+        return try await performRequest(request: request)
+    }
+
+    func updateRating(id: String, action: String) async throws -> RatingResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("video/")
+            .appendingPathComponent(id)
+            .appendingPathComponent("rating"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["action": action])
+        return try await performRequest(request: request)
+    }
+
+    func updateWatchLater(id: String, saved: Bool) async throws -> WatchLaterResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("video/")
+            .appendingPathComponent(id)
+            .appendingPathComponent("watch-later"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["saved": saved])
+        return try await performRequest(request: request)
+    }
+
+    func updatePlaylist(id: String, playlistId: String, saved: Bool) async throws -> PlaylistMutationResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("video/")
+            .appendingPathComponent(id)
+            .appendingPathComponent("playlist"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(PlaylistMutationPayload(playlistId: playlistId, saved: saved))
+        return try await performRequest(request: request)
+    }
+
     func fetchAuthStatus() async throws -> AuthStatusResponse {
         try await performRequest(url: baseURL.appendingPathComponent("auth/status"))
     }
@@ -92,4 +139,9 @@ struct BackendClientError: LocalizedError {
 
 private struct BackendErrorPayload: Decodable {
     let detail: String
+}
+
+private struct PlaylistMutationPayload: Encodable {
+    let playlistId: String
+    let saved: Bool
 }

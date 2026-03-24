@@ -182,10 +182,17 @@ final class PlayerViewModel: ObservableObject {
     @Published var playback: VideoPlayback? = nil
     @Published var isLoading = true
     @Published var errorMessage: String? = nil
+    @Published var actionMessage: String? = nil
     @Published private(set) var comments: [CommentItem] = []
     @Published private(set) var commentCountText: String? = nil
     @Published private(set) var isLoadingComments = false
     @Published private(set) var playbackLoadID = UUID()
+    @Published private(set) var playlistOptions: [PlaylistOption] = []
+    @Published private(set) var isLoadingPlaylistOptions = false
+    @Published private(set) var isMutatingSubscription = false
+    @Published private(set) var isMutatingRating = false
+    @Published private(set) var isMutatingWatchLater = false
+    @Published private(set) var playlistMutationIDs: Set<String> = []
 
     let video: VideoItem
     private var loadTask: Task<Void, Never>? = nil
@@ -213,9 +220,12 @@ final class PlayerViewModel: ObservableObject {
         errorMessage = nil
         playback = nil
         playbackLoadID = UUID()
+        actionMessage = nil
         comments = []
         commentCountText = nil
         isLoadingComments = false
+        playlistOptions = []
+        isLoadingPlaylistOptions = false
 
         do {
             let playback = try await BackendClient.shared.fetchVideo(id: video.id)
@@ -257,6 +267,211 @@ final class PlayerViewModel: ObservableObject {
             commentCountText = response.commentCountText ?? commentCountText
         } catch {
             guard !Task.isCancelled else { return }
+        }
+    }
+
+    func loadPlaylistOptions() {
+        guard playback?.playlistSaveEnabled == true, !isLoadingPlaylistOptions else { return }
+
+        Task {
+            isLoadingPlaylistOptions = true
+            defer { isLoadingPlaylistOptions = false }
+
+            do {
+                let response = try await BackendClient.shared.fetchPlaylistOptions(id: video.id)
+                playlistOptions = response.options.filter { $0.playlistId != "WL" }
+                actionMessage = nil
+            } catch {
+                actionMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func toggleSubscription() {
+        guard let subscription = playback?.subscription, !isMutatingSubscription else { return }
+
+        Task {
+            isMutatingSubscription = true
+            defer { isMutatingSubscription = false }
+
+            do {
+                let response = try await BackendClient.shared.updateSubscription(
+                    id: video.id,
+                    subscribed: !subscription.subscribed
+                )
+                updatePlayback { current in
+                    VideoPlayback(
+                        id: current.id,
+                        title: current.title,
+                        channel: current.channel,
+                        channelId: current.channelId,
+                        channelAvatarUrl: current.channelAvatarUrl,
+                        subscriberCountText: response.subscription?.subscriberCountText ?? current.subscriberCountText,
+                        viewCountText: current.viewCountText,
+                        publishedTimeText: current.publishedTimeText,
+                        publishedDateText: current.publishedDateText,
+                        likeCountText: current.likeCountText,
+                        durationText: current.durationText,
+                        description: current.description,
+                        commentCountText: current.commentCountText,
+                        streams: current.streams,
+                        recommendations: current.recommendations,
+                        comments: current.comments,
+                        playbackStrategy: current.playbackStrategy,
+                        preferredManifestStream: current.preferredManifestStream,
+                        preferredMuxedStream: current.preferredMuxedStream,
+                        preferredVideoStream: current.preferredVideoStream,
+                        preferredAudioStream: current.preferredAudioStream,
+                        bestStreamUrl: current.bestStreamUrl,
+                        bestStream: current.bestStream,
+                        subtitles: current.subtitles,
+                        storyboard: current.storyboard,
+                        subscription: response.subscription,
+                        rating: current.rating,
+                        watchLater: current.watchLater,
+                        playlistSaveEnabled: current.playlistSaveEnabled
+                    )
+                }
+                actionMessage = nil
+            } catch {
+                actionMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func toggleRating(_ target: String) {
+        guard playback?.rating != nil, !isMutatingRating else { return }
+
+        Task {
+            isMutatingRating = true
+            defer { isMutatingRating = false }
+
+            do {
+                let response = try await BackendClient.shared.updateRating(id: video.id, action: target)
+                updatePlayback { current in
+                    VideoPlayback(
+                        id: current.id,
+                        title: current.title,
+                        channel: current.channel,
+                        channelId: current.channelId,
+                        channelAvatarUrl: current.channelAvatarUrl,
+                        subscriberCountText: current.subscriberCountText,
+                        viewCountText: current.viewCountText,
+                        publishedTimeText: current.publishedTimeText,
+                        publishedDateText: current.publishedDateText,
+                        likeCountText: response.rating?.likeCountText ?? current.likeCountText,
+                        durationText: current.durationText,
+                        description: current.description,
+                        commentCountText: current.commentCountText,
+                        streams: current.streams,
+                        recommendations: current.recommendations,
+                        comments: current.comments,
+                        playbackStrategy: current.playbackStrategy,
+                        preferredManifestStream: current.preferredManifestStream,
+                        preferredMuxedStream: current.preferredMuxedStream,
+                        preferredVideoStream: current.preferredVideoStream,
+                        preferredAudioStream: current.preferredAudioStream,
+                        bestStreamUrl: current.bestStreamUrl,
+                        bestStream: current.bestStream,
+                        subtitles: current.subtitles,
+                        storyboard: current.storyboard,
+                        subscription: current.subscription,
+                        rating: response.rating,
+                        watchLater: current.watchLater,
+                        playlistSaveEnabled: current.playlistSaveEnabled
+                    )
+                }
+                actionMessage = nil
+            } catch {
+                actionMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func toggleWatchLater() {
+        guard let watchLater = playback?.watchLater, !isMutatingWatchLater else { return }
+
+        Task {
+            isMutatingWatchLater = true
+            defer { isMutatingWatchLater = false }
+
+            do {
+                let response = try await BackendClient.shared.updateWatchLater(
+                    id: video.id,
+                    saved: !watchLater.saved
+                )
+                if let updated = response.watchLater {
+                    playlistOptions = playlistOptions.map { $0.playlistId == updated.playlistId ? updated : $0 }
+                }
+                updatePlaybackWatchLater(response.watchLater)
+                actionMessage = nil
+            } catch {
+                actionMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func togglePlaylist(_ option: PlaylistOption) {
+        guard !playlistMutationIDs.contains(option.playlistId) else { return }
+
+        Task {
+            playlistMutationIDs.insert(option.playlistId)
+            defer { playlistMutationIDs.remove(option.playlistId) }
+
+            do {
+                let response = try await BackendClient.shared.updatePlaylist(
+                    id: video.id,
+                    playlistId: option.playlistId,
+                    saved: !option.saved
+                )
+                if let updated = response.playlist {
+                    playlistOptions = playlistOptions.map { $0.playlistId == updated.playlistId ? updated : $0 }
+                }
+                actionMessage = nil
+            } catch {
+                actionMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func updatePlayback(_ transform: (VideoPlayback) -> VideoPlayback) {
+        guard let playback else { return }
+        self.playback = transform(playback)
+    }
+
+    private func updatePlaybackWatchLater(_ watchLater: PlaylistOption?) {
+        updatePlayback { current in
+            VideoPlayback(
+                id: current.id,
+                title: current.title,
+                channel: current.channel,
+                channelId: current.channelId,
+                channelAvatarUrl: current.channelAvatarUrl,
+                subscriberCountText: current.subscriberCountText,
+                viewCountText: current.viewCountText,
+                publishedTimeText: current.publishedTimeText,
+                publishedDateText: current.publishedDateText,
+                likeCountText: current.likeCountText,
+                durationText: current.durationText,
+                description: current.description,
+                commentCountText: current.commentCountText,
+                streams: current.streams,
+                recommendations: current.recommendations,
+                comments: current.comments,
+                playbackStrategy: current.playbackStrategy,
+                preferredManifestStream: current.preferredManifestStream,
+                preferredMuxedStream: current.preferredMuxedStream,
+                preferredVideoStream: current.preferredVideoStream,
+                preferredAudioStream: current.preferredAudioStream,
+                bestStreamUrl: current.bestStreamUrl,
+                bestStream: current.bestStream,
+                subtitles: current.subtitles,
+                storyboard: current.storyboard,
+                subscription: current.subscription,
+                rating: current.rating,
+                watchLater: watchLater,
+                playlistSaveEnabled: current.playlistSaveEnabled
+            )
         }
     }
 }
