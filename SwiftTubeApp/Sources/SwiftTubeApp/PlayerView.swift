@@ -357,11 +357,11 @@ private extension PlayerScreen {
                 .font(.system(size: 30, weight: .bold))
                 .fixedSize(horizontal: false, vertical: true)
 
-            channelAndActionsSection
-
             if !statsOverviewItems.isEmpty {
-                statsOverviewSection
+                compactStatsRow
             }
+
+            channelAndActionsSection
         }
     }
 
@@ -591,16 +591,15 @@ private extension PlayerScreen {
         .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
     }
 
-    var statsOverviewSection: some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 160), spacing: 12)],
-            alignment: .leading,
-            spacing: 12
-        ) {
-            ForEach(Array(statsOverviewItems.enumerated()), id: \.offset) { _, item in
-                VideoStatCard(title: item.title, value: item.value)
+    var compactStatsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(Array(statsOverviewItems.enumerated()), id: \.offset) { _, item in
+                    CompactVideoStatPill(title: item.title, value: item.value)
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     var sharePopoverContent: some View {
@@ -1872,39 +1871,30 @@ private struct DetailCard<Content: View>: View {
     }
 }
 
-private struct VideoStatCard: View {
+private struct CompactVideoStatPill: View {
     let title: String
     let value: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 10) {
             Text(title.uppercased())
-                .font(.caption.weight(.bold))
+                .font(.caption2.weight(.bold))
                 .foregroundStyle(.secondary)
                 .tracking(0.8)
 
             Text(value)
-                .font(.system(size: 22, weight: .bold))
-                .fixedSize(horizontal: false, vertical: true)
+                .font(.subheadline.weight(.semibold))
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.09),
-                            Color.white.opacity(0.045)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+            Capsule()
+                .fill(Color.white.opacity(0.06))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            Capsule()
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
         )
     }
 }
