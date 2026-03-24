@@ -74,6 +74,13 @@ struct SubtitleOption: Identifiable, Hashable, Sendable {
     )
 }
 
+struct PlaybackSpeedOption: Identifiable, Hashable, Sendable {
+    let speed: Double
+
+    var id: Double { speed }
+    var title: String { AppSettings.playbackSpeedLabel(speed) }
+}
+
 enum ActionFeedback: Equatable {
     case play
     case pause
@@ -310,6 +317,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         static let hideMonitorInterval: UInt64 = 150_000_000
         static let interactionThrottle: TimeInterval = 0.16
         static let visibilityAnimationDuration = 0.10
+        static let spacebarHoldDelay: UInt64 = 800_000_000
     }
 
     private enum HideMonitorResult {
@@ -331,6 +339,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var pendingQualityOptionID: String? = nil
     @Published private(set) var subtitleOptions: [SubtitleOption] = []
     @Published private(set) var selectedSubtitleOptionID = SubtitleOption.offID
+    @Published private(set) var playbackSpeedOptions = AppSettings.playbackSpeedOptions.map(PlaybackSpeedOption.init)
+    @Published private(set) var selectedPlaybackSpeed = AppSettings.shared.defaultPlaybackSpeed
+    @Published private(set) var effectivePlaybackSpeed = AppSettings.shared.defaultPlaybackSpeed
     @Published private(set) var actionFeedback: ActionFeedback? = nil
     @Published private(set) var feedbackGeneration = 0
     @Published var keyboardLocked = false
@@ -357,8 +368,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var menuInteractionTask: Task<Void, Never>? = nil
     private var mpvStateTask: Task<Void, Never>? = nil
     private var feedbackDismissTask: Task<Void, Never>? = nil
+    private var spacebarHoldTask: Task<Void, Never>? = nil
     private var lastInteractionAt = Date()
     private var lastPointerMovementAt = Date.distantPast
+    private var temporaryPlaybackSpeedOverride: Double? = nil
+    private var isSpacebarPressed = false
+    private var didActivateSpacebarHoldSpeed = false
 
     private var scrollMonitor: Any? = nil
 
@@ -487,6 +502,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             : "captions.bubble.fill"
     }
 
+    var playbackSpeedControlText: String {
+        AppSettings.playbackSpeedLabel(selectedPlaybackSpeed)
+    }
+
+    var effectivePlaybackSpeedText: String {
+        AppSettings.playbackSpeedLabel(effectivePlaybackSpeed)
+    }
+
     func configure(with playback: VideoPlayback) {
         prepareTask?.cancel()
         prepareTask = Task { [weak self] in
@@ -499,6 +522,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         stopHideMonitor()
         menuInteractionTask?.cancel()
         mpvStateTask?.cancel()
+        spacebarHoldTask?.cancel()
         errorMessage = nil
         isPreparingInitialPlayback = false
         controlsVisible = true
@@ -511,6 +535,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         pendingQualityOptionID = nil
         subtitleOptions = []
         selectedSubtitleOptionID = SubtitleOption.offID
+        selectedPlaybackSpeed = AppSettings.shared.defaultPlaybackSpeed
+        effectivePlaybackSpeed = selectedPlaybackSpeed
         currentPlayback = nil
         layoutState.isTheaterMode = false
         keyboardLocked = false
@@ -520,6 +546,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         wasPlayingBeforeScrub = false
         lastInteractionAt = Date()
         lastPointerMovementAt = .distantPast
+        temporaryPlaybackSpeedOverride = nil
+        isSpacebarPressed = false
+        didActivateSpacebarHoldSpeed = false
         scheduleMPVStop(mpvEngine, pauseFirst: true)
         mpvEngine = nil
     }
@@ -726,6 +755,43 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         applySubtitleSelection(option)
     }
 
+    func selectPlaybackSpeed(_ speed: Double) {
+        noteInteraction()
+        selectedPlaybackSpeed = speed
+        applyPlaybackSpeed()
+    }
+
+    func handleSpacebarKeyDown() {
+        noteInteraction()
+        guard !isSpacebarPressed else { return }
+        isSpacebarPressed = true
+        didActivateSpacebarHoldSpeed = false
+        spacebarHoldTask?.cancel()
+        spacebarHoldTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Timing.spacebarHoldDelay)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.activateSpacebarHoldSpeedIfNeeded()
+            }
+        }
+    }
+
+    func handleSpacebarKeyUp() {
+        noteInteraction()
+        isSpacebarPressed = false
+        spacebarHoldTask?.cancel()
+        spacebarHoldTask = nil
+
+        if didActivateSpacebarHoldSpeed {
+            didActivateSpacebarHoldSpeed = false
+            temporaryPlaybackSpeedOverride = nil
+            applyPlaybackSpeed()
+            return
+        }
+
+        togglePlayback()
+    }
+
     func seekRelative(_ seconds: Double) {
         guard mpvEngine != nil, duration > 0 else { return }
         noteInteraction()
@@ -788,6 +854,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         isPreparingInitialPlayback = true
         pendingQualityOptionID = nil
         controlsVisible = true
+        selectedPlaybackSpeed = AppSettings.shared.defaultPlaybackSpeed
+        temporaryPlaybackSpeedOverride = nil
+        effectivePlaybackSpeed = selectedPlaybackSpeed
 
         do {
             currentPlayback = playback
@@ -814,6 +883,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             try await engine.prepare(startTime: 0, autoPlay: false)
             guard !Task.isCancelled else { return }
             engine.setVolume(volume)
+            engine.setRate(effectivePlaybackSpeed)
             engine.play()
 
             currentTime = 0
@@ -876,6 +946,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 mpvStateTask?.cancel()
                 try await existingEngine.replaceFile(with: request, seekTo: clampedTime)
                 existingEngine.setVolume(volume)
+                existingEngine.setRate(effectivePlaybackSpeed)
 
                 if restoreState.wasPlaying {
                     existingEngine.play()
@@ -894,6 +965,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 try await engine.prepare(startTime: 0, autoPlay: false)
                 guard !Task.isCancelled else { return }
                 engine.setVolume(volume)
+                engine.setRate(effectivePlaybackSpeed)
                 engine.play()
 
                 currentTime = 0
@@ -1058,6 +1130,20 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             return
         }
         mpvEngine?.setVolume(clampedVolume)
+    }
+
+    private func activateSpacebarHoldSpeedIfNeeded() {
+        guard isSpacebarPressed, isPlaying else { return }
+        let holdSpeed = max(selectedPlaybackSpeed, AppSettings.shared.spacebarHoldPlaybackSpeed)
+        temporaryPlaybackSpeedOverride = holdSpeed
+        didActivateSpacebarHoldSpeed = true
+        applyPlaybackSpeed()
+    }
+
+    private func applyPlaybackSpeed() {
+        let resolvedSpeed = temporaryPlaybackSpeedOverride ?? selectedPlaybackSpeed
+        effectivePlaybackSpeed = resolvedSpeed
+        mpvEngine?.setRate(resolvedSpeed)
     }
 
     private func currentRestoreState() -> PlaybackRestoreState {

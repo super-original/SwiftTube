@@ -456,10 +456,17 @@ private struct PlayerStageSurface: View {
                 coordinator.keyboardLocked.toggle()
                 return .handled
             }
-            .onKeyPress(.space) {
+            .onKeyPress(.space, phases: [.down, .up]) { press in
                 // Return .handled even when locked so macOS doesn't play the error beep.
                 guard !coordinator.keyboardLocked else { return .handled }
-                coordinator.togglePlayback()
+                switch press.phase {
+                case .down:
+                    coordinator.handleSpacebarKeyDown()
+                case .up:
+                    coordinator.handleSpacebarKeyUp()
+                default:
+                    break
+                }
                 return .handled
             }
             .onKeyPress(characters: .init(charactersIn: settings.playPauseKey)) { _ in
@@ -733,16 +740,24 @@ private struct PlayerChromeOverlay: View {
 }
 
 private struct PlayerControlBar: View {
+    private enum SettingsPopoverDestination {
+        case root
+        case subtitles
+        case playbackSpeed
+    }
+
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Namespace private var playPauseNamespace
     @State private var isQualityPopoverPresented = false
-    @State private var isSubtitlePopoverPresented = false
+    @State private var isSettingsPopoverPresented = false
+    @State private var settingsPopoverDestination: SettingsPopoverDestination = .root
     @State private var sliderWidth: CGFloat = 0
 
     private let compactControlHeight: CGFloat = 38
     private let circularButtonLabelSize: CGFloat = 30
     private let qualityButtonMinWidth: CGFloat = 104
+    private let settingsButtonMinWidth: CGFloat = 104
     private let volumeIconContentHeight: CGFloat = 22
     private let timeLabelWidth: CGFloat = 54
 
@@ -752,7 +767,7 @@ private struct PlayerControlBar: View {
                 playPauseButton
                 volumeControl
                 Spacer(minLength: 0)
-                subtitlesButton
+                settingsMenu
                 qualityMenu
                 theaterToggle
                 fullscreenButton
@@ -879,46 +894,101 @@ private struct PlayerControlBar: View {
         )
     }
 
-    var subtitlesButton: some View {
+    var settingsMenu: some View {
         Button {
-            isSubtitlePopoverPresented.toggle()
+            if !isSettingsPopoverPresented {
+                settingsPopoverDestination = .root
+            }
+            isSettingsPopoverPresented.toggle()
         } label: {
-            circularButtonLabel(
-                symbol: coordinator.subtitleSymbolName,
-                fontSize: 14,
-                foregroundStyle: coordinator.hasSubtitleOptions ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
-            )
+            settingsButtonLabel
         }
         .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.circle)
+        .buttonBorderShape(.capsule)
         .controlSize(.regular)
-        .disabled(!coordinator.hasSubtitleOptions)
         .popover(
-            isPresented: $isSubtitlePopoverPresented,
+            isPresented: $isSettingsPopoverPresented,
             attachmentAnchor: .rect(.bounds),
             arrowEdge: .bottom
         ) {
-            subtitlePopoverContent
+            settingsPopoverContent
         }
-        .onChange(of: isSubtitlePopoverPresented) { _, isPresented in
+        .onChange(of: isSettingsPopoverPresented) { _, isPresented in
             if isPresented {
+                settingsPopoverDestination = .root
                 coordinator.beginMenuInteraction()
             } else {
                 coordinator.endMenuInteraction()
             }
         }
-        .accessibilityLabel("Subtitles")
+        .accessibilityLabel("Playback Settings")
+    }
+
+    var settingsButtonLabel: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "gearshape")
+                .font(.system(size: 13, weight: .semibold))
+
+            Text("Settings")
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(minWidth: settingsButtonMinWidth)
+        .frame(height: circularButtonLabelSize)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    @ViewBuilder
+    var settingsPopoverContent: some View {
+        switch settingsPopoverDestination {
+        case .root:
+            settingsRootPopoverContent
+        case .subtitles:
+            subtitlePopoverContent
+        case .playbackSpeed:
+            playbackSpeedPopoverContent
+        }
+    }
+
+    var settingsRootPopoverContent: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            settingsNavigationButton(
+                title: "Subtitles",
+                detail: coordinator.subtitleControlText,
+                symbolName: coordinator.subtitleSymbolName,
+                disabled: !coordinator.hasSubtitleOptions
+            ) {
+                settingsPopoverDestination = .subtitles
+            }
+            settingsNavigationButton(
+                title: "Playback Speed",
+                detail: coordinator.playbackSpeedControlText,
+                symbolName: "speedometer"
+            ) {
+                settingsPopoverDestination = .playbackSpeed
+            }
+        }
+        .padding(8)
+        .frame(minWidth: 260)
     }
 
     var subtitlePopoverContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
-                subtitleMenuOptionButton(for: .off)
-                ForEach(coordinator.subtitleOptions) { option in
-                    subtitleMenuOptionButton(for: option)
+        VStack(alignment: .leading, spacing: 8) {
+            settingsSubmenuHeader(title: "Subtitles")
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    subtitleMenuOptionButton(for: .off)
+                    ForEach(coordinator.subtitleOptions) { option in
+                        subtitleMenuOptionButton(for: option)
+                    }
                 }
+                .padding(8)
             }
-            .padding(8)
         }
         .frame(minWidth: 220)
     }
@@ -926,7 +996,7 @@ private struct PlayerControlBar: View {
     func subtitleMenuOptionButton(for option: SubtitleOption) -> some View {
         Button {
             coordinator.selectSubtitle(option)
-            isSubtitlePopoverPresented = false
+            isSettingsPopoverPresented = false
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: option.id == coordinator.selectedSubtitleOptionID ? "checkmark" : "circle")
@@ -941,6 +1011,48 @@ private struct PlayerControlBar: View {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(
                         option.id == coordinator.selectedSubtitleOptionID
+                            ? Color.accentColor.opacity(0.14)
+                            : Color.clear
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    var playbackSpeedPopoverContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            settingsSubmenuHeader(title: "Playback Speed")
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(coordinator.playbackSpeedOptions) { option in
+                        playbackSpeedMenuOptionButton(for: option)
+                    }
+                }
+                .padding(8)
+            }
+        }
+        .frame(minWidth: 220)
+    }
+
+    func playbackSpeedMenuOptionButton(for option: PlaybackSpeedOption) -> some View {
+        Button {
+            coordinator.selectPlaybackSpeed(option.speed)
+            isSettingsPopoverPresented = false
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: option.speed == coordinator.selectedPlaybackSpeed ? "checkmark" : "circle")
+                    .foregroundStyle(option.speed == coordinator.selectedPlaybackSpeed ? Color.accentColor : .secondary)
+                Text(option.title)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        option.speed == coordinator.selectedPlaybackSpeed
                             ? Color.accentColor.opacity(0.14)
                             : Color.clear
                     )
@@ -1083,6 +1195,68 @@ private struct PlayerControlBar: View {
             .contentTransition(.symbolEffect(.replace))
             .frame(width: circularButtonLabelSize, height: circularButtonLabelSize)
             .animation(.snappy(duration: 0.11, extraBounce: 0), value: symbol)
+    }
+
+    func settingsNavigationButton(
+        title: String,
+        detail: String,
+        symbolName: String,
+        disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbolName)
+                    .foregroundStyle(disabled ? .tertiary : .secondary)
+                    .frame(width: 16)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .foregroundStyle(disabled ? .secondary : .primary)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(disabled ? Color.clear : Color.primary.opacity(0.04))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
+
+    func settingsSubmenuHeader(title: String) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                settingsPopoverDestination = .root
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                    Text("Settings")
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
     }
 }
 

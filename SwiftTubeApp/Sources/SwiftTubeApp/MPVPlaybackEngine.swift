@@ -102,6 +102,12 @@ final class MPVPlaybackEngine: NSObject {
         mpv_set_property(mpv, MPVProperty.volume, MPV_FORMAT_DOUBLE, &clampedVolume)
     }
 
+    func setRate(_ rate: Double) {
+        guard let mpv else { return }
+        var playbackRate = max(rate, 0.25)
+        mpv_set_property(mpv, MPVProperty.speed, MPV_FORMAT_DOUBLE, &playbackRate)
+    }
+
     func snapshot() -> (currentTime: Double, duration: Double, isPlaying: Bool, isBuffering: Bool) {
         updateCachedState()
         return (currentTime, duration, isPlaying, isBuffering)

@@ -35,6 +35,26 @@ private struct PlaybackTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section("Speed") {
+                Picker("Default playback speed", selection: $settings.defaultPlaybackSpeed) {
+                    ForEach(AppSettings.playbackSpeedOptions, id: \.self) { speed in
+                        Text(AppSettings.playbackSpeedLabel(speed)).tag(speed)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Picker("Spacebar hold speed", selection: $settings.spacebarHoldPlaybackSpeed) {
+                    ForEach(AppSettings.spacebarHoldPlaybackSpeedOptions, id: \.self) { speed in
+                        Text(AppSettings.playbackSpeedLabel(speed)).tag(speed)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Text("Each new video starts at the default playback speed. Holding the spacebar for 0.8 seconds temporarily switches to the configured hold speed until you release it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding()

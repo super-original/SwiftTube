@@ -11,6 +11,14 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(defaultQuality.rawValue, forKey: "defaultQuality") }
     }
 
+    @Published var defaultPlaybackSpeed: Double {
+        didSet { defaults.set(defaultPlaybackSpeed, forKey: "defaultPlaybackSpeed") }
+    }
+
+    @Published var spacebarHoldPlaybackSpeed: Double {
+        didSet { defaults.set(spacebarHoldPlaybackSpeed, forKey: "spacebarHoldPlaybackSpeed") }
+    }
+
     // MARK: - Controls
 
     @Published var arrowSeekSeconds: Int {
@@ -60,6 +68,14 @@ final class AppSettings: ObservableObject {
 
     init() {
         self.defaultQuality = DefaultQuality(rawValue: defaults.string(forKey: "defaultQuality") ?? "") ?? .auto
+        let storedDefaultPlaybackSpeed = defaults.double(forKey: "defaultPlaybackSpeed")
+        self.defaultPlaybackSpeed = Self.playbackSpeedOptions.contains(storedDefaultPlaybackSpeed)
+            ? storedDefaultPlaybackSpeed
+            : 1.0
+        let storedSpacebarHoldPlaybackSpeed = defaults.double(forKey: "spacebarHoldPlaybackSpeed")
+        self.spacebarHoldPlaybackSpeed = Self.spacebarHoldPlaybackSpeedOptions.contains(storedSpacebarHoldPlaybackSpeed)
+            ? storedSpacebarHoldPlaybackSpeed
+            : 2.0
         let arrow = defaults.integer(forKey: "arrowSeekSeconds")
         self.arrowSeekSeconds = arrow > 0 ? arrow : 5
         let jl = defaults.integer(forKey: "jlSeekSeconds")
@@ -80,6 +96,21 @@ final class AppSettings: ObservableObject {
     // MARK: - Types
 
     static let seekSecondsOptions = [5, 10, 15, 30, 60]
+    static let playbackSpeedOptions: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+    static let spacebarHoldPlaybackSpeedOptions: [Double] = [1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
+
+    static func playbackSpeedLabel(_ speed: Double) -> String {
+        let rounded = (speed * 100).rounded() / 100
+        let rawText: String
+        if abs(rounded * 10 - (rounded * 10).rounded()) < 0.001 {
+            rawText = String(format: "%.1f", rounded)
+        } else {
+            rawText = String(format: "%.2f", rounded)
+        }
+        let trimmed = rawText
+            .replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
+        return "\(trimmed)x"
+    }
 
 
 
