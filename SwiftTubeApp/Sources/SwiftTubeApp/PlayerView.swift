@@ -742,14 +742,6 @@ private struct PlayerChromeOverlay: View {
     }
 }
 
-private struct SettingsPopoverSizePreferenceKey: PreferenceKey {
-    static let defaultValue: [String: CGSize] = [:]
-
-    static func reduce(value: inout [String: CGSize], nextValue: () -> [String: CGSize]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-    }
-}
-
 private struct PlayerControlBar: View {
     private enum SettingsPopoverDestination: String {
         case root
@@ -761,14 +753,16 @@ private struct PlayerControlBar: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Namespace private var playPauseNamespace
+    @State private var isQualityPopoverPresented = false
+    @State private var isSubtitlePopoverPresented = false
     @State private var isSettingsPopoverPresented = false
     @State private var settingsPopoverDestination: SettingsPopoverDestination = .root
     @State private var settingsNavigationDirection = 1
-    @State private var settingsPanelSizes: [String: CGSize] = [:]
     @State private var sliderWidth: CGFloat = 0
 
     private let compactControlHeight: CGFloat = 38
     private let circularButtonLabelSize: CGFloat = 30
+    private let qualityButtonMinWidth: CGFloat = 104
     private let volumeIconContentHeight: CGFloat = 22
     private let timeLabelWidth: CGFloat = 54
 
@@ -778,6 +772,8 @@ private struct PlayerControlBar: View {
                 playPauseButton
                 volumeControl
                 Spacer(minLength: 0)
+                subtitlesButton
+                qualityMenu
                 settingsMenu
                 theaterToggle
                 fullscreenButton
@@ -935,15 +931,20 @@ private struct PlayerControlBar: View {
     }
 
     var currentSettingsPanelSize: CGSize {
-        settingsPanelSizes[settingsPopoverDestination.rawValue]
-            ?? settingsPanelSizes[SettingsPopoverDestination.root.rawValue]
-            ?? CGSize(width: 260, height: 132)
+        switch settingsPopoverDestination {
+        case .root:
+            return CGSize(width: 260, height: 156)
+        case .subtitles:
+            return CGSize(width: 240, height: listPopoverHeight(itemCount: coordinator.subtitleOptions.count + 1))
+        case .playbackSpeed:
+            return CGSize(width: 220, height: listPopoverHeight(itemCount: coordinator.playbackSpeedOptions.count))
+        case .quality:
+            return CGSize(width: 280, height: listPopoverHeight(itemCount: coordinator.qualityOptions.count))
+        }
     }
 
     var settingsPopoverContent: some View {
         ZStack(alignment: .topLeading) {
-            settingsMeasurementLayer
-
             if settingsPopoverDestination == .root {
                 settingsPanel(for: .root, transition: settingsPanelTransition) {
                     settingsRootPopoverContent
@@ -970,36 +971,8 @@ private struct PlayerControlBar: View {
         }
         .frame(width: currentSettingsPanelSize.width, height: currentSettingsPanelSize.height, alignment: .topLeading)
         .clipped()
-        .onPreferenceChange(SettingsPopoverSizePreferenceKey.self) { sizes in
-            settingsPanelSizes.merge(sizes, uniquingKeysWith: { _, new in new })
-        }
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: currentSettingsPanelSize)
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: settingsPopoverDestination)
-    }
-
-    var settingsMeasurementLayer: some View {
-        ZStack(alignment: .topLeading) {
-            settingsPanel(for: .root, transition: .identity) {
-                settingsRootPopoverContent
-            }
-            .hidden()
-
-            settingsPanel(for: .subtitles, transition: .identity) {
-                subtitlePopoverContent
-            }
-            .hidden()
-
-            settingsPanel(for: .playbackSpeed, transition: .identity) {
-                playbackSpeedPopoverContent
-            }
-            .hidden()
-
-            settingsPanel(for: .quality, transition: .identity) {
-                qualityPopoverContent
-            }
-            .hidden()
-        }
-        .allowsHitTesting(false)
     }
 
     var settingsPanelTransition: AnyTransition {
@@ -1017,15 +990,6 @@ private struct PlayerControlBar: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         content()
-            .fixedSize(horizontal: false, vertical: true)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: SettingsPopoverSizePreferenceKey.self,
-                        value: [destination.rawValue: geo.size]
-                    )
-                }
-            )
             .transition(transition)
     }
 
@@ -1058,26 +1022,68 @@ private struct PlayerControlBar: View {
         .frame(minWidth: 260)
     }
 
+    var subtitlesButton: some View {
+        Button {
+            isSubtitlePopoverPresented.toggle()
+        } label: {
+            circularButtonLabel(
+                symbol: coordinator.subtitleSymbolName,
+                fontSize: 14,
+                foregroundStyle: coordinator.hasSubtitleOptions ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
+            )
+        }
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.circle)
+        .controlSize(.regular)
+        .disabled(!coordinator.hasSubtitleOptions)
+        .popover(
+            isPresented: $isSubtitlePopoverPresented,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            standaloneSubtitlePopoverContent
+        }
+        .onChange(of: isSubtitlePopoverPresented) { _, isPresented in
+            if isPresented {
+                coordinator.beginMenuInteraction()
+            } else {
+                coordinator.endMenuInteraction()
+            }
+        }
+        .accessibilityLabel("Subtitles")
+    }
+
     var subtitlePopoverContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             settingsSubmenuHeader(title: "Subtitles")
 
-            VStack(alignment: .leading, spacing: 4) {
-                subtitleMenuOptionButton(for: .off)
-                ForEach(coordinator.subtitleOptions) { option in
-                    subtitleMenuOptionButton(for: option)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 8)
+            subtitleMenuList
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
         }
         .frame(minWidth: 220)
+    }
+
+    var standaloneSubtitlePopoverContent: some View {
+        subtitleMenuList
+            .padding(8)
+            .frame(minWidth: 220)
+    }
+
+    var subtitleMenuList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            subtitleMenuOptionButton(for: .off)
+            ForEach(coordinator.subtitleOptions) { option in
+                subtitleMenuOptionButton(for: option)
+            }
+        }
     }
 
     func subtitleMenuOptionButton(for option: SubtitleOption) -> some View {
         Button {
             coordinator.selectSubtitle(option)
             isSettingsPopoverPresented = false
+            isSubtitlePopoverPresented = false
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: option.id == coordinator.selectedSubtitleOptionID ? "checkmark" : "circle")
@@ -1141,25 +1147,82 @@ private struct PlayerControlBar: View {
         .buttonStyle(.plain)
     }
 
+    var qualityMenu: some View {
+        Button {
+            isQualityPopoverPresented.toggle()
+        } label: {
+            qualityButtonLabel
+        }
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.regular)
+        .popover(
+            isPresented: $isQualityPopoverPresented,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            standaloneQualityPopoverContent
+        }
+        .onChange(of: isQualityPopoverPresented) { _, isPresented in
+            if isPresented {
+                coordinator.beginMenuInteraction()
+            } else {
+                coordinator.endMenuInteraction()
+            }
+        }
+        .accessibilityLabel("Quality")
+        .accessibilityValue(coordinator.qualityControlText)
+    }
+
+    var qualityButtonLabel: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "dial.medium")
+                .font(.system(size: 13, weight: .semibold))
+
+            Text(coordinator.qualityControlText)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(minWidth: qualityButtonMinWidth)
+        .frame(height: circularButtonLabelSize)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
     var qualityPopoverContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             settingsSubmenuHeader(title: "Quality")
 
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(coordinator.qualityOptions) { option in
-                    qualityMenuOptionButton(for: option)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 8)
+            qualityMenuList
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
         }
         .frame(minWidth: 260)
+    }
+
+    var standaloneQualityPopoverContent: some View {
+        qualityMenuList
+            .padding(8)
+            .frame(minWidth: 260)
+    }
+
+    var qualityMenuList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(coordinator.qualityOptions) { option in
+                qualityMenuOptionButton(for: option)
+            }
+        }
     }
 
     func qualityMenuOptionButton(for option: QualityOption) -> some View {
         Button {
             coordinator.selectQuality(option)
             isSettingsPopoverPresented = false
+            isQualityPopoverPresented = false
         } label: {
             qualityMenuRow(for: option)
                 .padding(.horizontal, 12)
@@ -1304,6 +1367,13 @@ private struct PlayerControlBar: View {
         withAnimation(.snappy(duration: 0.18, extraBounce: 0)) {
             settingsPopoverDestination = destination
         }
+    }
+
+    private func listPopoverHeight(itemCount: Int) -> CGFloat {
+        let headerHeight: CGFloat = 48
+        let rowHeight: CGFloat = 38
+        let verticalPadding: CGFloat = 20
+        return min(max(headerHeight + (CGFloat(itemCount) * rowHeight) + verticalPadding, 132), 420)
     }
 }
 
