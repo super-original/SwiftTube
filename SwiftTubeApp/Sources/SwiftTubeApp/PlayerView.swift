@@ -41,6 +41,7 @@ private struct ManagedPopoverPresenter: NSViewRepresentable {
     let preferredEdge: NSRectEdge
     let contentSize: CGSize
     let content: AnyView
+    let onDismiss: () -> Void
 
     @MainActor
     func makeCoordinator() -> Coordinator {
@@ -59,6 +60,7 @@ private struct ManagedPopoverPresenter: NSViewRepresentable {
         context.coordinator.anchorView = nsView
         context.coordinator.onDismiss = {
             DispatchQueue.main.async {
+                onDismiss()
                 if isPresented {
                     isPresented = false
                 }
@@ -98,7 +100,7 @@ private struct ManagedPopoverPresenter: NSViewRepresentable {
             if popover.contentSize != contentSize {
                 NSAnimationContext.runAnimationGroup { context in
                     context.allowsImplicitAnimation = true
-                    context.duration = 0.26
+                    context.duration = 0.30
                     context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                     popover.contentSize = contentSize
                 }
@@ -1010,7 +1012,8 @@ private struct PlayerControlBar: View {
                 isPresented: $isSettingsOverlayPresented,
                 preferredEdge: .minY,
                 contentSize: settingsPopoverSize,
-                content: AnyView(settingsPopoverContent)
+                content: AnyView(settingsPopoverContent),
+                onDismiss: resetSettingsMenuNavigation
             )
             .allowsHitTesting(false)
         }
@@ -1019,6 +1022,7 @@ private struct PlayerControlBar: View {
                 resetSettingsMenuNavigation()
                 coordinator.beginMenuInteraction()
             } else {
+                resetSettingsMenuNavigation()
                 coordinator.endMenuInteraction()
             }
         }
@@ -1026,15 +1030,16 @@ private struct PlayerControlBar: View {
     }
 
     var settingsPopoverSize: CGSize {
+        let fixedWidth: CGFloat = 280
         switch settingsShowingSubmenu ? settingsCurrentPage : .root {
         case .root:
-            return CGSize(width: 260, height: 150)
+            return CGSize(width: fixedWidth, height: 166)
         case .subtitles:
-            return CGSize(width: 240, height: listPopoverHeight(itemCount: coordinator.subtitleOptions.count + 1))
+            return CGSize(width: fixedWidth, height: listPopoverHeight(itemCount: coordinator.subtitleOptions.count + 1))
         case .playbackSpeed:
-            return CGSize(width: 220, height: listPopoverHeight(itemCount: coordinator.playbackSpeedOptions.count))
+            return CGSize(width: fixedWidth, height: listPopoverHeight(itemCount: coordinator.playbackSpeedOptions.count))
         case .quality:
-            return CGSize(width: 280, height: listPopoverHeight(itemCount: coordinator.qualityOptions.count))
+            return CGSize(width: fixedWidth, height: listPopoverHeight(itemCount: coordinator.qualityOptions.count))
         }
     }
 
@@ -1052,8 +1057,8 @@ private struct PlayerControlBar: View {
         .offset(x: settingsShowingSubmenu ? -panelSize.width : 0)
         .frame(width: panelSize.width, height: panelSize.height, alignment: .topLeading)
         .clipped()
-        .animation(.easeOut(duration: 0.26), value: settingsShowingSubmenu)
-        .animation(.easeOut(duration: 0.26), value: settingsCurrentPage)
+        .animation(.easeOut(duration: 0.30), value: settingsShowingSubmenu)
+        .animation(.easeOut(duration: 0.30), value: settingsCurrentPage)
     }
 
     var settingsRootPopoverContent: some View {
@@ -1440,14 +1445,14 @@ private struct PlayerControlBar: View {
     private func showSettingsSubmenu(_ destination: SettingsPopoverDestination) {
         settingsVisibleSubmenu = destination
         settingsCurrentPage = destination
-        withAnimation(.easeOut(duration: 0.26)) {
+        withAnimation(.easeOut(duration: 0.30)) {
             settingsShowingSubmenu = true
         }
     }
 
     private func showSettingsRoot() {
         settingsCurrentPage = .root
-        withAnimation(.easeOut(duration: 0.26)) {
+        withAnimation(.easeOut(duration: 0.30)) {
             settingsShowingSubmenu = false
         }
     }
@@ -1461,7 +1466,7 @@ private struct PlayerControlBar: View {
     private func listPopoverHeight(itemCount: Int) -> CGFloat {
         let headerHeight: CGFloat = 44
         let rowHeight: CGFloat = 38
-        let verticalPadding: CGFloat = 10
+        let verticalPadding: CGFloat = 6
         return min(max(headerHeight + (CGFloat(itemCount) * rowHeight) + verticalPadding, 112), 420)
     }
 }

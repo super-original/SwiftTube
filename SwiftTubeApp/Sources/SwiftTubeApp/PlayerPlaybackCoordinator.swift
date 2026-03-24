@@ -651,15 +651,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         isMenuInteractionActive = true
         noteInteraction()
         menuInteractionTask?.cancel()
-        menuInteractionTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            guard !Task.isCancelled else { return }
-            self?.endMenuInteraction()
-        }
     }
 
     func endMenuInteraction() {
         isMenuInteractionActive = false
+        menuInteractionTask?.cancel()
+        menuInteractionTask = nil
         if isHoveringStage {
             startHideMonitorIfNeeded()
         } else {
