@@ -3,16 +3,67 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
+            SidebarTab()
+                .tabItem { Label("Sidebar", systemImage: "sidebar.left") }
+                .tag(0)
+
             PlaybackTab()
                 .tabItem { Label("Playback", systemImage: "play.circle") }
-                .tag(0)
+                .tag(1)
 
             ControlsTab()
                 .tabItem { Label("Controls", systemImage: "keyboard") }
-                .tag(1)
+                .tag(2)
         }
         .frame(width: 480)
         .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+private struct SidebarTab: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        Form {
+            Section("Sidebar Items") {
+                ForEach(settings.sidebarItemOrder, id: \.self) { item in
+                    HStack(spacing: 12) {
+                        Toggle(isOn: Binding(
+                            get: { settings.isSidebarItemVisible(item) },
+                            set: { settings.setSidebarItem(item, visible: $0) }
+                        )) {
+                            Label(item.title, systemImage: item.systemImage)
+                        }
+                        .toggleStyle(.switch)
+
+                        Spacer()
+
+                        HStack(spacing: 6) {
+                            Button {
+                                settings.moveSidebarItem(item, direction: -1)
+                            } label: {
+                                Image(systemName: "arrow.up")
+                            }
+                            .disabled(settings.sidebarItemOrder.first == item)
+
+                            Button {
+                                settings.moveSidebarItem(item, direction: 1)
+                            } label: {
+                                Image(systemName: "arrow.down")
+                            }
+                            .disabled(settings.sidebarItemOrder.last == item)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+
+                Text("Choose which top-level sections appear in the sidebar and arrange them in your preferred order. If only one section is effectively visible, SwiftTube hides the sidebar automatically.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
     }
 }
 

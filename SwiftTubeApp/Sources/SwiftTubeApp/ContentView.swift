@@ -1,8 +1,11 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
     @StateObject private var viewModel = HomeViewModel()
     @StateObject private var searchViewModel = SearchViewModel()
+    @StateObject private var playlistLibraryViewModel = PlaylistLibraryViewModel()
+    @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var backend: BackendManager
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
@@ -12,9 +15,19 @@ struct ContentView: View {
     ]
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             backgroundView
-            currentScreen
+
+            if shouldShowSidebar {
+                NavigationSplitView {
+                    sidebar
+                } detail: {
+                    currentScreen
+                }
+                .navigationSplitViewStyle(.balanced)
+            } else {
+                currentScreen
+            }
         }
         .overlay(backendOverlay)
         .sheet(isPresented: $authSession.isSheetPresented) {
@@ -22,14 +35,16 @@ struct ContentView: View {
                 .environmentObject(authSession)
         }
         .toolbar {
+            if shouldShowSidebar {
+                ToolbarItem(placement: .navigation) {
+                    SidebarToggleButton()
+                }
+            }
+
             ToolbarItem(placement: .navigation) {
                 Button {
                     searchViewModel.clear()
-                    if case .home = navigation.currentRoute {
-                        viewModel.reload()
-                    } else {
-                        navigation.showHome()
-                    }
+                    navigation.showHome()
                 } label: {
                     BrandToolbarLabel()
                 }
@@ -68,7 +83,7 @@ struct ContentView: View {
                 }
                 .disabled(!backend.isRunning)
 
-                Button(action: viewModel.reload) {
+                Button(action: refreshCurrentRoute) {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(!backend.isRunning)
@@ -80,16 +95,38 @@ struct ContentView: View {
             if backend.isRunning {
                 await authSession.loadStatus()
                 viewModel.reload()
+                playlistLibraryViewModel.reload()
             }
         }
         .task(id: authSession.contentRefreshID) {
             guard backend.isRunning else { return }
             viewModel.reload()
+            playlistLibraryViewModel.reload()
+        }
+        .onAppear {
+            navigation.ensureValidSidebarSelection(visibleItems: visibleSidebarItems)
+        }
+        .onChange(of: authSession.status.authenticated) { _, _ in
+            navigation.ensureValidSidebarSelection(visibleItems: visibleSidebarItems)
+        }
+        .onChange(of: settings.sidebarItemOrder) { _, _ in
+            navigation.ensureValidSidebarSelection(visibleItems: visibleSidebarItems)
+        }
+        .onChange(of: settings.hiddenSidebarItems) { _, _ in
+            navigation.ensureValidSidebarSelection(visibleItems: visibleSidebarItems)
         }
     }
 }
 
 private extension ContentView {
+    var visibleSidebarItems: [SidebarItemKind] {
+        settings.visibleSidebarItems(isAuthenticated: authSession.status.authenticated)
+    }
+
+    var shouldShowSidebar: Bool {
+        visibleSidebarItems.count > 1
+    }
+
     var backgroundView: some View {
         Color(NSColor.windowBackgroundColor)
             .ignoresSafeArea()
@@ -97,29 +134,55 @@ private extension ContentView {
 
     @ViewBuilder
     var currentScreen: some View {
-        switch navigation.currentRoute {
-        case .home:
-            homeScreen
-        case .video(let video):
-            PlayerScreen(video: video)
-                .id(video.id)
+        if searchViewModel.isActive {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    searchContentView
+                }
+                .padding(24)
+            }
+        } else {
+            switch navigation.currentRoute {
+            case .home:
+                homeScreen
+            case .playlistLibrary:
+                PlaylistLibraryScreen(viewModel: playlistLibraryViewModel)
+                    .environmentObject(navigation)
+                    .id("playlist-library-\(navigation.routeRefreshID.uuidString)")
+            case .playlistFeed(let playlist):
+                PlaylistFeedScreen(playlist: playlist)
+                    .environmentObject(navigation)
+                    .id("\(playlist.id)-\(navigation.routeRefreshID.uuidString)")
+            case .video(let video):
+                PlayerScreen(video: video)
+                    .id("\(video.id)-\(navigation.routeRefreshID.uuidString)")
+            }
         }
     }
 
     var homeScreen: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                if searchViewModel.isActive {
-                    searchContentView
-                } else {
-                    if let notice = viewModel.notice {
-                        NoticeBanner(text: notice)
-                    }
-                    contentView
+                if let notice = viewModel.notice {
+                    NoticeBanner(text: notice)
                 }
+                contentView
             }
             .padding(24)
         }
+    }
+
+    var sidebar: some View {
+        List(selection: Binding(
+            get: { Optional(navigation.selectedSidebarItem) },
+            set: { if let item = $0 { navigation.selectSidebarItem(item) } }
+        )) {
+            ForEach(visibleSidebarItems) { item in
+                Label(item.title, systemImage: item.systemImage)
+                    .tag(item)
+            }
+        }
+        .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
     }
 
     @ViewBuilder
@@ -232,6 +295,24 @@ private extension ContentView {
         }
     }
 
+    func refreshCurrentRoute() {
+        if searchViewModel.isActive {
+            searchViewModel.submit(navigation: navigation)
+            return
+        }
+
+        switch navigation.currentRoute {
+        case .home:
+            viewModel.reload()
+        case .playlistLibrary:
+            playlistLibraryViewModel.reload()
+        case .playlistFeed:
+            navigation.refreshCurrentRoute()
+        case .video:
+            navigation.refreshCurrentRoute()
+        }
+    }
+
     @ViewBuilder
     var backendOverlay: some View {
         switch backend.state {
@@ -290,6 +371,238 @@ private extension ContentView {
         case .running:
             EmptyView()
         }
+    }
+}
+
+private struct SidebarToggleButton: View {
+    var body: some View {
+        Button(action: toggleSidebar) {
+            Image(systemName: "sidebar.left")
+        }
+        .buttonStyle(.plain)
+        .help("Toggle Sidebar")
+    }
+
+    private func toggleSidebar() {
+        NSApp.keyWindow?.firstResponder?.tryToPerform(#selector(NSSplitViewController.toggleSidebar(_:)), with: nil)
+    }
+}
+
+private struct PlaylistLibraryScreen: View {
+    @ObservedObject var viewModel: PlaylistLibraryViewModel
+    @EnvironmentObject private var navigation: AppNavigationModel
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 240), spacing: 20, alignment: .top)
+    ]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                Text("Playlists")
+                    .font(.largeTitle.weight(.bold))
+
+                content
+            }
+            .padding(24)
+        }
+        .task {
+            viewModel.loadInitial()
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if viewModel.playlists.isEmpty {
+            if viewModel.isLoading {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                    ForEach(0..<6, id: \.self) { _ in
+                        PlaceholderCard()
+                    }
+                }
+            } else if let error = viewModel.errorMessage {
+                EmptyStateView(
+                    title: "Couldn’t load playlists",
+                    message: error,
+                    actionTitle: "Try Again"
+                ) {
+                    viewModel.reload()
+                }
+            } else {
+                EmptyStateView(
+                    title: "No playlists yet",
+                    message: "Your YouTube playlist library is empty.",
+                    actionTitle: "Refresh"
+                ) {
+                    viewModel.reload()
+                }
+            }
+        } else {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                ForEach(viewModel.playlists) { playlist in
+                    Button {
+                        navigation.showPlaylist(
+                            PlaylistReference(
+                                playlistId: playlist.playlistId,
+                                title: playlist.title,
+                                kind: playlist.playlistId == "WL" ? .watchLater : playlist.playlistId == "LL" ? .likedVideos : .userPlaylist
+                            )
+                        )
+                    } label: {
+                        PlaylistCard(playlist: playlist)
+                    }
+                    .buttonStyle(.plain)
+                    .onAppear {
+                        viewModel.loadMoreIfNeeded(currentPlaylist: playlist)
+                    }
+                }
+            }
+
+            if viewModel.isLoading {
+                ProgressView("Loading more...")
+                    .padding(.top, 16)
+            }
+        }
+    }
+}
+
+private struct PlaylistFeedScreen: View {
+    @StateObject private var viewModel: PlaylistFeedViewModel
+    @EnvironmentObject private var navigation: AppNavigationModel
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 240), spacing: 20, alignment: .top)
+    ]
+
+    init(playlist: PlaylistReference) {
+        _viewModel = StateObject(wrappedValue: PlaylistFeedViewModel(playlist: playlist))
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                header
+                content
+            }
+            .padding(24)
+        }
+        .task {
+            viewModel.loadInitial()
+        }
+    }
+
+    @ViewBuilder
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(viewModel.feed?.title ?? viewModel.playlist.title)
+                .font(.largeTitle.weight(.bold))
+
+            let details = [viewModel.feed?.itemCountText, viewModel.feed?.privacy, viewModel.feed?.ownerText]
+                .compactMap { $0 }
+
+            if !details.isEmpty {
+                Text(details.joined(separator: " • "))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if viewModel.items.isEmpty {
+            if viewModel.isLoading {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                    ForEach(0..<6, id: \.self) { _ in
+                        PlaceholderCard()
+                    }
+                }
+            } else if let error = viewModel.errorMessage {
+                EmptyStateView(
+                    title: "Couldn’t load playlist",
+                    message: error,
+                    actionTitle: "Try Again"
+                ) {
+                    viewModel.reload()
+                }
+            } else {
+                EmptyStateView(
+                    title: "This playlist is empty",
+                    message: "There are no videos here yet.",
+                    actionTitle: "Refresh"
+                ) {
+                    viewModel.reload()
+                }
+            }
+        } else {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                ForEach(viewModel.items, id: \.id) { video in
+                    Button {
+                        navigation.showVideo(video)
+                    } label: {
+                        VideoCard(video: video)
+                    }
+                    .buttonStyle(.plain)
+                    .onAppear {
+                        viewModel.loadMoreIfNeeded(currentVideo: video)
+                    }
+                }
+            }
+
+            if viewModel.isLoading {
+                ProgressView("Loading more...")
+                    .padding(.top, 16)
+            }
+        }
+    }
+}
+
+private struct PlaylistCard: View {
+    let playlist: PlaylistSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ZStack(alignment: .bottomLeading) {
+                CachedAsyncImage(url: playlist.thumbnailURL) {
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(Color.gray.opacity(0.22))
+                        .overlay(
+                            Image(systemName: "music.note.list")
+                                .font(.system(size: 26))
+                                .foregroundStyle(.secondary)
+                        )
+                }
+                .frame(maxWidth: .infinity)
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+
+                if let count = playlist.itemCountText, !count.isEmpty {
+                    Text(count)
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(12)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(playlist.title)
+                    .font(.headline)
+                    .lineLimit(2)
+
+                let metadata = [playlist.privacy, playlist.updatedText]
+                    .compactMap { $0 }
+                    .joined(separator: " • ")
+
+                if !metadata.isEmpty {
+                    Text(metadata)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

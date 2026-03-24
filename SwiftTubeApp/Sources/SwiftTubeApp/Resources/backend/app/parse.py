@@ -7,7 +7,9 @@ from typing import Any, Dict, Iterable, List, Optional
 from .models import (
     CommentItem,
     InnerTubeCommand,
+    PlaylistFeed,
     PlaylistOption,
+    PlaylistSummary,
     RatingState,
     StoryboardSpec,
     StreamInfo,
@@ -351,6 +353,69 @@ def parse_lockup_video_item(lockup: Any) -> Optional[VideoItem]:
     )
 
 
+def parse_lockup_playlist_item(lockup: Any) -> Optional[PlaylistSummary]:
+    if not isinstance(lockup, dict):
+        return None
+    if lockup.get("contentType") != "LOCKUP_CONTENT_TYPE_PLAYLIST":
+        return None
+
+    playlist_id = lockup.get("contentId")
+    if not isinstance(playlist_id, str) or not playlist_id:
+        watch_endpoint = (
+            lockup.get("rendererContext", {})
+            .get("commandContext", {})
+            .get("onTap", {})
+            .get("innertubeCommand", {})
+            .get("watchEndpoint", {})
+        )
+        playlist_id = watch_endpoint.get("playlistId") if isinstance(watch_endpoint, dict) else None
+    if not isinstance(playlist_id, str) or not playlist_id:
+        return None
+
+    metadata = lockup.get("metadata", {}).get("lockupMetadataViewModel", {})
+    title = metadata.get("title", {}).get("content")
+    if not isinstance(title, str) or not title:
+        return None
+
+    rows = (
+        metadata.get("metadata", {})
+        .get("contentMetadataViewModel", {})
+        .get("metadataRows", [])
+    )
+
+    privacy = None
+    item_count_text = None
+    updated_text = None
+
+    if isinstance(rows, list) and rows:
+        first_row = row_text_parts(rows[0])
+        if first_row:
+            privacy = first_row[0]
+            if len(first_row) > 1 and "video" in first_row[1].lower():
+                item_count_text = first_row[1]
+        if len(rows) > 1:
+            second_row = row_text_parts(rows[1])
+            if second_row:
+                updated_text = second_row[0]
+
+    thumbnails = build_source_thumbnails(
+        lockup.get("contentImage", {})
+        .get("collectionThumbnailViewModel", {})
+        .get("primaryThumbnail", {})
+        .get("thumbnailViewModel", {})
+        .get("image", {})
+    )
+
+    return PlaylistSummary(
+        playlistId=playlist_id,
+        title=title,
+        privacy=privacy,
+        itemCountText=item_count_text,
+        updatedText=updated_text,
+        thumbnails=thumbnails,
+    )
+
+
 def extract_video_items(data: Any, limit: int = 120) -> List[VideoItem]:
     items: List[VideoItem] = []
     seen: set[str] = set()
@@ -406,6 +471,27 @@ def extract_video_items(data: Any, limit: int = 120) -> List[VideoItem]:
         )
         if len(items) >= limit:
             break
+    return items
+
+
+def extract_playlist_summaries(data: Any, limit: int = 120) -> List[PlaylistSummary]:
+    items: List[PlaylistSummary] = []
+    seen: set[str] = set()
+
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+        lockup = node.get("lockupViewModel")
+        if not isinstance(lockup, dict):
+            continue
+        item = parse_lockup_playlist_item(lockup)
+        if item is None or item.playlistId in seen:
+            continue
+        seen.add(item.playlistId)
+        items.append(item)
+        if len(items) >= limit:
+            break
+
     return items
 
 
@@ -800,6 +886,60 @@ def extract_watch_metadata(data: Any) -> Dict[str, Optional[str]]:
             )
 
     return metadata
+
+
+def extract_playlist_feed(data: Any, playlist_id: str) -> PlaylistFeed:
+    title = "Playlist"
+    owner_text = None
+    privacy = None
+    item_count_text = None
+
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+        header = node.get("playlistHeaderRenderer")
+        if not isinstance(header, dict):
+            continue
+
+        title = get_text(header.get("title")) or title
+        owner_text = owner_text or get_text(header.get("ownerText"))
+        privacy = privacy or header.get("privacy")
+        item_count_text = item_count_text or get_text(header.get("numVideosText"))
+        break
+
+    items: List[VideoItem] = []
+    seen: set[str] = set()
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+        renderer = node.get("playlistVideoRenderer")
+        if not isinstance(renderer, dict):
+            continue
+        video_id = renderer.get("videoId")
+        if not isinstance(video_id, str) or not video_id or video_id in seen:
+            continue
+        seen.add(video_id)
+        items.append(
+            VideoItem(
+                id=video_id,
+                title=get_text(renderer.get("title")) or "Untitled",
+                channel=get_text(renderer.get("shortBylineText")) or get_text(renderer.get("longBylineText")),
+                viewCountText=get_text(renderer.get("videoInfo")),
+                publishedTimeText=get_text(renderer.get("publishedTimeText")),
+                durationText=get_text(renderer.get("lengthText")),
+                thumbnails=build_thumbnails(renderer.get("thumbnail")),
+            )
+        )
+
+    return PlaylistFeed(
+        playlistId=playlist_id,
+        title=title,
+        ownerText=owner_text,
+        privacy=privacy,
+        itemCountText=item_count_text,
+        items=items,
+        continuation=extract_continuation_token(data),
+    )
 
 
 def extract_subscription_state(

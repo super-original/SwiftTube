@@ -178,6 +178,113 @@ final class SearchViewModel: ObservableObject {
 }
 
 @MainActor
+final class PlaylistLibraryViewModel: ObservableObject {
+    @Published private(set) var playlists: [PlaylistSummary] = []
+    @Published private(set) var isLoading = false
+    @Published var errorMessage: String? = nil
+
+    private var continuation: String? = nil
+    private var hasLoadedInitial = false
+
+    func loadInitial() {
+        guard !hasLoadedInitial else { return }
+        hasLoadedInitial = true
+        Task { await fetch(reset: true) }
+    }
+
+    func reload() {
+        hasLoadedInitial = false
+        loadInitial()
+    }
+
+    func loadMoreIfNeeded(currentPlaylist: PlaylistSummary) {
+        guard let last = playlists.last, last == currentPlaylist else { return }
+        guard !isLoading, continuation != nil else { return }
+        Task { await fetch(reset: false) }
+    }
+
+    private func fetch(reset: Bool) async {
+        isLoading = true
+        defer { isLoading = false }
+
+        if reset {
+            continuation = nil
+            playlists = []
+            errorMessage = nil
+        }
+
+        do {
+            let response = try await BackendClient.shared.fetchPlaylistLibrary(continuation: continuation)
+            continuation = response.continuation
+            playlists.append(contentsOf: response.items)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+@MainActor
+final class PlaylistFeedViewModel: ObservableObject {
+    @Published private(set) var feed: PlaylistFeed? = nil
+    @Published private(set) var items: [VideoItem] = []
+    @Published private(set) var isLoading = false
+    @Published var errorMessage: String? = nil
+
+    let playlist: PlaylistReference
+    private var continuation: String? = nil
+    private var hasLoadedInitial = false
+
+    init(playlist: PlaylistReference) {
+        self.playlist = playlist
+    }
+
+    func loadInitial() {
+        guard !hasLoadedInitial else { return }
+        hasLoadedInitial = true
+        Task { await fetch(reset: true) }
+    }
+
+    func reload() {
+        hasLoadedInitial = false
+        loadInitial()
+    }
+
+    func loadMoreIfNeeded(currentVideo: VideoItem) {
+        guard let last = items.last, last == currentVideo else { return }
+        guard !isLoading, continuation != nil else { return }
+        Task { await fetch(reset: false) }
+    }
+
+    private func fetch(reset: Bool) async {
+        isLoading = true
+        defer { isLoading = false }
+
+        if reset {
+            continuation = nil
+            feed = nil
+            items = []
+            errorMessage = nil
+        }
+
+        do {
+            let response = try await BackendClient.shared.fetchPlaylistFeed(
+                id: playlist.playlistId,
+                continuation: continuation
+            )
+            if reset || feed == nil {
+                feed = response
+            }
+            continuation = response.continuation
+            items.append(contentsOf: response.items)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+@MainActor
 final class PlayerViewModel: ObservableObject {
     @Published var playback: VideoPlayback? = nil
     @Published var isLoading = true

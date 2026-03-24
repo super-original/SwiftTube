@@ -14,6 +14,8 @@ from .models import (
     AuthStatusResponse,
     BrowserAuthRequest,
     CommentsResponse,
+    PlaylistFeed,
+    PlaylistLibraryResponse,
     PlaylistMutationRequest,
     PlaylistMutationResponse,
     PlaylistOptionsResponse,
@@ -32,8 +34,10 @@ from .parse import (
     extract_comments,
     extract_comments_token,
     extract_continuation_token,
+    extract_playlist_feed,
     extract_playlist_options,
     extract_playlist_option_commands,
+    extract_playlist_summaries,
     extract_rating_commands,
     extract_rating_state,
     extract_related_videos,
@@ -107,6 +111,10 @@ def _find_playlist_option(options: list, playlist_id: str):
         if option.playlistId == playlist_id:
             return option
     return None
+
+
+def _playlist_browse_id(playlist_id: str) -> str:
+    return playlist_id if playlist_id.startswith("VL") else f"VL{playlist_id}"
 
 
 def _load_recommendations(
@@ -231,6 +239,44 @@ def search(
     items = extract_video_items(data)
     token = extract_continuation_token(data)
     return SearchResponse(items=items, continuation=token, query=q)
+
+
+@app.get("/library/playlists", response_model=PlaylistLibraryResponse)
+def library_playlists(
+    continuation: Optional[str] = Query(default=None, min_length=1),
+) -> PlaylistLibraryResponse:
+    client_web = _require_authenticated_web_client()
+
+    try:
+        if continuation:
+            data = client_web.browse(continuation=continuation)
+        else:
+            data = client_web.browse(browse_id="FEplaylist_aggregation")
+    except RequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return PlaylistLibraryResponse(
+        items=extract_playlist_summaries(data),
+        continuation=extract_continuation_token(data),
+    )
+
+
+@app.get("/library/playlist/{playlist_id}", response_model=PlaylistFeed)
+def library_playlist_feed(
+    playlist_id: str,
+    continuation: Optional[str] = Query(default=None, min_length=1),
+) -> PlaylistFeed:
+    client_web = _require_authenticated_web_client()
+
+    try:
+        if continuation:
+            data = client_web.browse(continuation=continuation)
+        else:
+            data = client_web.browse(browse_id=_playlist_browse_id(playlist_id))
+    except RequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return extract_playlist_feed(data, playlist_id=playlist_id.removeprefix("VL"))
 
 
 def _video_info(

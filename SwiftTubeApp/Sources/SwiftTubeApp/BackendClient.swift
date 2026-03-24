@@ -49,6 +49,26 @@ final class BackendClient {
         return try await performRequest(url: url)
     }
 
+    func fetchPlaylistLibrary(continuation: String? = nil) async throws -> PlaylistLibraryResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("library/playlists"), resolvingAgainstBaseURL: false)
+        if let continuation {
+            components?.queryItems = [URLQueryItem(name: "continuation", value: continuation)]
+        }
+        let url = components?.url ?? baseURL.appendingPathComponent("library/playlists")
+        return try await performRequest(url: url)
+    }
+
+    func fetchPlaylistFeed(id: String, continuation: String? = nil) async throws -> PlaylistFeed {
+        var components = URLComponents(url: baseURL.appendingPathComponent("library/playlist/")
+            .appendingPathComponent(id), resolvingAgainstBaseURL: false)
+        if let continuation {
+            components?.queryItems = [URLQueryItem(name: "continuation", value: continuation)]
+        }
+        let url = components?.url ?? baseURL.appendingPathComponent("library/playlist/")
+            .appendingPathComponent(id)
+        return try await performRequest(url: url)
+    }
+
     func updateSubscription(id: String, subscribed: Bool) async throws -> SubscriptionResponse {
         var request = URLRequest(url: baseURL.appendingPathComponent("video/")
             .appendingPathComponent(id)

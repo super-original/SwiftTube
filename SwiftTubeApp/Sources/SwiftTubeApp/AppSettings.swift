@@ -4,6 +4,8 @@ final class AppSettings: ObservableObject {
     nonisolated(unsafe) static let shared = AppSettings()
 
     private let defaults = UserDefaults.standard
+    private let sidebarOrderKey = "sidebarItemOrder"
+    private let sidebarHiddenKey = "hiddenSidebarItems"
 
     // MARK: - Playback
 
@@ -64,6 +66,16 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(subtitleKey, forKey: "subtitleKey") }
     }
 
+    // MARK: - Sidebar
+
+    @Published var sidebarItemOrder: [SidebarItemKind] {
+        didSet { defaults.set(sidebarItemOrder.map(\.rawValue), forKey: sidebarOrderKey) }
+    }
+
+    @Published var hiddenSidebarItems: Set<String> {
+        didSet { defaults.set(Array(hiddenSidebarItems), forKey: sidebarHiddenKey) }
+    }
+
     // MARK: - Init
 
     init() {
@@ -91,6 +103,12 @@ final class AppSettings: ObservableObject {
         let _th = defaults.string(forKey: "theaterKey")    ?? ""; self.theaterKey    = _th.isEmpty ? "t" : _th
         let _fs = defaults.string(forKey: "fullscreenKey") ?? ""; self.fullscreenKey = _fs.isEmpty ? "f" : _fs
         let _su = defaults.string(forKey: "subtitleKey")   ?? ""; self.subtitleKey   = _su.isEmpty ? "c" : _su
+
+        let storedOrder = (defaults.array(forKey: sidebarOrderKey) as? [String]) ?? []
+        let orderedItems = storedOrder.compactMap(SidebarItemKind.init(rawValue:))
+        let missingItems = SidebarItemKind.allCases.filter { !orderedItems.contains($0) }
+        self.sidebarItemOrder = orderedItems + missingItems
+        self.hiddenSidebarItems = Set((defaults.array(forKey: sidebarHiddenKey) as? [String]) ?? [])
     }
 
     // MARK: - Types
@@ -98,6 +116,39 @@ final class AppSettings: ObservableObject {
     static let seekSecondsOptions = [5, 10, 15, 30, 60]
     static let playbackSpeedOptions: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     static let spacebarHoldPlaybackSpeedOptions: [Double] = [1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
+
+    func isSidebarItemVisible(_ item: SidebarItemKind) -> Bool {
+        !hiddenSidebarItems.contains(item.rawValue)
+    }
+
+    func setSidebarItem(_ item: SidebarItemKind, visible: Bool) {
+        if visible {
+            hiddenSidebarItems.remove(item.rawValue)
+        } else {
+            hiddenSidebarItems.insert(item.rawValue)
+        }
+    }
+
+    func moveSidebarItem(_ item: SidebarItemKind, direction: Int) {
+        guard let index = sidebarItemOrder.firstIndex(of: item) else { return }
+        let target = index + direction
+        guard sidebarItemOrder.indices.contains(target) else { return }
+        sidebarItemOrder.swapAt(index, target)
+    }
+
+    func visibleSidebarItems(isAuthenticated: Bool) -> [SidebarItemKind] {
+        let available = sidebarItemOrder.filter { item in
+            switch item {
+            case .home:
+                return true
+            case .playlists, .watchLater, .likedVideos:
+                return isAuthenticated
+            }
+        }
+
+        let visible = available.filter(isSidebarItemVisible)
+        return visible.isEmpty ? [.home] : visible
+    }
 
     static func playbackSpeedLabel(_ speed: Double) -> String {
         let rounded = (speed * 100).rounded() / 100

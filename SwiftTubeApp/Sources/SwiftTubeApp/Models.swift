@@ -125,6 +125,32 @@ struct PlaylistOption: Codable, Hashable, Identifiable, Sendable {
     var id: String { playlistId }
 }
 
+struct PlaylistSummary: Codable, Hashable, Identifiable, Sendable {
+    let playlistId: String
+    let title: String
+    let privacy: String?
+    let itemCountText: String?
+    let updatedText: String?
+    let thumbnails: [Thumbnail]
+
+    var id: String { playlistId }
+
+    var thumbnailURL: URL? {
+        guard let urlString = thumbnails.last?.url else { return nil }
+        return URL(string: urlString)
+    }
+}
+
+struct PlaylistFeed: Codable, Sendable {
+    let playlistId: String
+    let title: String
+    let ownerText: String?
+    let privacy: String?
+    let itemCountText: String?
+    let items: [VideoItem]
+    let continuation: String?
+}
+
 struct VideoPlayback: Codable, Sendable {
     let id: String
     let title: String?
@@ -218,6 +244,11 @@ struct AuthStatusResponse: Codable, Equatable, Sendable {
 
 struct PlaylistOptionsResponse: Codable, Sendable {
     let options: [PlaylistOption]
+}
+
+struct PlaylistLibraryResponse: Codable, Sendable {
+    let items: [PlaylistSummary]
+    let continuation: String?
 }
 
 struct SubscriptionResponse: Codable, Sendable {

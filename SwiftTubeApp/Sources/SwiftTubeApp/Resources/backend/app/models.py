@@ -96,6 +96,25 @@ class PlaylistOption(BaseModel):
     saved: bool = False
 
 
+class PlaylistSummary(BaseModel):
+    playlistId: str
+    title: str
+    privacy: Optional[str] = None
+    itemCountText: Optional[str] = None
+    updatedText: Optional[str] = None
+    thumbnails: List[Thumbnail] = Field(default_factory=list)
+
+
+class PlaylistFeed(BaseModel):
+    playlistId: str
+    title: str
+    ownerText: Optional[str] = None
+    privacy: Optional[str] = None
+    itemCountText: Optional[str] = None
+    items: List[VideoItem] = Field(default_factory=list)
+    continuation: Optional[str] = None
+
+
 class VideoPlayback(BaseModel):
     id: str
     title: Optional[str] = None
@@ -164,6 +183,11 @@ class PlaylistMutationRequest(BaseModel):
 
 class PlaylistOptionsResponse(BaseModel):
     options: List[PlaylistOption] = Field(default_factory=list)
+
+
+class PlaylistLibraryResponse(BaseModel):
+    items: List[PlaylistSummary] = Field(default_factory=list)
+    continuation: Optional[str] = None
 
 
 class SubscriptionResponse(BaseModel):
