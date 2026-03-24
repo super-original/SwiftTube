@@ -369,6 +369,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var mpvStateTask: Task<Void, Never>? = nil
     private var feedbackDismissTask: Task<Void, Never>? = nil
     private var spacebarHoldTask: Task<Void, Never>? = nil
+    private var playbackSpeedTransitionTask: Task<Void, Never>? = nil
     private var lastInteractionAt = Date()
     private var lastPointerMovementAt = Date.distantPast
     private var temporaryPlaybackSpeedOverride: Double? = nil
@@ -523,6 +524,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         menuInteractionTask?.cancel()
         mpvStateTask?.cancel()
         spacebarHoldTask?.cancel()
+        playbackSpeedTransitionTask?.cancel()
         errorMessage = nil
         isPreparingInitialPlayback = false
         controlsVisible = true
@@ -785,7 +787,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         if didActivateSpacebarHoldSpeed {
             didActivateSpacebarHoldSpeed = false
             temporaryPlaybackSpeedOverride = nil
-            applyPlaybackSpeed()
+            applyPlaybackSpeed(animated: true)
             return
         }
 
@@ -1140,10 +1142,43 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         applyPlaybackSpeed()
     }
 
-    private func applyPlaybackSpeed() {
+    private func applyPlaybackSpeed(animated: Bool = false) {
         let resolvedSpeed = temporaryPlaybackSpeedOverride ?? selectedPlaybackSpeed
-        effectivePlaybackSpeed = resolvedSpeed
-        mpvEngine?.setRate(resolvedSpeed)
+        playbackSpeedTransitionTask?.cancel()
+
+        guard animated, let mpvEngine else {
+            effectivePlaybackSpeed = resolvedSpeed
+            self.mpvEngine?.setRate(resolvedSpeed)
+            return
+        }
+
+        let startingSpeed = effectivePlaybackSpeed
+        guard abs(startingSpeed - resolvedSpeed) > 0.01 else {
+            effectivePlaybackSpeed = resolvedSpeed
+            mpvEngine.setRate(resolvedSpeed)
+            return
+        }
+
+        playbackSpeedTransitionTask = Task { @MainActor [weak self, weak mpvEngine] in
+            let steps = 6
+            let frameDelay: UInt64 = 20_000_000
+
+            for step in 1...steps {
+                guard let self, let mpvEngine, !Task.isCancelled else { return }
+                let progress = Double(step) / Double(steps)
+                let interpolatedSpeed = startingSpeed + ((resolvedSpeed - startingSpeed) * progress)
+                effectivePlaybackSpeed = interpolatedSpeed
+                mpvEngine.setRate(interpolatedSpeed)
+                if step < steps {
+                    try? await Task.sleep(nanoseconds: frameDelay)
+                }
+            }
+
+            guard let self, let mpvEngine, !Task.isCancelled else { return }
+            effectivePlaybackSpeed = resolvedSpeed
+            mpvEngine.setRate(resolvedSpeed)
+            playbackSpeedTransitionTask = nil
+        }
     }
 
     private func currentRestoreState() -> PlaybackRestoreState {

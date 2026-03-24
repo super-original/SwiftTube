@@ -755,7 +755,7 @@ private struct PlayerControlBar: View {
     @Namespace private var playPauseNamespace
     @State private var isQualityPopoverPresented = false
     @State private var isSubtitlePopoverPresented = false
-    @State private var isSettingsPopoverPresented = false
+    @State private var isSettingsOverlayPresented = false
     @State private var settingsCurrentPage: SettingsPopoverDestination = .root
     @State private var settingsVisibleSubmenu: SettingsPopoverDestination? = nil
     @State private var settingsShowingSubmenu = false
@@ -784,6 +784,14 @@ private struct PlayerControlBar: View {
         }
         .padding(.horizontal, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .topTrailing) {
+            if isSettingsOverlayPresented {
+                settingsOverlay
+                    .offset(y: -(settingsPopoverSize.height + 14))
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
+                    .zIndex(5)
+            }
+        }
     }
 
     var playPauseButton: some View {
@@ -903,24 +911,19 @@ private struct PlayerControlBar: View {
 
     var settingsMenu: some View {
         Button {
-            if !isSettingsPopoverPresented {
+            if !isSettingsOverlayPresented {
                 resetSettingsMenuNavigation()
             }
-            isSettingsPopoverPresented.toggle()
+            withAnimation(.snappy(duration: 0.18, extraBounce: 0)) {
+                isSettingsOverlayPresented.toggle()
+            }
         } label: {
             circularButtonLabel(symbol: "gearshape", fontSize: 14)
         }
         .buttonStyle(.glass(.regular.interactive()))
         .buttonBorderShape(.circle)
         .controlSize(.regular)
-        .popover(
-            isPresented: $isSettingsPopoverPresented,
-            attachmentAnchor: .rect(.bounds),
-            arrowEdge: .bottom
-        ) {
-            settingsPopoverContent
-        }
-        .onChange(of: isSettingsPopoverPresented) { _, isPresented in
+        .onChange(of: isSettingsOverlayPresented) { _, isPresented in
             if isPresented {
                 resetSettingsMenuNavigation()
                 coordinator.beginMenuInteraction()
@@ -931,16 +934,27 @@ private struct PlayerControlBar: View {
         .accessibilityLabel("Playback Settings")
     }
 
-    var settingsPopoverSize: CGSize {
-        CGSize(
-            width: 280,
-            height: max(
-                156,
-                listPopoverHeight(itemCount: coordinator.subtitleOptions.count + 1),
-                listPopoverHeight(itemCount: coordinator.playbackSpeedOptions.count),
-                listPopoverHeight(itemCount: coordinator.qualityOptions.count)
+    var settingsOverlay: some View {
+        settingsPopoverContent
+            .playerControlSurface(
+                reduceTransparency: reduceTransparency,
+                glass: .regular,
+                shape: RoundedRectangle(cornerRadius: 20, style: .continuous)
             )
-        )
+            .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
+    }
+
+    var settingsPopoverSize: CGSize {
+        switch settingsShowingSubmenu ? settingsCurrentPage : .root {
+        case .root:
+            return CGSize(width: 260, height: 156)
+        case .subtitles:
+            return CGSize(width: 240, height: listPopoverHeight(itemCount: coordinator.subtitleOptions.count + 1))
+        case .playbackSpeed:
+            return CGSize(width: 220, height: listPopoverHeight(itemCount: coordinator.playbackSpeedOptions.count))
+        case .quality:
+            return CGSize(width: 280, height: listPopoverHeight(itemCount: coordinator.qualityOptions.count))
+        }
     }
 
     var settingsPopoverContent: some View {
@@ -1065,7 +1079,7 @@ private struct PlayerControlBar: View {
     func subtitleMenuOptionButton(for option: SubtitleOption) -> some View {
         Button {
             coordinator.selectSubtitle(option)
-            isSettingsPopoverPresented = false
+            isSettingsOverlayPresented = false
             isSubtitlePopoverPresented = false
         } label: {
             HStack(spacing: 10) {
@@ -1108,7 +1122,7 @@ private struct PlayerControlBar: View {
     func playbackSpeedMenuOptionButton(for option: PlaybackSpeedOption) -> some View {
         Button {
             coordinator.selectPlaybackSpeed(option.speed)
-            isSettingsPopoverPresented = false
+            isSettingsOverlayPresented = false
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: option.speed == coordinator.selectedPlaybackSpeed ? "checkmark" : "circle")
@@ -1206,7 +1220,7 @@ private struct PlayerControlBar: View {
     func qualityMenuOptionButton(for option: QualityOption) -> some View {
         Button {
             coordinator.selectQuality(option)
-            isSettingsPopoverPresented = false
+            isSettingsOverlayPresented = false
             isQualityPopoverPresented = false
         } label: {
             qualityMenuRow(for: option)

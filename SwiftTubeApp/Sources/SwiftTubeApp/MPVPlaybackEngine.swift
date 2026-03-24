@@ -227,9 +227,6 @@ private extension MPVPlaybackEngine {
         try setOption("gpu-context", value: "moltenvk")
         try setOption("hwdec", value: "auto-safe")
         try setOption("hwdec-software-fallback", value: "1")
-        // Browsers keep playback tied closely to display timing during rate
-        // changes; this reduces visible frame drops/repeats when speed changes.
-        try setOption("video-sync", value: "display-resample")
         // Keep the tempo filter permanently attached so temporary speed changes
         // do not trigger audible/video-sync hiccups when returning to 1x.
         try setOption("audio-pitch-correction", value: "no")
