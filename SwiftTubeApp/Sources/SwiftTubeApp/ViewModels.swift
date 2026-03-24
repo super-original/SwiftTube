@@ -318,7 +318,7 @@ final class PlayerViewModel: ObservableObject {
                 updatePlayback { current in
                     current.with(
                         subscriberCountText: response.subscription?.subscriberCountText,
-                        subscription: response.subscription
+                        subscription: optimisticSubscription
                     )
                 }
                 actionMessage = nil
@@ -364,7 +364,7 @@ final class PlayerViewModel: ObservableObject {
                 updatePlayback { current in
                     current.with(
                         likeCountText: response.rating?.likeCountText,
-                        rating: response.rating
+                        rating: optimisticRating
                     )
                 }
                 actionMessage = nil
@@ -401,9 +401,19 @@ final class PlayerViewModel: ObservableObject {
                     saved: !watchLater.saved
                 )
                 if let updated = response.watchLater {
-                    playlistOptions = playlistOptions.map { $0.playlistId == updated.playlistId ? updated : $0 }
+                    playlistOptions = playlistOptions.map { item in
+                        item.playlistId == updated.playlistId
+                            ? PlaylistOption(
+                                playlistId: updated.playlistId,
+                                title: updated.title,
+                                privacy: updated.privacy,
+                                containsSelectedVideos: optimisticWatchLater.containsSelectedVideos,
+                                saved: optimisticWatchLater.saved
+                            )
+                            : item
+                    }
                 }
-                updatePlaybackWatchLater(response.watchLater)
+                updatePlaybackWatchLater(optimisticWatchLater)
                 actionMessage = nil
             } catch {
                 playback = previousPlayback
@@ -439,7 +449,17 @@ final class PlayerViewModel: ObservableObject {
                     saved: !option.saved
                 )
                 if let updated = response.playlist {
-                    playlistOptions = playlistOptions.map { $0.playlistId == updated.playlistId ? updated : $0 }
+                    playlistOptions = playlistOptions.map { item in
+                        item.playlistId == updated.playlistId
+                            ? PlaylistOption(
+                                playlistId: updated.playlistId,
+                                title: updated.title,
+                                privacy: updated.privacy,
+                                containsSelectedVideos: optimisticOption.containsSelectedVideos,
+                                saved: optimisticOption.saved
+                            )
+                            : item
+                    }
                 }
                 actionMessage = nil
             } catch {

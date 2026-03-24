@@ -269,14 +269,8 @@ private extension PlayerScreen {
         if let views = playback?.viewCountText ?? video.viewCountText, !views.isEmpty {
             items.append(("Views", views))
         }
-        if let likes = playback?.rating?.likeCountText ?? playback?.likeCountText, !likes.isEmpty {
-            items.append(("Likes", likes))
-        }
         if let published = playback?.publishedDateText ?? playback?.publishedTimeText ?? video.publishedTimeText, !published.isEmpty {
             items.append(("Uploaded", published))
-        }
-        if let duration = playback?.durationText ?? video.durationText, !duration.isEmpty {
-            items.append(("Length", duration))
         }
 
         return items
@@ -427,12 +421,6 @@ private extension PlayerScreen {
             viewModel.toggleSubscription()
         } label: {
             HStack(spacing: 10) {
-                if viewModel.isMutatingSubscription {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(isSubscribed ? .primary : .black)
-                }
-
                 Text(isSubscribed ? "Subscribed" : "Subscribe")
                     .font(.callout.weight(.bold))
             }
@@ -451,7 +439,7 @@ private extension PlayerScreen {
         }
         .buttonStyle(.plain)
         .opacity((subscription?.enabled == true) ? 1 : 0.5)
-        .disabled(subscription?.enabled != true || viewModel.isMutatingSubscription)
+        .disabled(subscription?.enabled != true)
     }
 
     var likeDislikeControl: some View {
@@ -497,7 +485,7 @@ private extension PlayerScreen {
         )
         .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
         .opacity(rating == nil ? 0.55 : 1)
-        .disabled(rating == nil || viewModel.isMutatingRating)
+        .disabled(rating == nil)
     }
 
     var shareButton: some View {
@@ -531,13 +519,12 @@ private extension PlayerScreen {
             playerActionPill(
                 symbol: isSaved ? "clock.fill" : "clock",
                 title: isSaved ? "Saved" : "Watch later",
-                isActive: isSaved,
-                showsProgress: viewModel.isMutatingWatchLater
+                isActive: isSaved
             )
         }
         .buttonStyle(.plain)
         .opacity(playback?.watchLater == nil ? 0.55 : 1)
-        .disabled(playback?.watchLater == nil || viewModel.isMutatingWatchLater)
+        .disabled(playback?.watchLater == nil)
     }
 
     var playlistButton: some View {
@@ -554,8 +541,7 @@ private extension PlayerScreen {
             playerActionPill(
                 symbol: "text.badge.plus",
                 title: "Save to playlist",
-                showsChevron: true,
-                showsProgress: viewModel.isLoadingPlaylistOptions
+                showsChevron: true
             )
         }
         .buttonStyle(.plain)
@@ -577,18 +563,11 @@ private extension PlayerScreen {
         symbol: String,
         title: String,
         isActive: Bool = false,
-        showsChevron: Bool = false,
-        showsProgress: Bool = false
+        showsChevron: Bool = false
     ) -> some View {
         HStack(spacing: 10) {
-            if showsProgress {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(.white)
-            } else {
-                Image(systemName: symbol)
-                    .font(.system(size: 18, weight: .semibold))
-            }
+            Image(systemName: symbol)
+                .font(.system(size: 18, weight: .semibold))
             Text(title)
                 .lineLimit(1)
             if showsChevron {
