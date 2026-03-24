@@ -931,21 +931,20 @@ private struct PlayerControlBar: View {
         .accessibilityLabel("Playback Settings")
     }
 
-    var currentSettingsPanelSize: CGSize {
-        switch settingsShowingSubmenu ? settingsCurrentPage : .root {
-        case .root:
-            return CGSize(width: 260, height: 156)
-        case .subtitles:
-            return CGSize(width: 240, height: listPopoverHeight(itemCount: coordinator.subtitleOptions.count + 1))
-        case .playbackSpeed:
-            return CGSize(width: 220, height: listPopoverHeight(itemCount: coordinator.playbackSpeedOptions.count))
-        case .quality:
-            return CGSize(width: 280, height: listPopoverHeight(itemCount: coordinator.qualityOptions.count))
-        }
+    var settingsPopoverSize: CGSize {
+        CGSize(
+            width: 280,
+            height: max(
+                156,
+                listPopoverHeight(itemCount: coordinator.subtitleOptions.count + 1),
+                listPopoverHeight(itemCount: coordinator.playbackSpeedOptions.count),
+                listPopoverHeight(itemCount: coordinator.qualityOptions.count)
+            )
+        )
     }
 
     var settingsPopoverContent: some View {
-        let panelSize = currentSettingsPanelSize
+        let panelSize = settingsPopoverSize
 
         return HStack(spacing: 0) {
             settingsRootPopoverContent
@@ -956,9 +955,8 @@ private struct PlayerControlBar: View {
         }
         .frame(width: panelSize.width * 2, height: panelSize.height, alignment: .leading)
         .offset(x: settingsShowingSubmenu ? -panelSize.width : 0)
-        .frame(width: currentSettingsPanelSize.width, height: currentSettingsPanelSize.height, alignment: .topLeading)
+        .frame(width: panelSize.width, height: panelSize.height, alignment: .topLeading)
         .clipped()
-        .animation(.snappy(duration: 0.18, extraBounce: 0), value: currentSettingsPanelSize)
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: settingsShowingSubmenu)
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: settingsCurrentPage)
     }
@@ -989,7 +987,7 @@ private struct PlayerControlBar: View {
             }
         }
         .padding(8)
-        .frame(minWidth: 260)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
@@ -1044,8 +1042,9 @@ private struct PlayerControlBar: View {
             subtitleMenuList
                 .padding(.horizontal, 8)
                 .padding(.bottom, 8)
+            Spacer(minLength: 0)
         }
-        .frame(minWidth: 220)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     var standaloneSubtitlePopoverContent: some View {
@@ -1101,8 +1100,9 @@ private struct PlayerControlBar: View {
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 8)
+            Spacer(minLength: 0)
         }
-        .frame(minWidth: 220)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     func playbackSpeedMenuOptionButton(for option: PlaybackSpeedOption) -> some View {
@@ -1184,8 +1184,9 @@ private struct PlayerControlBar: View {
             qualityMenuList
                 .padding(.horizontal, 8)
                 .padding(.bottom, 8)
+            Spacer(minLength: 0)
         }
-        .frame(minWidth: 260)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     var standaloneQualityPopoverContent: some View {
