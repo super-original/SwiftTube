@@ -160,6 +160,46 @@ struct VideoPlayback: Codable, Sendable {
         guard let channelAvatarUrl else { return nil }
         return URL(string: channelAvatarUrl)
     }
+
+    func with(
+        subscriberCountText: String? = nil,
+        likeCountText: String? = nil,
+        subscription: SubscriptionState? = nil,
+        rating: RatingState? = nil,
+        watchLater: PlaylistOption? = nil
+    ) -> VideoPlayback {
+        VideoPlayback(
+            id: id,
+            title: title,
+            channel: channel,
+            channelId: channelId,
+            channelAvatarUrl: channelAvatarUrl,
+            subscriberCountText: subscriberCountText ?? self.subscriberCountText,
+            viewCountText: viewCountText,
+            publishedTimeText: publishedTimeText,
+            publishedDateText: publishedDateText,
+            likeCountText: likeCountText ?? self.likeCountText,
+            durationText: durationText,
+            description: description,
+            commentCountText: commentCountText,
+            streams: streams,
+            recommendations: recommendations,
+            comments: comments,
+            playbackStrategy: playbackStrategy,
+            preferredManifestStream: preferredManifestStream,
+            preferredMuxedStream: preferredMuxedStream,
+            preferredVideoStream: preferredVideoStream,
+            preferredAudioStream: preferredAudioStream,
+            bestStreamUrl: bestStreamUrl,
+            bestStream: bestStream,
+            subtitles: subtitles,
+            storyboard: storyboard,
+            subscription: subscription ?? self.subscription,
+            rating: rating ?? self.rating,
+            watchLater: watchLater ?? self.watchLater,
+            playlistSaveEnabled: playlistSaveEnabled
+        )
+    }
 }
 
 struct AuthStatusResponse: Codable, Equatable, Sendable {

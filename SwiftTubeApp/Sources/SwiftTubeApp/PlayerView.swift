@@ -144,6 +144,8 @@ struct PlayerScreen: View {
     @StateObject private var layoutState: PlayerLayoutState
     @State private var playbackCoordinator: PlayerPlaybackCoordinator
     @State private var isDescriptionExpanded = false
+    @State private var isSharePopoverPresented = false
+    @State private var isPlaylistPopoverPresented = false
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
 
@@ -261,6 +263,25 @@ private extension PlayerScreen {
         return items
     }
 
+    var statsOverviewItems: [(title: String, value: String)] {
+        var items: [(String, String)] = []
+
+        if let views = playback?.viewCountText ?? video.viewCountText, !views.isEmpty {
+            items.append(("Views", views))
+        }
+        if let likes = playback?.rating?.likeCountText ?? playback?.likeCountText, !likes.isEmpty {
+            items.append(("Likes", likes))
+        }
+        if let published = playback?.publishedDateText ?? playback?.publishedTimeText ?? video.publishedTimeText, !published.isEmpty {
+            items.append(("Uploaded", published))
+        }
+        if let duration = playback?.durationText ?? video.durationText, !duration.isEmpty {
+            items.append(("Length", duration))
+        }
+
+        return items
+    }
+
     var scrollContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             if layoutState.isFullscreen {
@@ -337,47 +358,58 @@ private extension PlayerScreen {
     }
 
     var headerSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 22) {
             Text(displayTitle)
                 .font(.system(size: 30, weight: .bold))
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(alignment: .center, spacing: 18) {
-                ChannelSummary(
-                    avatarURL: playback?.channelAvatarURL,
-                    channel: displayChannel,
-                    subscriberCount: playback?.subscriberCountText
-                )
+            channelAndActionsSection
 
-                Spacer(minLength: 12)
-
-                if let publishedTime = playback?.publishedTimeText, !publishedTime.isEmpty {
-                    Text(publishedTime)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
+            if !statsOverviewItems.isEmpty {
+                statsOverviewSection
             }
-
-            if !metadataPills.isEmpty {
-                FlexiblePillRow(items: metadataPills)
-            }
-
-            actionSection
         }
     }
 
-    var actionSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    var channelAndActionsSection: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 20) {
+                channelSubscriptionCluster
+                Spacer(minLength: 20)
+                actionToolbar
+            }
+
+            VStack(alignment: .leading, spacing: 16) {
+                channelSubscriptionCluster
+                actionToolbar
+            }
+        }
+    }
+
+    var channelSubscriptionCluster: some View {
+        HStack(alignment: .center, spacing: 18) {
+            ChannelSummary(
+                avatarURL: playback?.channelAvatarURL,
+                channel: displayChannel,
+                subscriberCount: playback?.subscription?.subscriberCountText ?? playback?.subscriberCountText
+            )
+
+            subscribeButton
+        }
+    }
+
+    var actionToolbar: some View {
+        VStack(alignment: .trailing, spacing: 10) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    subscribeButton
                     likeDislikeControl
-                    shareMenu
+                    shareButton
                     watchLaterButton
-                    playlistMenu
+                    playlistButton
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 3)
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
 
             if let actionMessage = viewModel.actionMessage, !actionMessage.isEmpty {
                 Text(actionMessage)
@@ -394,18 +426,31 @@ private extension PlayerScreen {
         return Button {
             viewModel.toggleSubscription()
         } label: {
-            Text(isSubscribed ? "Subscribed" : "Subscribe")
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(isSubscribed ? Color.primary : Color.white)
-                .padding(.horizontal, 18)
-                .frame(height: 40)
-                .background(
-                    Capsule()
-                        .fill(isSubscribed ? Color(NSColor.controlBackgroundColor) : Color.red)
-                )
+            HStack(spacing: 10) {
+                if viewModel.isMutatingSubscription {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(isSubscribed ? .primary : .black)
+                }
+
+                Text(isSubscribed ? "Subscribed" : "Subscribe")
+                    .font(.callout.weight(.bold))
+            }
+            .foregroundStyle(isSubscribed ? Color.primary : Color.black)
+            .padding(.horizontal, 22)
+            .frame(height: 46)
+            .background(
+                Capsule()
+                    .fill(isSubscribed ? Color.white.opacity(0.14) : Color.white)
+            )
+            .overlay(
+                Capsule()
+                    .stroke(isSubscribed ? Color.white.opacity(0.18) : Color.white.opacity(0.75), lineWidth: 1)
+            )
+            .shadow(color: isSubscribed ? .clear : .black.opacity(0.18), radius: 10, y: 4)
         }
         .buttonStyle(.plain)
-        .opacity((subscription?.enabled == true) ? 1 : 0.55)
+        .opacity((subscription?.enabled == true) ? 1 : 0.5)
         .disabled(subscription?.enabled != true || viewModel.isMutatingSubscription)
     }
 
@@ -420,55 +465,61 @@ private extension PlayerScreen {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
-                    Text(rating?.likeCountText ?? "Like")
+                    Text(rating?.likeCountText ?? playback?.likeCountText ?? "Like")
                         .lineLimit(1)
                 }
-                .frame(height: 40)
-                .padding(.horizontal, 16)
+                .frame(height: 44)
+                .padding(.horizontal, 18)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(isLiked ? Color.accentColor : Color.primary)
+            .foregroundStyle(isLiked ? Color.blue : Color.white)
 
             Divider()
-                .frame(height: 20)
+                .frame(height: 22)
+                .overlay(Color.white.opacity(0.18))
 
             Button {
                 viewModel.toggleRating("dislike")
             } label: {
                 Image(systemName: isDisliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                    .frame(width: 44, height: 40)
+                    .frame(width: 50, height: 44)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(isDisliked ? Color.accentColor : Color.primary)
+            .foregroundStyle(isDisliked ? Color.blue : Color.white)
         }
         .background(
             Capsule()
-                .fill(Color(NSColor.controlBackgroundColor))
+                .fill(Color.white.opacity(0.08))
         )
         .overlay(
             Capsule()
-                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                .stroke(Color.white.opacity(0.14), lineWidth: 1)
         )
+        .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
         .opacity(rating == nil ? 0.55 : 1)
         .disabled(rating == nil || viewModel.isMutatingRating)
     }
 
-    var shareMenu: some View {
-        Menu {
-            Button("Copy Link") {
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(shareURL.absoluteString, forType: .string)
-            }
-
-            Button("Open in YouTube") {
-                NSWorkspace.shared.open(shareURL)
+    var shareButton: some View {
+        Button {
+            isPlaylistPopoverPresented = false
+            withAnimation(.easeOut(duration: 0.2)) {
+                isSharePopoverPresented.toggle()
             }
         } label: {
-            playerActionPill(symbol: "square.and.arrow.up", title: "Share")
+            playerActionPill(symbol: "square.and.arrow.up", title: "Share", showsChevron: true)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        .buttonStyle(.plain)
+        .background {
+            ManagedPopoverPresenter(
+                isPresented: $isSharePopoverPresented,
+                preferredEdge: .minY,
+                contentSize: CGSize(width: 220, height: 96),
+                content: AnyView(sharePopoverContent),
+                onDismiss: { isSharePopoverPresented = false }
+            )
+            .allowsHitTesting(false)
+        }
     }
 
     var watchLaterButton: some View {
@@ -479,7 +530,9 @@ private extension PlayerScreen {
         } label: {
             playerActionPill(
                 symbol: isSaved ? "clock.fill" : "clock",
-                title: isSaved ? "Saved" : "Watch later"
+                title: isSaved ? "Saved" : "Watch later",
+                isActive: isSaved,
+                showsProgress: viewModel.isMutatingWatchLater
             )
         }
         .buttonStyle(.plain)
@@ -487,57 +540,186 @@ private extension PlayerScreen {
         .disabled(playback?.watchLater == nil || viewModel.isMutatingWatchLater)
     }
 
-    var playlistMenu: some View {
-        Menu {
-            if viewModel.isLoadingPlaylistOptions {
-                ProgressView("Loading playlists...")
-            } else if viewModel.playlistOptions.isEmpty {
-                Text("No playlists available")
-            } else {
-                ForEach(viewModel.playlistOptions) { option in
-                    Button {
-                        viewModel.togglePlaylist(option)
-                    } label: {
-                        HStack {
-                            Text(option.title)
-                            if option.saved {
-                                Image(systemName: "checkmark")
-                            }
-                            if viewModel.playlistMutationIDs.contains(option.id) {
-                                ProgressView()
-                                    .controlSize(.small)
-                            }
-                        }
-                    }
-                    .disabled(viewModel.playlistMutationIDs.contains(option.id))
-                }
+    var playlistButton: some View {
+        Button {
+            guard playback?.playlistSaveEnabled == true else { return }
+            if viewModel.playlistOptions.isEmpty {
+                viewModel.loadPlaylistOptions()
+            }
+            isSharePopoverPresented = false
+            withAnimation(.easeOut(duration: 0.2)) {
+                isPlaylistPopoverPresented.toggle()
             }
         } label: {
-            playerActionPill(symbol: "text.badge.plus", title: "Save to playlist")
+            playerActionPill(
+                symbol: "text.badge.plus",
+                title: "Save to playlist",
+                showsChevron: true,
+                showsProgress: viewModel.isLoadingPlaylistOptions
+            )
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        .buttonStyle(.plain)
         .disabled(playback?.playlistSaveEnabled != true)
         .opacity(playback?.playlistSaveEnabled == true ? 1 : 0.55)
+        .background {
+            ManagedPopoverPresenter(
+                isPresented: $isPlaylistPopoverPresented,
+                preferredEdge: .minY,
+                contentSize: playlistPopoverSize,
+                content: AnyView(playlistPopoverContent),
+                onDismiss: { isPlaylistPopoverPresented = false }
+            )
+            .allowsHitTesting(false)
+        }
     }
 
-    func playerActionPill(symbol: String, title: String) -> some View {
+    func playerActionPill(
+        symbol: String,
+        title: String,
+        isActive: Bool = false,
+        showsChevron: Bool = false,
+        showsProgress: Bool = false
+    ) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: symbol)
+            if showsProgress {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.white)
+            } else {
+                Image(systemName: symbol)
+                    .font(.system(size: 18, weight: .semibold))
+            }
             Text(title)
                 .lineLimit(1)
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
         }
-        .font(.callout.weight(.semibold))
-        .padding(.horizontal, 16)
-        .frame(height: 40)
+        .font(.callout.weight(.bold))
+        .foregroundStyle(isActive ? Color.blue : Color.white)
+        .padding(.horizontal, 18)
+        .frame(height: 44)
         .background(
             Capsule()
-                .fill(Color(NSColor.controlBackgroundColor))
+                .fill(Color.white.opacity(isActive ? 0.13 : 0.08))
         )
         .overlay(
             Capsule()
-                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                .stroke(Color.white.opacity(0.14), lineWidth: 1)
         )
+        .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
+    }
+
+    var statsOverviewSection: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 160), spacing: 12)],
+            alignment: .leading,
+            spacing: 12
+        ) {
+            ForEach(Array(statsOverviewItems.enumerated()), id: \.offset) { _, item in
+                VideoStatCard(title: item.title, value: item.value)
+            }
+        }
+    }
+
+    var sharePopoverContent: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            playerPopoverAction(title: "Copy Link", symbol: "link") {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(shareURL.absoluteString, forType: .string)
+                isSharePopoverPresented = false
+            }
+
+            playerPopoverAction(title: "Open in YouTube", symbol: "safari") {
+                NSWorkspace.shared.open(shareURL)
+                isSharePopoverPresented = false
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    var playlistPopoverSize: CGSize {
+        CGSize(width: 280, height: min(max(CGFloat(max(viewModel.playlistOptions.count, 1)) * 42 + 24, 96), 320))
+    }
+
+    var playlistPopoverContent: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if viewModel.isLoadingPlaylistOptions {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("Loading playlists...")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(12)
+            } else if viewModel.playlistOptions.isEmpty {
+                Text("No playlists available")
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            } else {
+                ForEach(viewModel.playlistOptions) { option in
+                    playerPopoverPlaylistRow(option: option)
+                }
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    func playerPopoverAction(title: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .frame(width: 16)
+                Text(title)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.06))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    func playerPopoverPlaylistRow(option: PlaylistOption) -> some View {
+        Button {
+            viewModel.togglePlaylist(option)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: option.saved ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(option.saved ? Color.blue : Color.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(option.title)
+                        .lineLimit(1)
+                    if let privacy = option.privacy, !privacy.isEmpty {
+                        Text(privacy.capitalized)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                if viewModel.playlistMutationIDs.contains(option.id) {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(option.saved ? Color.blue.opacity(0.14) : Color.white.opacity(0.06))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(viewModel.playlistMutationIDs.contains(option.id))
     }
 
     var shareURL: URL {
@@ -551,8 +733,11 @@ private extension PlayerScreen {
     }
 
     var descriptionSection: some View {
-        DetailCard(title: "Description") {
+        DetailCard(title: nil) {
             VStack(alignment: .leading, spacing: 16) {
+                Text("Description")
+                    .font(.headline.weight(.bold))
+
                 if let description = playback?.description, !description.isEmpty {
                     ExpandableDescription(
                         text: description,
@@ -1678,25 +1863,69 @@ private struct PlayerStatusPill: View {
 }
 
 private struct DetailCard<Content: View>: View {
-    let title: String
+    let title: String?
     let content: Content
 
-    init(title: String, @ViewBuilder content: () -> Content) {
+    init(title: String?, @ViewBuilder content: () -> Content) {
         self.title = title
         self.content = content()
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(title)
-                .font(.headline)
+            if let title {
+                Text(title)
+                    .font(.headline.weight(.bold))
+            }
             content
         }
-        .padding(20)
+        .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 22)
-                .fill(Color(NSColor.controlBackgroundColor))
+                .fill(Color.white.opacity(0.055))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+    }
+}
+
+private struct VideoStatCard: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+                .tracking(0.8)
+
+            Text(value)
+                .font(.system(size: 22, weight: .bold))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.09),
+                            Color.white.opacity(0.045)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
         )
     }
 }
@@ -1721,10 +1950,10 @@ private struct ChannelSummary: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(channel ?? "Unknown channel")
-                    .font(.headline)
+                    .font(.title3.weight(.bold))
                 if let subscriberCount, !subscriberCount.isEmpty {
                     Text(subscriberCount)
-                        .font(.subheadline)
+                        .font(.headline.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
             }

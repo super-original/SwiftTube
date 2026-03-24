@@ -1011,10 +1011,28 @@ def extract_subscription_commands(data: Any) -> Dict[str, Optional[InnerTubeComm
             unsubscribe=False,
         )
 
+        unsubscribe_endpoint = _first_dict(renderer.get("onUnsubscribeEndpoints"))
         unsubscribe_command = _normalize_subscribe_endpoint(
-            _first_dict(renderer.get("onUnsubscribeEndpoints")),
+            unsubscribe_endpoint,
             unsubscribe=True,
         )
+        if unsubscribe_command is None and isinstance(unsubscribe_endpoint, dict):
+            signal_action = _first_dict(
+                unsubscribe_endpoint.get("signalServiceEndpoint", {}).get("actions", [])
+            )
+            confirm_button_endpoint = (
+                signal_action.get("openPopupAction", {})
+                .get("popup", {})
+                .get("confirmDialogRenderer", {})
+                .get("confirmButton", {})
+                .get("buttonRenderer", {})
+                .get("serviceEndpoint")
+            ) if isinstance(signal_action, dict) else None
+            unsubscribe_command = _normalize_subscribe_endpoint(
+                confirm_button_endpoint,
+                unsubscribe=True,
+            )
+
         if unsubscribe_command is None:
             notification_button = renderer.get("notificationPreferenceButton", {})
             command_executor = (

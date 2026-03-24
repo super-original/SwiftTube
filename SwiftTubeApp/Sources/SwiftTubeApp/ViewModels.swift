@@ -289,6 +289,22 @@ final class PlayerViewModel: ObservableObject {
 
     func toggleSubscription() {
         guard let subscription = playback?.subscription, !isMutatingSubscription else { return }
+        let previousPlayback = playback
+        let optimisticSubscription = SubscriptionState(
+            channelId: subscription.channelId,
+            buttonText: subscription.subscribed ? "Subscribe" : "Subscribed",
+            subscribed: !subscription.subscribed,
+            enabled: subscription.enabled,
+            subscriberCountText: subscription.subscriberCountText
+        )
+
+        updatePlayback { current in
+            current.with(
+                subscriberCountText: optimisticSubscription.subscriberCountText,
+                subscription: optimisticSubscription
+            )
+        }
+        actionMessage = nil
 
         Task {
             isMutatingSubscription = true
@@ -300,47 +316,44 @@ final class PlayerViewModel: ObservableObject {
                     subscribed: !subscription.subscribed
                 )
                 updatePlayback { current in
-                    VideoPlayback(
-                        id: current.id,
-                        title: current.title,
-                        channel: current.channel,
-                        channelId: current.channelId,
-                        channelAvatarUrl: current.channelAvatarUrl,
-                        subscriberCountText: response.subscription?.subscriberCountText ?? current.subscriberCountText,
-                        viewCountText: current.viewCountText,
-                        publishedTimeText: current.publishedTimeText,
-                        publishedDateText: current.publishedDateText,
-                        likeCountText: current.likeCountText,
-                        durationText: current.durationText,
-                        description: current.description,
-                        commentCountText: current.commentCountText,
-                        streams: current.streams,
-                        recommendations: current.recommendations,
-                        comments: current.comments,
-                        playbackStrategy: current.playbackStrategy,
-                        preferredManifestStream: current.preferredManifestStream,
-                        preferredMuxedStream: current.preferredMuxedStream,
-                        preferredVideoStream: current.preferredVideoStream,
-                        preferredAudioStream: current.preferredAudioStream,
-                        bestStreamUrl: current.bestStreamUrl,
-                        bestStream: current.bestStream,
-                        subtitles: current.subtitles,
-                        storyboard: current.storyboard,
-                        subscription: response.subscription,
-                        rating: current.rating,
-                        watchLater: current.watchLater,
-                        playlistSaveEnabled: current.playlistSaveEnabled
+                    current.with(
+                        subscriberCountText: response.subscription?.subscriberCountText,
+                        subscription: response.subscription
                     )
                 }
                 actionMessage = nil
             } catch {
+                playback = previousPlayback
                 actionMessage = error.localizedDescription
             }
         }
     }
 
     func toggleRating(_ target: String) {
-        guard playback?.rating != nil, !isMutatingRating else { return }
+        guard let rating = playback?.rating, !isMutatingRating else { return }
+        let previousPlayback = playback
+        let optimisticStatus: String = {
+            switch target {
+            case "like":
+                return rating.status == "LIKE" ? "INDIFFERENT" : "LIKE"
+            case "dislike":
+                return rating.status == "DISLIKE" ? "INDIFFERENT" : "DISLIKE"
+            default:
+                return "INDIFFERENT"
+            }
+        }()
+        let optimisticRating = RatingState(
+            status: optimisticStatus,
+            likeCountText: rating.likeCountText
+        )
+
+        updatePlayback { current in
+            current.with(
+                likeCountText: optimisticRating.likeCountText,
+                rating: optimisticRating
+            )
+        }
+        actionMessage = nil
 
         Task {
             isMutatingRating = true
@@ -349,40 +362,14 @@ final class PlayerViewModel: ObservableObject {
             do {
                 let response = try await BackendClient.shared.updateRating(id: video.id, action: target)
                 updatePlayback { current in
-                    VideoPlayback(
-                        id: current.id,
-                        title: current.title,
-                        channel: current.channel,
-                        channelId: current.channelId,
-                        channelAvatarUrl: current.channelAvatarUrl,
-                        subscriberCountText: current.subscriberCountText,
-                        viewCountText: current.viewCountText,
-                        publishedTimeText: current.publishedTimeText,
-                        publishedDateText: current.publishedDateText,
-                        likeCountText: response.rating?.likeCountText ?? current.likeCountText,
-                        durationText: current.durationText,
-                        description: current.description,
-                        commentCountText: current.commentCountText,
-                        streams: current.streams,
-                        recommendations: current.recommendations,
-                        comments: current.comments,
-                        playbackStrategy: current.playbackStrategy,
-                        preferredManifestStream: current.preferredManifestStream,
-                        preferredMuxedStream: current.preferredMuxedStream,
-                        preferredVideoStream: current.preferredVideoStream,
-                        preferredAudioStream: current.preferredAudioStream,
-                        bestStreamUrl: current.bestStreamUrl,
-                        bestStream: current.bestStream,
-                        subtitles: current.subtitles,
-                        storyboard: current.storyboard,
-                        subscription: current.subscription,
-                        rating: response.rating,
-                        watchLater: current.watchLater,
-                        playlistSaveEnabled: current.playlistSaveEnabled
+                    current.with(
+                        likeCountText: response.rating?.likeCountText,
+                        rating: response.rating
                     )
                 }
                 actionMessage = nil
             } catch {
+                playback = previousPlayback
                 actionMessage = error.localizedDescription
             }
         }
@@ -390,6 +377,19 @@ final class PlayerViewModel: ObservableObject {
 
     func toggleWatchLater() {
         guard let watchLater = playback?.watchLater, !isMutatingWatchLater else { return }
+        let previousPlayback = playback
+        let optimisticWatchLater = PlaylistOption(
+            playlistId: watchLater.playlistId,
+            title: watchLater.title,
+            privacy: watchLater.privacy,
+            containsSelectedVideos: !watchLater.saved ? "ALL" : "NONE",
+            saved: !watchLater.saved
+        )
+
+        updatePlayback { current in
+            current.with(watchLater: optimisticWatchLater)
+        }
+        actionMessage = nil
 
         Task {
             isMutatingWatchLater = true
@@ -406,6 +406,7 @@ final class PlayerViewModel: ObservableObject {
                 updatePlaybackWatchLater(response.watchLater)
                 actionMessage = nil
             } catch {
+                playback = previousPlayback
                 actionMessage = error.localizedDescription
             }
         }
@@ -413,6 +414,19 @@ final class PlayerViewModel: ObservableObject {
 
     func togglePlaylist(_ option: PlaylistOption) {
         guard !playlistMutationIDs.contains(option.playlistId) else { return }
+        let previousOptions = playlistOptions
+        let optimisticOption = PlaylistOption(
+            playlistId: option.playlistId,
+            title: option.title,
+            privacy: option.privacy,
+            containsSelectedVideos: option.saved ? "NONE" : "ALL",
+            saved: !option.saved
+        )
+
+        playlistOptions = playlistOptions.map { item in
+            item.playlistId == option.playlistId ? optimisticOption : item
+        }
+        actionMessage = nil
 
         Task {
             playlistMutationIDs.insert(option.playlistId)
@@ -429,6 +443,7 @@ final class PlayerViewModel: ObservableObject {
                 }
                 actionMessage = nil
             } catch {
+                playlistOptions = previousOptions
                 actionMessage = error.localizedDescription
             }
         }
@@ -441,37 +456,7 @@ final class PlayerViewModel: ObservableObject {
 
     private func updatePlaybackWatchLater(_ watchLater: PlaylistOption?) {
         updatePlayback { current in
-            VideoPlayback(
-                id: current.id,
-                title: current.title,
-                channel: current.channel,
-                channelId: current.channelId,
-                channelAvatarUrl: current.channelAvatarUrl,
-                subscriberCountText: current.subscriberCountText,
-                viewCountText: current.viewCountText,
-                publishedTimeText: current.publishedTimeText,
-                publishedDateText: current.publishedDateText,
-                likeCountText: current.likeCountText,
-                durationText: current.durationText,
-                description: current.description,
-                commentCountText: current.commentCountText,
-                streams: current.streams,
-                recommendations: current.recommendations,
-                comments: current.comments,
-                playbackStrategy: current.playbackStrategy,
-                preferredManifestStream: current.preferredManifestStream,
-                preferredMuxedStream: current.preferredMuxedStream,
-                preferredVideoStream: current.preferredVideoStream,
-                preferredAudioStream: current.preferredAudioStream,
-                bestStreamUrl: current.bestStreamUrl,
-                bestStream: current.bestStream,
-                subtitles: current.subtitles,
-                storyboard: current.storyboard,
-                subscription: current.subscription,
-                rating: current.rating,
-                watchLater: watchLater,
-                playlistSaveEnabled: current.playlistSaveEnabled
-            )
+            current.with(watchLater: watchLater)
         }
     }
 }
