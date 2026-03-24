@@ -36,6 +36,96 @@ final class WindowResolverView: NSView {
     }
 }
 
+private struct ManagedPopoverPresenter: NSViewRepresentable {
+    @Binding var isPresented: Bool
+    let preferredEdge: NSRectEdge
+    let contentSize: CGSize
+    let content: AnyView
+
+    @MainActor
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    @MainActor
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.anchorView = view
+        return view
+    }
+
+    @MainActor
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.anchorView = nsView
+        context.coordinator.onDismiss = {
+            DispatchQueue.main.async {
+                if isPresented {
+                    isPresented = false
+                }
+            }
+        }
+        context.coordinator.update(
+            isPresented: isPresented,
+            preferredEdge: preferredEdge,
+            contentSize: contentSize,
+            content: content
+        )
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSPopoverDelegate {
+        weak var anchorView: NSView?
+        let hostingController = NSHostingController(rootView: AnyView(EmptyView()))
+        let popover = NSPopover()
+        var onDismiss: (() -> Void)?
+
+        override init() {
+            super.init()
+            popover.contentViewController = hostingController
+            popover.behavior = .transient
+            popover.animates = true
+            popover.delegate = self
+        }
+
+        func update(
+            isPresented: Bool,
+            preferredEdge: NSRectEdge,
+            contentSize: CGSize,
+            content: AnyView
+        ) {
+            hostingController.rootView = content
+
+            if popover.contentSize != contentSize {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.allowsImplicitAnimation = true
+                    context.duration = 0.18
+                    context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    popover.contentSize = contentSize
+                }
+            }
+
+            guard let anchorView else { return }
+
+            if isPresented {
+                if popover.isShown {
+                    popover.contentViewController?.view.needsLayout = true
+                } else {
+                    DispatchQueue.main.async { [weak self, weak anchorView] in
+                        guard let self, let anchorView, self.popover.isShown == false else { return }
+                        self.popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: preferredEdge)
+                    }
+                }
+            } else if popover.isShown {
+                popover.performClose(nil)
+            }
+        }
+
+        func popoverDidClose(_ notification: Notification) {
+            onDismiss?()
+        }
+    }
+}
+
 
 private struct PlayerSurfaceBoundsKey: PreferenceKey {
     static let defaultValue: Anchor<CGRect>? = nil
@@ -784,14 +874,6 @@ private struct PlayerControlBar: View {
         }
         .padding(.horizontal, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .topTrailing) {
-            if isSettingsOverlayPresented {
-                settingsOverlay
-                    .offset(y: -(settingsPopoverSize.height + 14))
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
-                    .zIndex(5)
-            }
-        }
     }
 
     var playPauseButton: some View {
@@ -923,6 +1005,15 @@ private struct PlayerControlBar: View {
         .buttonStyle(.glass(.regular.interactive()))
         .buttonBorderShape(.circle)
         .controlSize(.regular)
+        .background {
+            ManagedPopoverPresenter(
+                isPresented: $isSettingsOverlayPresented,
+                preferredEdge: .minY,
+                contentSize: settingsPopoverSize,
+                content: AnyView(settingsPopoverContent)
+            )
+            .frame(width: 0, height: 0)
+        }
         .onChange(of: isSettingsOverlayPresented) { _, isPresented in
             if isPresented {
                 resetSettingsMenuNavigation()
@@ -932,16 +1023,6 @@ private struct PlayerControlBar: View {
             }
         }
         .accessibilityLabel("Playback Settings")
-    }
-
-    var settingsOverlay: some View {
-        settingsPopoverContent
-            .playerControlSurface(
-                reduceTransparency: reduceTransparency,
-                glass: .regular,
-                shape: RoundedRectangle(cornerRadius: 20, style: .continuous)
-            )
-            .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
     }
 
     var settingsPopoverSize: CGSize {
@@ -971,6 +1052,11 @@ private struct PlayerControlBar: View {
         .offset(x: settingsShowingSubmenu ? -panelSize.width : 0)
         .frame(width: panelSize.width, height: panelSize.height, alignment: .topLeading)
         .clipped()
+        .playerControlSurface(
+            reduceTransparency: reduceTransparency,
+            glass: .regular,
+            shape: RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: settingsShowingSubmenu)
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: settingsCurrentPage)
     }
