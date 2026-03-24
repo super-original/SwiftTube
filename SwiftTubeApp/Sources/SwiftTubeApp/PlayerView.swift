@@ -1012,7 +1012,7 @@ private struct PlayerControlBar: View {
                 contentSize: settingsPopoverSize,
                 content: AnyView(settingsPopoverContent)
             )
-            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
         }
         .onChange(of: isSettingsOverlayPresented) { _, isPresented in
             if isPresented {
