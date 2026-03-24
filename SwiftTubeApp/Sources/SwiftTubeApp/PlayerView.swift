@@ -98,7 +98,7 @@ private struct ManagedPopoverPresenter: NSViewRepresentable {
             if popover.contentSize != contentSize {
                 NSAnimationContext.runAnimationGroup { context in
                     context.allowsImplicitAnimation = true
-                    context.duration = 0.18
+                    context.duration = 0.26
                     context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                     popover.contentSize = contentSize
                 }
@@ -996,7 +996,7 @@ private struct PlayerControlBar: View {
             if !isSettingsOverlayPresented {
                 resetSettingsMenuNavigation()
             }
-            withAnimation(.snappy(duration: 0.18, extraBounce: 0)) {
+            withAnimation(.easeOut(duration: 0.26)) {
                 isSettingsOverlayPresented.toggle()
             }
         } label: {
@@ -1028,7 +1028,7 @@ private struct PlayerControlBar: View {
     var settingsPopoverSize: CGSize {
         switch settingsShowingSubmenu ? settingsCurrentPage : .root {
         case .root:
-            return CGSize(width: 260, height: 156)
+            return CGSize(width: 260, height: 150)
         case .subtitles:
             return CGSize(width: 240, height: listPopoverHeight(itemCount: coordinator.subtitleOptions.count + 1))
         case .playbackSpeed:
@@ -1052,13 +1052,8 @@ private struct PlayerControlBar: View {
         .offset(x: settingsShowingSubmenu ? -panelSize.width : 0)
         .frame(width: panelSize.width, height: panelSize.height, alignment: .topLeading)
         .clipped()
-        .playerControlSurface(
-            reduceTransparency: reduceTransparency,
-            glass: .regular,
-            shape: RoundedRectangle(cornerRadius: 20, style: .continuous)
-        )
-        .animation(.snappy(duration: 0.18, extraBounce: 0), value: settingsShowingSubmenu)
-        .animation(.snappy(duration: 0.18, extraBounce: 0), value: settingsCurrentPage)
+        .animation(.easeOut(duration: 0.26), value: settingsShowingSubmenu)
+        .animation(.easeOut(duration: 0.26), value: settingsCurrentPage)
     }
 
     var settingsRootPopoverContent: some View {
@@ -1142,7 +1137,6 @@ private struct PlayerControlBar: View {
             subtitleMenuList
                 .padding(.horizontal, 8)
                 .padding(.bottom, 8)
-            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -1200,7 +1194,6 @@ private struct PlayerControlBar: View {
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 8)
-            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -1284,7 +1277,6 @@ private struct PlayerControlBar: View {
             qualityMenuList
                 .padding(.horizontal, 8)
                 .padding(.bottom, 8)
-            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -1441,20 +1433,21 @@ private struct PlayerControlBar: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12)
-        .padding(.top, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
     }
 
     private func showSettingsSubmenu(_ destination: SettingsPopoverDestination) {
         settingsVisibleSubmenu = destination
         settingsCurrentPage = destination
-        withAnimation(.snappy(duration: 0.18, extraBounce: 0)) {
+        withAnimation(.easeOut(duration: 0.26)) {
             settingsShowingSubmenu = true
         }
     }
 
     private func showSettingsRoot() {
         settingsCurrentPage = .root
-        withAnimation(.snappy(duration: 0.18, extraBounce: 0)) {
+        withAnimation(.easeOut(duration: 0.26)) {
             settingsShowingSubmenu = false
         }
     }
@@ -1466,10 +1459,10 @@ private struct PlayerControlBar: View {
     }
 
     private func listPopoverHeight(itemCount: Int) -> CGFloat {
-        let headerHeight: CGFloat = 48
+        let headerHeight: CGFloat = 44
         let rowHeight: CGFloat = 38
-        let verticalPadding: CGFloat = 20
-        return min(max(headerHeight + (CGFloat(itemCount) * rowHeight) + verticalPadding, 132), 420)
+        let verticalPadding: CGFloat = 10
+        return min(max(headerHeight + (CGFloat(itemCount) * rowHeight) + verticalPadding, 112), 420)
     }
 }
 
