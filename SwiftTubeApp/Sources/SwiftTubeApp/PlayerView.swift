@@ -756,8 +756,9 @@ private struct PlayerControlBar: View {
     @State private var isQualityPopoverPresented = false
     @State private var isSubtitlePopoverPresented = false
     @State private var isSettingsPopoverPresented = false
-    @State private var settingsPopoverDestination: SettingsPopoverDestination = .root
-    @State private var settingsNavigationDirection = 1
+    @State private var settingsCurrentPage: SettingsPopoverDestination = .root
+    @State private var settingsVisibleSubmenu: SettingsPopoverDestination? = nil
+    @State private var settingsShowingSubmenu = false
     @State private var sliderWidth: CGFloat = 0
 
     private let compactControlHeight: CGFloat = 38
@@ -903,7 +904,7 @@ private struct PlayerControlBar: View {
     var settingsMenu: some View {
         Button {
             if !isSettingsPopoverPresented {
-                settingsPopoverDestination = .root
+                resetSettingsMenuNavigation()
             }
             isSettingsPopoverPresented.toggle()
         } label: {
@@ -921,7 +922,7 @@ private struct PlayerControlBar: View {
         }
         .onChange(of: isSettingsPopoverPresented) { _, isPresented in
             if isPresented {
-                settingsPopoverDestination = .root
+                resetSettingsMenuNavigation()
                 coordinator.beginMenuInteraction()
             } else {
                 coordinator.endMenuInteraction()
@@ -931,7 +932,7 @@ private struct PlayerControlBar: View {
     }
 
     var currentSettingsPanelSize: CGSize {
-        switch settingsPopoverDestination {
+        switch settingsShowingSubmenu ? settingsCurrentPage : .root {
         case .root:
             return CGSize(width: 260, height: 156)
         case .subtitles:
@@ -944,53 +945,22 @@ private struct PlayerControlBar: View {
     }
 
     var settingsPopoverContent: some View {
-        ZStack(alignment: .topLeading) {
-            if settingsPopoverDestination == .root {
-                settingsPanel(for: .root, transition: settingsPanelTransition) {
-                    settingsRootPopoverContent
-                }
-            }
+        let panelSize = currentSettingsPanelSize
 
-            if settingsPopoverDestination == .subtitles {
-                settingsPanel(for: .subtitles, transition: settingsPanelTransition) {
-                    subtitlePopoverContent
-                }
-            }
+        return HStack(spacing: 0) {
+            settingsRootPopoverContent
+                .frame(width: panelSize.width, height: panelSize.height, alignment: .topLeading)
 
-            if settingsPopoverDestination == .playbackSpeed {
-                settingsPanel(for: .playbackSpeed, transition: settingsPanelTransition) {
-                    playbackSpeedPopoverContent
-                }
-            }
-
-            if settingsPopoverDestination == .quality {
-                settingsPanel(for: .quality, transition: settingsPanelTransition) {
-                    qualityPopoverContent
-                }
-            }
+            settingsSubmenuContent(for: settingsVisibleSubmenu ?? .subtitles)
+                .frame(width: panelSize.width, height: panelSize.height, alignment: .topLeading)
         }
+        .frame(width: panelSize.width * 2, height: panelSize.height, alignment: .leading)
+        .offset(x: settingsShowingSubmenu ? -panelSize.width : 0)
         .frame(width: currentSettingsPanelSize.width, height: currentSettingsPanelSize.height, alignment: .topLeading)
         .clipped()
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: currentSettingsPanelSize)
-        .animation(.snappy(duration: 0.18, extraBounce: 0), value: settingsPopoverDestination)
-    }
-
-    var settingsPanelTransition: AnyTransition {
-        let insertionEdge: Edge = settingsNavigationDirection >= 0 ? .trailing : .leading
-        let removalEdge: Edge = settingsNavigationDirection >= 0 ? .leading : .trailing
-        return .asymmetric(
-            insertion: .move(edge: insertionEdge).combined(with: .opacity),
-            removal: .move(edge: removalEdge).combined(with: .opacity)
-        )
-    }
-
-    private func settingsPanel<Content: View>(
-        for destination: SettingsPopoverDestination,
-        transition: AnyTransition,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        content()
-            .transition(transition)
+        .animation(.snappy(duration: 0.18, extraBounce: 0), value: settingsShowingSubmenu)
+        .animation(.snappy(duration: 0.18, extraBounce: 0), value: settingsCurrentPage)
     }
 
     var settingsRootPopoverContent: some View {
@@ -1001,25 +971,39 @@ private struct PlayerControlBar: View {
                 symbolName: coordinator.subtitleSymbolName,
                 disabled: !coordinator.hasSubtitleOptions
             ) {
-                showSettingsDestination(.subtitles)
+                showSettingsSubmenu(.subtitles)
             }
             settingsNavigationButton(
                 title: "Playback Speed",
                 detail: coordinator.playbackSpeedControlText,
                 symbolName: "speedometer"
             ) {
-                showSettingsDestination(.playbackSpeed)
+                showSettingsSubmenu(.playbackSpeed)
             }
             settingsNavigationButton(
                 title: "Quality",
                 detail: coordinator.qualityControlText,
                 symbolName: "dial.medium"
             ) {
-                showSettingsDestination(.quality)
+                showSettingsSubmenu(.quality)
             }
         }
         .padding(8)
         .frame(minWidth: 260)
+    }
+
+    @ViewBuilder
+    private func settingsSubmenuContent(for destination: SettingsPopoverDestination) -> some View {
+        switch destination {
+        case .root:
+            settingsRootPopoverContent
+        case .subtitles:
+            subtitlePopoverContent
+        case .playbackSpeed:
+            playbackSpeedPopoverContent
+        case .quality:
+            qualityPopoverContent
+        }
     }
 
     var subtitlesButton: some View {
@@ -1339,7 +1323,7 @@ private struct PlayerControlBar: View {
     func settingsSubmenuHeader(title: String) -> some View {
         HStack(spacing: 10) {
             Button {
-                showSettingsDestination(.root, direction: -1)
+                showSettingsRoot()
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.left")
@@ -1359,14 +1343,25 @@ private struct PlayerControlBar: View {
         .padding(.top, 12)
     }
 
-    private func showSettingsDestination(
-        _ destination: SettingsPopoverDestination,
-        direction: Int = 1
-    ) {
-        settingsNavigationDirection = direction
+    private func showSettingsSubmenu(_ destination: SettingsPopoverDestination) {
+        settingsVisibleSubmenu = destination
+        settingsCurrentPage = destination
         withAnimation(.snappy(duration: 0.18, extraBounce: 0)) {
-            settingsPopoverDestination = destination
+            settingsShowingSubmenu = true
         }
+    }
+
+    private func showSettingsRoot() {
+        settingsCurrentPage = .root
+        withAnimation(.snappy(duration: 0.18, extraBounce: 0)) {
+            settingsShowingSubmenu = false
+        }
+    }
+
+    private func resetSettingsMenuNavigation() {
+        settingsCurrentPage = .root
+        settingsVisibleSubmenu = nil
+        settingsShowingSubmenu = false
     }
 
     private func listPopoverHeight(itemCount: Int) -> CGFloat {
