@@ -375,6 +375,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var temporaryPlaybackSpeedOverride: Double? = nil
     private var isSpacebarPressed = false
     private var didActivateSpacebarHoldSpeed = false
+    var onPlaybackEnded: (() -> Void)?
 
     private var scrollMonitor: Any? = nil
 
@@ -818,6 +819,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
     }
 
+    func restartPlayback() {
+        noteInteraction()
+        Task { [weak self] in
+            guard let self, let mpvEngine else { return }
+            await mpvEngine.seek(to: 0)
+            mpvEngine.play()
+            syncMPVState(using: mpvEngine)
+        }
+    }
+
     private var activeQualityOption: QualityOption? {
         qualityOptions.first(where: { $0.id == selectedQualityOptionID })
     }
@@ -877,6 +888,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             )
 
             let engine = MPVPlaybackEngine(request: request)
+            engine.onPlaybackEnded = { [weak self] in
+                self?.onPlaybackEnded?()
+            }
             mpvEngine = engine
 
             try await engine.prepare(startTime: 0, autoPlay: false)
@@ -959,6 +973,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 startPollingMPVState(using: existingEngine)
             } else {
                 let engine = MPVPlaybackEngine(request: request)
+                engine.onPlaybackEnded = { [weak self] in
+                    self?.onPlaybackEnded?()
+                }
                 mpvEngine = engine
 
                 try await engine.prepare(startTime: 0, autoPlay: false)

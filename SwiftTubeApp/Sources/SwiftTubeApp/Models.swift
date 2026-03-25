@@ -14,6 +14,12 @@ struct VideoItem: Codable, Identifiable, Hashable, Sendable {
     let publishedTimeText: String?
     let durationText: String?
     let thumbnails: [Thumbnail]
+    var playlistSetVideoId: String? = nil
+    var playlistIndexText: String? = nil
+    var playlistSelected: Bool? = nil
+    var playlistCanRemove: Bool = false
+    var playlistCanMoveToTop: Bool = false
+    var playlistCanMoveToBottom: Bool = false
 
     var thumbnailURL: URL? {
         guard let urlString = thumbnails.last?.url else { return nil }
@@ -149,6 +155,47 @@ struct PlaylistFeed: Codable, Sendable {
     let itemCountText: String?
     let items: [VideoItem]
     let continuation: String?
+
+    func with(
+        title: String? = nil,
+        ownerText: String? = nil,
+        privacy: String? = nil,
+        itemCountText: String? = nil,
+        items: [VideoItem]? = nil,
+        continuation: String? = nil
+    ) -> PlaylistFeed {
+        PlaylistFeed(
+            playlistId: playlistId,
+            title: title ?? self.title,
+            ownerText: ownerText ?? self.ownerText,
+            privacy: privacy ?? self.privacy,
+            itemCountText: itemCountText ?? self.itemCountText,
+            items: items ?? self.items,
+            continuation: continuation ?? self.continuation
+        )
+    }
+}
+
+enum PlaylistLoopMode: String, Codable, CaseIterable {
+    case off
+    case all
+    case one
+
+    var title: String {
+        switch self {
+        case .off: return "Loop Off"
+        case .all: return "Loop Playlist"
+        case .one: return "Loop Video"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .off: return "repeat"
+        case .all: return "repeat"
+        case .one: return "repeat.1"
+        }
+    }
 }
 
 struct VideoPlayback: Codable, Sendable {
@@ -265,4 +312,8 @@ struct WatchLaterResponse: Codable, Sendable {
 
 struct PlaylistMutationResponse: Codable, Sendable {
     let playlist: PlaylistOption?
+}
+
+struct PlaylistItemMutationResponse: Codable, Sendable {
+    let success: Bool
 }

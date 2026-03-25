@@ -888,6 +888,92 @@ def extract_watch_metadata(data: Any) -> Dict[str, Optional[str]]:
     return metadata
 
 
+def _menu_service_item_renderers(menu: Any) -> List[Dict[str, Any]]:
+    if not isinstance(menu, dict):
+        return []
+    renderer = menu.get("menuRenderer")
+    if not isinstance(renderer, dict):
+        return []
+
+    items = renderer.get("items", [])
+    if not isinstance(items, list):
+        return []
+
+    renderers: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        menu_item = item.get("menuServiceItemRenderer")
+        if isinstance(menu_item, dict):
+            renderers.append(menu_item)
+    return renderers
+
+
+def _playlist_item_menu_flags(menu: Any) -> Dict[str, bool]:
+    flags = {
+        "remove": False,
+        "moveTop": False,
+        "moveBottom": False,
+    }
+
+    for item in _menu_service_item_renderers(menu):
+        command = _normalize_playlist_edit_endpoint(item.get("serviceEndpoint"))
+        if command is None:
+            continue
+
+        actions = command.payload.get("actions")
+        if not isinstance(actions, list) or not actions:
+            continue
+
+        first_action = actions[0] if isinstance(actions[0], dict) else None
+        if not isinstance(first_action, dict):
+            continue
+
+        action_name = first_action.get("action")
+        if action_name == "ACTION_REMOVE_VIDEO":
+            flags["remove"] = True
+        elif action_name == "ACTION_MOVE_VIDEO_AFTER":
+            flags["moveTop"] = True
+        elif action_name == "ACTION_MOVE_VIDEO_BEFORE":
+            flags["moveBottom"] = True
+
+    return flags
+
+
+def extract_playlist_item_action_command(
+    data: Any,
+    *,
+    set_video_id: str,
+    action: str,
+) -> Optional[InnerTubeCommand]:
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+        renderer = node.get("playlistVideoRenderer")
+        if not isinstance(renderer, dict):
+            continue
+        if renderer.get("setVideoId") != set_video_id:
+            continue
+
+        for item in _menu_service_item_renderers(renderer.get("menu")):
+            command = _normalize_playlist_edit_endpoint(item.get("serviceEndpoint"))
+            if command is None:
+                continue
+
+            actions = command.payload.get("actions")
+            if not isinstance(actions, list) or not actions:
+                continue
+            first_action = actions[0] if isinstance(actions[0], dict) else None
+            if not isinstance(first_action, dict):
+                continue
+            if first_action.get("action") == action:
+                return command
+
+        return None
+
+    return None
+
+
 def extract_playlist_feed(data: Any, playlist_id: str) -> PlaylistFeed:
     title = "Playlist"
     owner_text = None
@@ -919,6 +1005,7 @@ def extract_playlist_feed(data: Any, playlist_id: str) -> PlaylistFeed:
         if not isinstance(video_id, str) or not video_id or video_id in seen:
             continue
         seen.add(video_id)
+        menu_flags = _playlist_item_menu_flags(renderer.get("menu"))
         items.append(
             VideoItem(
                 id=video_id,
@@ -928,6 +1015,12 @@ def extract_playlist_feed(data: Any, playlist_id: str) -> PlaylistFeed:
                 publishedTimeText=get_text(renderer.get("publishedTimeText")),
                 durationText=get_text(renderer.get("lengthText")),
                 thumbnails=build_thumbnails(renderer.get("thumbnail")),
+                playlistSetVideoId=renderer.get("setVideoId"),
+                playlistIndexText=get_text(renderer.get("index")),
+                playlistSelected=bool(renderer.get("selected")) if "selected" in renderer else None,
+                playlistCanRemove=menu_flags["remove"],
+                playlistCanMoveToTop=menu_flags["moveTop"],
+                playlistCanMoveToBottom=menu_flags["moveBottom"],
             )
         )
 

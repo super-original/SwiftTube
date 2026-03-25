@@ -229,6 +229,7 @@ final class PlaylistFeedViewModel: ObservableObject {
     @Published private(set) var feed: PlaylistFeed? = nil
     @Published private(set) var items: [VideoItem] = []
     @Published private(set) var isLoading = false
+    @Published private(set) var mutationIDs: Set<String> = []
     @Published var errorMessage: String? = nil
 
     let playlist: PlaylistReference
@@ -272,8 +273,12 @@ final class PlaylistFeedViewModel: ObservableObject {
                 id: playlist.playlistId,
                 continuation: continuation
             )
+            let resolvedTitle = response.title == "Playlist"
+                ? (feed?.title ?? playlist.title)
+                : response.title
+            let resolvedFeed = response.with(title: resolvedTitle)
             if reset || feed == nil {
-                feed = response
+                feed = resolvedFeed
             }
             continuation = response.continuation
             items.append(contentsOf: response.items)
@@ -281,6 +286,108 @@ final class PlaylistFeedViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func moveItemToTop(_ video: VideoItem) {
+        guard let setVideoId = video.playlistSetVideoId,
+              video.playlistCanMoveToTop,
+              !mutationIDs.contains(setVideoId) else { return }
+
+        let previousItems = items
+        items = move(video, in: items, toTop: true)
+
+        Task {
+            mutationIDs.insert(setVideoId)
+            defer { mutationIDs.remove(setVideoId) }
+
+            do {
+                _ = try await BackendClient.shared.reorderPlaylistItem(
+                    playlistId: playlist.playlistId,
+                    setVideoId: setVideoId,
+                    position: "top"
+                )
+                errorMessage = nil
+            } catch {
+                items = previousItems
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func moveItemToBottom(_ video: VideoItem) {
+        guard let setVideoId = video.playlistSetVideoId,
+              video.playlistCanMoveToBottom,
+              !mutationIDs.contains(setVideoId) else { return }
+
+        let previousItems = items
+        items = move(video, in: items, toTop: false)
+
+        Task {
+            mutationIDs.insert(setVideoId)
+            defer { mutationIDs.remove(setVideoId) }
+
+            do {
+                _ = try await BackendClient.shared.reorderPlaylistItem(
+                    playlistId: playlist.playlistId,
+                    setVideoId: setVideoId,
+                    position: "bottom"
+                )
+                errorMessage = nil
+            } catch {
+                items = previousItems
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func removeItem(_ video: VideoItem) {
+        guard let setVideoId = video.playlistSetVideoId,
+              video.playlistCanRemove,
+              !mutationIDs.contains(setVideoId) else { return }
+
+        let previousItems = items
+        items.removeAll { $0.playlistSetVideoId == setVideoId }
+        if let feed {
+            let newCount = max(previousItems.count - 1, 0)
+            self.feed = feed.with(
+                itemCountText: newCount > 0 ? "\(newCount) videos" : feed.itemCountText,
+                items: items
+            )
+        }
+
+        Task {
+            mutationIDs.insert(setVideoId)
+            defer { mutationIDs.remove(setVideoId) }
+
+            do {
+                _ = try await BackendClient.shared.removePlaylistItem(
+                    playlistId: playlist.playlistId,
+                    setVideoId: setVideoId
+                )
+                errorMessage = nil
+            } catch {
+                items = previousItems
+                if let feed {
+                    self.feed = feed.with(items: previousItems)
+                }
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func move(_ video: VideoItem, in items: [VideoItem], toTop: Bool) -> [VideoItem] {
+        guard let currentIndex = items.firstIndex(where: { $0.playlistSetVideoId == video.playlistSetVideoId }) else {
+            return items
+        }
+
+        var updated = items
+        let item = updated.remove(at: currentIndex)
+        if toTop {
+            updated.insert(item, at: 0)
+        } else {
+            updated.append(item)
+        }
+        return updated
     }
 }
 
@@ -439,6 +546,16 @@ final class PlayerViewModel: ObservableObject {
     func toggleRating(_ target: String) {
         guard let rating = playback?.rating, !isMutatingRating else { return }
         let previousPlayback = playback
+        let backendAction: String = {
+            switch target {
+            case "like" where rating.status == "LIKE":
+                return "none"
+            case "dislike" where rating.status == "DISLIKE":
+                return "none"
+            default:
+                return target
+            }
+        }()
         let optimisticStatus: String = {
             switch target {
             case "like":
@@ -467,7 +584,7 @@ final class PlayerViewModel: ObservableObject {
             defer { isMutatingRating = false }
 
             do {
-                let response = try await BackendClient.shared.updateRating(id: video.id, action: target)
+                let response = try await BackendClient.shared.updateRating(id: video.id, action: backendAction)
                 updatePlayback { current in
                     current.with(
                         likeCountText: response.rating?.likeCountText,

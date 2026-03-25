@@ -14,6 +14,7 @@ final class MPVPlaybackEngine: NSObject {
     private var loadWaitTask: Task<Void, Error>?
     private var audioReadyTask: Task<Void, Never>?
     private var eventPumpTask: Task<Void, Never>?
+    var onPlaybackEnded: (() -> Void)?
 
     private(set) var currentTime: Double = 0
     private(set) var duration: Double = 0
@@ -491,6 +492,12 @@ private extension MPVPlaybackEngine {
                         PlaybackDebugLogger.log(
                             "mpv event end-file reason=\(endReason) error=\(endError) message=\(endErrorMessage)"
                         )
+                        if endReason == MPV_END_FILE_REASON_EOF {
+                            Task { @MainActor [weak self] in
+                                self?.isPlaying = false
+                                self?.onPlaybackEnded?()
+                            }
+                        }
                     } else {
                         PlaybackDebugLogger.log("mpv event end-file")
                     }

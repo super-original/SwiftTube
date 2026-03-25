@@ -24,6 +24,12 @@ class VideoItem(BaseModel):
     publishedTimeText: Optional[str] = None
     durationText: Optional[str] = None
     thumbnails: List[Thumbnail] = Field(default_factory=list)
+    playlistSetVideoId: Optional[str] = None
+    playlistIndexText: Optional[str] = None
+    playlistSelected: Optional[bool] = None
+    playlistCanRemove: bool = False
+    playlistCanMoveToTop: bool = False
+    playlistCanMoveToBottom: bool = False
 
 
 class RecommendationsResponse(BaseModel):
@@ -181,6 +187,15 @@ class PlaylistMutationRequest(BaseModel):
     saved: bool
 
 
+class PlaylistItemMutationRequest(BaseModel):
+    setVideoId: str
+
+
+class PlaylistItemReorderRequest(BaseModel):
+    setVideoId: str
+    position: str
+
+
 class PlaylistOptionsResponse(BaseModel):
     options: List[PlaylistOption] = Field(default_factory=list)
 
@@ -204,6 +219,10 @@ class WatchLaterResponse(BaseModel):
 
 class PlaylistMutationResponse(BaseModel):
     playlist: Optional[PlaylistOption] = None
+
+
+class PlaylistItemMutationResponse(BaseModel):
+    success: bool = True
 
 
 class StoryboardSpec(BaseModel):

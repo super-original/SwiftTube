@@ -109,6 +109,30 @@ final class BackendClient {
         return try await performRequest(request: request)
     }
 
+    func removePlaylistItem(playlistId: String, setVideoId: String) async throws -> PlaylistItemMutationResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("library/playlist/")
+            .appendingPathComponent(playlistId)
+            .appendingPathComponent("item/remove"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(PlaylistItemMutationPayload(setVideoId: setVideoId, position: nil))
+        return try await performRequest(request: request)
+    }
+
+    func reorderPlaylistItem(
+        playlistId: String,
+        setVideoId: String,
+        position: String
+    ) async throws -> PlaylistItemMutationResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("library/playlist/")
+            .appendingPathComponent(playlistId)
+            .appendingPathComponent("item/reorder"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(PlaylistItemMutationPayload(setVideoId: setVideoId, position: position))
+        return try await performRequest(request: request)
+    }
+
     func fetchAuthStatus() async throws -> AuthStatusResponse {
         try await performRequest(url: baseURL.appendingPathComponent("auth/status"))
     }
@@ -164,4 +188,9 @@ private struct BackendErrorPayload: Decodable {
 private struct PlaylistMutationPayload: Encodable {
     let playlistId: String
     let saved: Bool
+}
+
+private struct PlaylistItemMutationPayload: Encodable {
+    let setVideoId: String
+    let position: String?
 }

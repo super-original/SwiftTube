@@ -15,6 +15,9 @@ from .models import (
     BrowserAuthRequest,
     CommentsResponse,
     PlaylistFeed,
+    PlaylistItemMutationRequest,
+    PlaylistItemMutationResponse,
+    PlaylistItemReorderRequest,
     PlaylistLibraryResponse,
     PlaylistMutationRequest,
     PlaylistMutationResponse,
@@ -35,6 +38,7 @@ from .parse import (
     extract_comments_token,
     extract_continuation_token,
     extract_playlist_feed,
+    extract_playlist_item_action_command,
     extract_playlist_options,
     extract_playlist_option_commands,
     extract_playlist_summaries,
@@ -115,6 +119,10 @@ def _find_playlist_option(options: list, playlist_id: str):
 
 def _playlist_browse_id(playlist_id: str) -> str:
     return playlist_id if playlist_id.startswith("VL") else f"VL{playlist_id}"
+
+
+def _load_playlist_browse_data(client_web: InnerTube, playlist_id: str) -> dict:
+    return client_web.browse(browse_id=_playlist_browse_id(playlist_id))
 
 
 def _load_recommendations(
@@ -272,11 +280,85 @@ def library_playlist_feed(
         if continuation:
             data = client_web.browse(continuation=continuation)
         else:
-            data = client_web.browse(browse_id=_playlist_browse_id(playlist_id))
+            data = _load_playlist_browse_data(client_web, playlist_id)
     except RequestError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return extract_playlist_feed(data, playlist_id=playlist_id.removeprefix("VL"))
+
+
+@app.post(
+    "/library/playlist/{playlist_id}/item/remove",
+    response_model=PlaylistItemMutationResponse,
+)
+def remove_library_playlist_item(
+    playlist_id: str,
+    request: PlaylistItemMutationRequest,
+) -> PlaylistItemMutationResponse:
+    if not auth_manager.is_authenticated:
+        raise HTTPException(status_code=401, detail="Sign in to manage playlists.")
+
+    client_web, _, _wpc = _build_clients(use_auth=True)
+    try:
+        browse_data = _load_playlist_browse_data(client_web, playlist_id)
+    except RequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    command = extract_playlist_item_action_command(
+        browse_data,
+        set_video_id=request.setVideoId,
+        action="ACTION_REMOVE_VIDEO",
+    )
+    if command is None:
+        raise HTTPException(status_code=404, detail="That playlist item can’t be removed right now.")
+
+    try:
+        _dispatch_inner_tube_command(client_web, command)
+    except RequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return PlaylistItemMutationResponse(success=True)
+
+
+@app.post(
+    "/library/playlist/{playlist_id}/item/reorder",
+    response_model=PlaylistItemMutationResponse,
+)
+def reorder_library_playlist_item(
+    playlist_id: str,
+    request: PlaylistItemReorderRequest,
+) -> PlaylistItemMutationResponse:
+    if not auth_manager.is_authenticated:
+        raise HTTPException(status_code=401, detail="Sign in to manage playlists.")
+
+    action_map = {
+        "top": "ACTION_MOVE_VIDEO_AFTER",
+        "bottom": "ACTION_MOVE_VIDEO_BEFORE",
+    }
+    action = action_map.get(request.position.lower())
+    if action is None:
+        raise HTTPException(status_code=400, detail="Playlist reorder position must be top or bottom.")
+
+    client_web, _, _wpc = _build_clients(use_auth=True)
+    try:
+        browse_data = _load_playlist_browse_data(client_web, playlist_id)
+    except RequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    command = extract_playlist_item_action_command(
+        browse_data,
+        set_video_id=request.setVideoId,
+        action=action,
+    )
+    if command is None:
+        raise HTTPException(status_code=404, detail="That playlist item can’t be reordered right now.")
+
+    try:
+        _dispatch_inner_tube_command(client_web, command)
+    except RequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return PlaylistItemMutationResponse(success=True)
 
 
 def _video_info(

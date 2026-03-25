@@ -35,12 +35,6 @@ struct ContentView: View {
                 .environmentObject(authSession)
         }
         .toolbar {
-            if shouldShowSidebar {
-                ToolbarItem(placement: .navigation) {
-                    SidebarToggleButton()
-                }
-            }
-
             ToolbarItem(placement: .navigation) {
                 Button {
                     searchViewModel.clear()
@@ -123,6 +117,12 @@ private extension ContentView {
         settings.visibleSidebarItems(isAuthenticated: authSession.status.authenticated)
     }
 
+    var userOwnedPlaylists: [PlaylistSummary] {
+        playlistLibraryViewModel.playlists.filter {
+            !["WL", "LL"].contains($0.playlistId)
+        }
+    }
+
     var shouldShowSidebar: Bool {
         visibleSidebarItems.count > 1
     }
@@ -150,11 +150,17 @@ private extension ContentView {
                     .environmentObject(navigation)
                     .id("playlist-library-\(navigation.routeRefreshID.uuidString)")
             case .playlistFeed(let playlist):
-                PlaylistFeedScreen(playlist: playlist)
+                PlaylistFeedScreen(
+                    playlist: playlist,
+                    libraryPlaylists: playlistLibraryViewModel.playlists
+                )
                     .environmentObject(navigation)
                     .id("\(playlist.id)-\(navigation.routeRefreshID.uuidString)")
             case .video(let video):
-                PlayerScreen(video: video)
+                PlayerScreen(
+                    video: video,
+                    libraryPlaylists: playlistLibraryViewModel.playlists
+                )
                     .id("\(video.id)-\(navigation.routeRefreshID.uuidString)")
             }
         }
@@ -217,6 +223,33 @@ private extension ContentView {
                     }
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .contextMenu {
+                        VideoContextMenuContent(
+                            video: video,
+                            userPlaylists: userOwnedPlaylists,
+                            onPlay: { navigation.showVideo(video) },
+                            onPlayFromHere: nil,
+                            onAddToWatchLater: authSession.status.authenticated
+                                ? runDetachedAction {
+                                    _ = try await BackendClient.shared.updateWatchLater(id: video.id, saved: true)
+                                }
+                                : nil,
+                            onSaveToPlaylist: authSession.status.authenticated ? { playlistID in
+                                runDetachedAction {
+                                    _ = try await BackendClient.shared.updatePlaylist(
+                                        id: video.id,
+                                        playlistId: playlistID,
+                                        saved: true
+                                    )
+                                }()
+                            } : nil,
+                            onMoveToPlaylist: nil,
+                            onMoveToWatchLater: nil,
+                            onRemoveFromCurrentPlaylist: nil,
+                            onMoveToTop: nil,
+                            onMoveToBottom: nil
+                        )
+                    }
                     .onAppear {
                         viewModel.loadMoreIfNeeded(currentVideo: video)
                     }
@@ -273,6 +306,33 @@ private extension ContentView {
                     }
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .contextMenu {
+                        VideoContextMenuContent(
+                            video: video,
+                            userPlaylists: userOwnedPlaylists,
+                            onPlay: { navigation.showVideo(video) },
+                            onPlayFromHere: nil,
+                            onAddToWatchLater: authSession.status.authenticated
+                                ? runDetachedAction {
+                                    _ = try await BackendClient.shared.updateWatchLater(id: video.id, saved: true)
+                                }
+                                : nil,
+                            onSaveToPlaylist: authSession.status.authenticated ? { playlistID in
+                                runDetachedAction {
+                                    _ = try await BackendClient.shared.updatePlaylist(
+                                        id: video.id,
+                                        playlistId: playlistID,
+                                        saved: true
+                                    )
+                                }()
+                            } : nil,
+                            onMoveToPlaylist: nil,
+                            onMoveToWatchLater: nil,
+                            onRemoveFromCurrentPlaylist: nil,
+                            onMoveToTop: nil,
+                            onMoveToBottom: nil
+                        )
+                    }
                     .onAppear {
                         searchViewModel.loadMoreIfNeeded(currentVideo: video)
                     }
@@ -372,19 +432,23 @@ private extension ContentView {
             EmptyView()
         }
     }
-}
 
-private struct SidebarToggleButton: View {
-    var body: some View {
-        Button(action: toggleSidebar) {
-            Image(systemName: "sidebar.left")
+    func runDetachedAction(_ operation: @escaping @Sendable () async throws -> Void) -> (() -> Void) {
+        {
+            Task {
+                do {
+                    try await operation()
+                } catch {
+                    await MainActor.run {
+                        let alert = NSAlert()
+                        alert.messageText = "Action Failed"
+                        alert.informativeText = error.localizedDescription
+                        alert.alertStyle = .warning
+                        alert.runModal()
+                    }
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .help("Toggle Sidebar")
-    }
-
-    private func toggleSidebar() {
-        NSApp.keyWindow?.firstResponder?.tryToPerform(#selector(NSSplitViewController.toggleSidebar(_:)), with: nil)
     }
 }
 
@@ -469,19 +533,29 @@ private struct PlaylistLibraryScreen: View {
 private struct PlaylistFeedScreen: View {
     @StateObject private var viewModel: PlaylistFeedViewModel
     @EnvironmentObject private var navigation: AppNavigationModel
+    let libraryPlaylists: [PlaylistSummary]
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 240), spacing: 20, alignment: .top)
-    ]
-
-    init(playlist: PlaylistReference) {
+    init(playlist: PlaylistReference, libraryPlaylists: [PlaylistSummary]) {
+        self.libraryPlaylists = libraryPlaylists
         _viewModel = StateObject(wrappedValue: PlaylistFeedViewModel(playlist: playlist))
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                header
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 28) {
+                        summaryColumn
+                            .frame(width: 312)
+                        playlistList
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    VStack(alignment: .leading, spacing: 24) {
+                        summaryColumn
+                        playlistList
+                    }
+                }
                 content
             }
             .padding(24)
@@ -489,20 +563,173 @@ private struct PlaylistFeedScreen: View {
         .task {
             viewModel.loadInitial()
         }
+        .onChange(of: viewModel.feed?.playlistId) { _, _ in
+            syncNavigationSession()
+        }
+        .onChange(of: viewModel.items) { _, _ in
+            syncNavigationSession()
+        }
     }
 
     @ViewBuilder
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(viewModel.feed?.title ?? viewModel.playlist.title)
-                .font(.largeTitle.weight(.bold))
+    private var summaryColumn: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ZStack(alignment: .bottomTrailing) {
+                CachedAsyncImage(url: viewModel.items.first?.thumbnailURL) {
+                    RoundedRectangle(cornerRadius: 28)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.24, green: 0.40, blue: 0.54),
+                                    Color(red: 0.06, green: 0.13, blue: 0.20)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            Image(systemName: "music.note.list")
+                                .font(.system(size: 42, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.86))
+                        )
+                }
+                .aspectRatio(1, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 28))
 
-            let details = [viewModel.feed?.itemCountText, viewModel.feed?.privacy, viewModel.feed?.ownerText]
-                .compactMap { $0 }
+                if let count = viewModel.feed?.itemCountText {
+                    Text(count)
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(14)
+                }
+            }
 
-            if !details.isEmpty {
-                Text(details.joined(separator: " • "))
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                Text(viewModel.feed?.title ?? viewModel.playlist.title)
+                    .font(.system(size: 34, weight: .bold))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                let details = [viewModel.feed?.ownerText, viewModel.feed?.privacy, viewModel.feed?.itemCountText]
+                    .compactMap { $0 }
+                if !details.isEmpty {
+                    Text(details.joined(separator: " • "))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button {
+                    playPlaylist(startingWith: viewModel.items.first)
+                } label: {
+                    Label("Play All", systemImage: "play.fill")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.white)
+                .foregroundStyle(.black)
+                .disabled(viewModel.items.isEmpty)
+
+                Button {
+                    if let randomVideo = viewModel.items.randomElement() {
+                        navigation.showVideo(
+                            randomVideo,
+                            playlistContext: (reference: viewModel.playlist, feed: resolvedFeedForSession)
+                        )
+                        navigation.activePlaylistShuffleEnabled = true
+                    }
+                } label: {
+                    Label("Shuffle", systemImage: "shuffle")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.items.isEmpty)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var playlistList: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Videos")
+                .font(.title3.weight(.semibold))
+
+            LazyVStack(spacing: 14) {
+                ForEach(viewModel.items, id: \.self) { video in
+                    Button {
+                        playPlaylist(startingWith: video)
+                    } label: {
+                        PlaylistVideoRow(
+                            video: video,
+                            isCurrent: isCurrent(video),
+                            isMutating: viewModel.mutationIDs.contains(video.playlistSetVideoId ?? "")
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        VideoContextMenuContent(
+                            video: video,
+                            userPlaylists: movableLibraryPlaylists(excluding: viewModel.playlist.playlistId),
+                            onPlay: { playPlaylist(startingWith: video) },
+                            onPlayFromHere: { playPlaylist(startingWith: video) },
+                            onAddToWatchLater: viewModel.playlist.kind == .watchLater ? nil : {
+                                _ = Task<Void, Never> {
+                                    do {
+                                        _ = try await BackendClient.shared.updateWatchLater(id: video.id, saved: true)
+                                    } catch {
+                                        viewModel.errorMessage = error.localizedDescription
+                                    }
+                                }
+                            },
+                            onSaveToPlaylist: { playlistID in
+                                _ = Task<Void, Never> {
+                                    do {
+                                        _ = try await BackendClient.shared.updatePlaylist(
+                                            id: video.id,
+                                            playlistId: playlistID,
+                                            saved: true
+                                        )
+                                    } catch {
+                                        viewModel.errorMessage = error.localizedDescription
+                                    }
+                                }
+                            },
+                            onMoveToPlaylist: video.playlistCanRemove ? { playlistID in
+                                _ = Task<Void, Never> {
+                                    do {
+                                        _ = try await BackendClient.shared.updatePlaylist(
+                                            id: video.id,
+                                            playlistId: playlistID,
+                                            saved: true
+                                        )
+                                        viewModel.removeItem(video)
+                                    } catch {
+                                        viewModel.errorMessage = error.localizedDescription
+                                    }
+                                }
+                            } : nil,
+                            onMoveToWatchLater: viewModel.playlist.kind == .watchLater || !video.playlistCanRemove ? nil : {
+                                _ = Task<Void, Never> {
+                                    do {
+                                        _ = try await BackendClient.shared.updateWatchLater(id: video.id, saved: true)
+                                        viewModel.removeItem(video)
+                                    } catch {
+                                        viewModel.errorMessage = error.localizedDescription
+                                    }
+                                }
+                            },
+                            onRemoveFromCurrentPlaylist: video.playlistCanRemove ? { viewModel.removeItem(video) } : nil,
+                            onMoveToTop: video.playlistCanMoveToTop ? { viewModel.moveItemToTop(video) } : nil,
+                            onMoveToBottom: video.playlistCanMoveToBottom ? { viewModel.moveItemToBottom(video) } : nil
+                        )
+                    }
+                    .onAppear {
+                        viewModel.loadMoreIfNeeded(currentVideo: video)
+                    }
+                }
             }
         }
     }
@@ -511,9 +738,11 @@ private struct PlaylistFeedScreen: View {
     private var content: some View {
         if viewModel.items.isEmpty {
             if viewModel.isLoading {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                VStack(spacing: 12) {
                     ForEach(0..<6, id: \.self) { _ in
-                        PlaceholderCard()
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(Color(NSColor.controlBackgroundColor))
+                            .frame(height: 98)
                     }
                 }
             } else if let error = viewModel.errorMessage {
@@ -533,25 +762,46 @@ private struct PlaylistFeedScreen: View {
                     viewModel.reload()
                 }
             }
-        } else {
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                ForEach(viewModel.items, id: \.id) { video in
-                    Button {
-                        navigation.showVideo(video)
-                    } label: {
-                        VideoCard(video: video)
-                    }
-                    .buttonStyle(.plain)
-                    .onAppear {
-                        viewModel.loadMoreIfNeeded(currentVideo: video)
-                    }
-                }
-            }
+        } else if viewModel.isLoading {
+            ProgressView("Loading more...")
+                .padding(.top, 8)
+        }
+    }
 
-            if viewModel.isLoading {
-                ProgressView("Loading more...")
-                    .padding(.top, 16)
-            }
+    private var resolvedFeedForSession: PlaylistFeed {
+        let baseFeed = viewModel.feed ?? PlaylistFeed(
+            playlistId: viewModel.playlist.playlistId,
+            title: viewModel.playlist.title,
+            ownerText: nil,
+            privacy: nil,
+            itemCountText: nil,
+            items: viewModel.items,
+            continuation: nil
+        )
+        let resolvedTitle = baseFeed.title == "Playlist" ? viewModel.playlist.title : baseFeed.title
+        return baseFeed.with(title: resolvedTitle, items: viewModel.items)
+    }
+
+    private func syncNavigationSession() {
+        navigation.syncActivePlaylistFeed(reference: viewModel.playlist, feed: resolvedFeedForSession)
+    }
+
+    private func playPlaylist(startingWith video: VideoItem?) {
+        guard let video else { return }
+        navigation.showVideo(
+            video,
+            playlistContext: (reference: viewModel.playlist, feed: resolvedFeedForSession)
+        )
+    }
+
+    private func isCurrent(_ video: VideoItem) -> Bool {
+        navigation.activePlaylistReference?.playlistId == viewModel.playlist.playlistId
+            && navigation.activePlaylistCurrentVideoID == video.id
+    }
+
+    private func movableLibraryPlaylists(excluding playlistID: String) -> [PlaylistSummary] {
+        libraryPlaylists.filter {
+            !["WL", "LL", playlistID].contains($0.playlistId)
         }
     }
 }
@@ -603,6 +853,105 @@ private struct PlaylistCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct PlaylistVideoRow: View {
+    let video: VideoItem
+    let isCurrent: Bool
+    let isMutating: Bool
+
+    private var metadataLine: String {
+        [video.channel, video.viewCountText, video.publishedTimeText]
+            .compactMap { $0 }
+            .joined(separator: " • ")
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Group {
+                if video.playlistCanMoveToTop || video.playlistCanMoveToBottom {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                } else if let indexText = video.playlistIndexText {
+                    Text(indexText)
+                        .font(.headline.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "play.fill")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 22, alignment: .center)
+            .padding(.top, 24)
+
+            ZStack(alignment: .bottomTrailing) {
+                CachedAsyncImage(url: video.thumbnailURL) {
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(Color.gray.opacity(0.18))
+                        .overlay(
+                            Image(systemName: "play.rectangle.fill")
+                                .font(.system(size: 24))
+                                .foregroundStyle(.secondary)
+                        )
+                }
+                .frame(width: 232)
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+
+                if let duration = video.durationText {
+                    Text(duration)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.black.opacity(0.74)))
+                        .foregroundStyle(.white)
+                        .padding(10)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(video.title)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(2)
+
+                if !metadataLine.isEmpty {
+                    Text(metadataLine)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    if isCurrent {
+                        Label("Now Playing", systemImage: "play.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.blue)
+                    } else if let indexText = video.playlistIndexText {
+                        Text("Video \(indexText)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if isMutating {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 22)
+                .fill(isCurrent ? Color.blue.opacity(0.12) : Color(NSColor.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22)
+                .stroke(isCurrent ? Color.blue.opacity(0.36) : Color.white.opacity(0.06), lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 22))
     }
 }
 

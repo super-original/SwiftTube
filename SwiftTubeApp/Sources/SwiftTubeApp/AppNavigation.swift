@@ -72,6 +72,11 @@ final class AppNavigationModel: ObservableObject {
     @Published private(set) var currentRoute: AppRoute = .home
     @Published var selectedSidebarItem: SidebarItemKind = .home
     @Published var routeRefreshID = UUID()
+    @Published private(set) var activePlaylistReference: PlaylistReference? = nil
+    @Published private(set) var activePlaylistFeed: PlaylistFeed? = nil
+    @Published private(set) var activePlaylistCurrentVideoID: String? = nil
+    @Published var activePlaylistLoopMode: PlaylistLoopMode = .off
+    @Published var activePlaylistShuffleEnabled = false
 
     private var backStack: [AppRoute] = []
     private var forwardStack: [AppRoute] = []
@@ -115,8 +120,126 @@ final class AppNavigationModel: ObservableObject {
         navigate(to: .playlistFeed(playlist))
     }
 
-    func showVideo(_ video: VideoItem) {
+    func showVideo(
+        _ video: VideoItem,
+        playlistContext: (reference: PlaylistReference, feed: PlaylistFeed)? = nil
+    ) {
+        if let playlistContext {
+            activatePlaylistSession(
+                reference: playlistContext.reference,
+                feed: playlistContext.feed,
+                currentVideoID: video.id
+            )
+        } else if activePlaylistFeed?.items.contains(where: { $0.id == video.id }) == true {
+            activePlaylistCurrentVideoID = video.id
+        } else {
+            clearPlaylistSession()
+        }
         navigate(to: .video(video))
+    }
+
+    func activatePlaylistSession(
+        reference: PlaylistReference,
+        feed: PlaylistFeed,
+        currentVideoID: String? = nil
+    ) {
+        let isSamePlaylist = activePlaylistReference?.playlistId == reference.playlistId
+        activePlaylistReference = reference
+        activePlaylistFeed = feed
+        activePlaylistCurrentVideoID = currentVideoID ?? activePlaylistCurrentVideoID
+        if !isSamePlaylist {
+            activePlaylistLoopMode = .off
+            activePlaylistShuffleEnabled = false
+        }
+    }
+
+    func syncActivePlaylistFeed(reference: PlaylistReference, feed: PlaylistFeed) {
+        guard activePlaylistReference?.playlistId == reference.playlistId else { return }
+        activePlaylistFeed = feed
+    }
+
+    func setActivePlaylistCurrentVideo(_ videoID: String) {
+        guard activePlaylistFeed?.items.contains(where: { $0.id == videoID }) == true else { return }
+        activePlaylistCurrentVideoID = videoID
+    }
+
+    func clearPlaylistSession() {
+        activePlaylistReference = nil
+        activePlaylistFeed = nil
+        activePlaylistCurrentVideoID = nil
+        activePlaylistLoopMode = .off
+        activePlaylistShuffleEnabled = false
+    }
+
+    func replaceActivePlaylistItems(_ items: [VideoItem]) {
+        guard let activePlaylistFeed else { return }
+        self.activePlaylistFeed = activePlaylistFeed.with(items: items)
+    }
+
+    var hasActivePlaylist: Bool {
+        activePlaylistFeed?.items.isEmpty == false
+    }
+
+    var activePlaylistItems: [VideoItem] {
+        activePlaylistFeed?.items ?? []
+    }
+
+    var activePlaylistTitle: String? {
+        activePlaylistFeed?.title ?? activePlaylistReference?.title
+    }
+
+    var activePlaylistDetailsLine: String {
+        [activePlaylistFeed?.itemCountText, activePlaylistFeed?.privacy, activePlaylistFeed?.ownerText]
+            .compactMap { $0 }
+            .joined(separator: " • ")
+    }
+
+    func toggleActivePlaylistShuffle() {
+        activePlaylistShuffleEnabled.toggle()
+    }
+
+    func cycleActivePlaylistLoopMode() {
+        switch activePlaylistLoopMode {
+        case .off:
+            activePlaylistLoopMode = .all
+        case .all:
+            activePlaylistLoopMode = .one
+        case .one:
+            activePlaylistLoopMode = .off
+        }
+    }
+
+    func nextVideoForActivePlaylist() -> VideoItem? {
+        let items = activePlaylistItems
+        guard !items.isEmpty else { return nil }
+
+        guard let currentVideoID = activePlaylistCurrentVideoID,
+              let currentIndex = items.firstIndex(where: { $0.id == currentVideoID }) else {
+            return items.first
+        }
+
+        if activePlaylistLoopMode == .one {
+            return items[currentIndex]
+        }
+
+        if activePlaylistShuffleEnabled {
+            let candidateIndices = items.indices.filter { $0 != currentIndex }
+            if let nextIndex = candidateIndices.randomElement() {
+                return items[nextIndex]
+            }
+            return activePlaylistLoopMode == .all ? items[currentIndex] : nil
+        }
+
+        let nextIndex = currentIndex + 1
+        if items.indices.contains(nextIndex) {
+            return items[nextIndex]
+        }
+
+        if activePlaylistLoopMode == .all {
+            return items.first
+        }
+
+        return nil
     }
 
     func selectSidebarItem(_ item: SidebarItemKind) {
