@@ -42,6 +42,19 @@ final class BackendClient {
         return try await performRequest(url: url)
     }
 
+    func fetchComments(id: String, continuation: String? = nil) async throws -> CommentsResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("video/")
+            .appendingPathComponent(id)
+            .appendingPathComponent("comments"), resolvingAgainstBaseURL: false)
+        if let continuation {
+            components?.queryItems = [URLQueryItem(name: "continuation", value: continuation)]
+        }
+        let url = components?.url ?? baseURL.appendingPathComponent("video/")
+            .appendingPathComponent(id)
+            .appendingPathComponent("comments")
+        return try await performRequest(url: url)
+    }
+
     func fetchPlaylistOptions(id: String) async throws -> PlaylistOptionsResponse {
         let url = baseURL.appendingPathComponent("video/")
             .appendingPathComponent(id)
@@ -66,6 +79,19 @@ final class BackendClient {
         }
         let url = components?.url ?? baseURL.appendingPathComponent("library/playlist/")
             .appendingPathComponent(id)
+        return try await performRequest(url: url)
+    }
+
+    func fetchRelatedVideos(id: String, continuation: String? = nil) async throws -> RecommendationsResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("video/")
+            .appendingPathComponent(id)
+            .appendingPathComponent("related"), resolvingAgainstBaseURL: false)
+        if let continuation {
+            components?.queryItems = [URLQueryItem(name: "continuation", value: continuation)]
+        }
+        let url = components?.url ?? baseURL.appendingPathComponent("video/")
+            .appendingPathComponent(id)
+            .appendingPathComponent("related")
         return try await performRequest(url: url)
     }
 

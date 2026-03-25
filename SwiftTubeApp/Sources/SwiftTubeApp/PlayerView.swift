@@ -238,7 +238,7 @@ private extension PlayerScreen {
     }
 
     var recommendations: [VideoItem] {
-        playback?.recommendations ?? []
+        viewModel.recommendations
     }
 
     var playlistUserLibrary: [PlaylistSummary] {
@@ -750,7 +750,7 @@ private extension PlayerScreen {
 
     var commentsSection: some View {
         DetailCard(title: commentHeaderText) {
-            VStack(alignment: .leading, spacing: 18) {
+            LazyVStack(alignment: .leading, spacing: 18) {
                 if viewModel.isLoadingComments && comments.isEmpty {
                     HStack(spacing: 12) {
                         ProgressView()
@@ -763,9 +763,17 @@ private extension PlayerScreen {
                 } else {
                     ForEach(comments) { comment in
                         CommentRow(comment: comment)
+                            .onAppear {
+                                viewModel.loadMoreCommentsIfNeeded(currentComment: comment)
+                            }
                         if comment.id != comments.last?.id {
                             Divider()
                         }
+                    }
+
+                    if viewModel.isLoadingComments {
+                        ProgressView("Loading more comments...")
+                            .padding(.top, 4)
                     }
                 }
             }
@@ -805,7 +813,7 @@ private extension PlayerScreen {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 ForEach(navigation.activePlaylistItems, id: \.self) { queueVideo in
                     Button {
                         navigation.showVideo(queueVideo)
@@ -972,7 +980,7 @@ private extension PlayerScreen {
                     .fontWeight(.semibold)
 
                 if recommendations.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
+                    LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(0..<4, id: \.self) { _ in
                             RoundedRectangle(cornerRadius: 18)
                                 .fill(Color(NSColor.controlBackgroundColor))
@@ -980,7 +988,7 @@ private extension PlayerScreen {
                         }
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: 12) {
+                    LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(recommendations, id: \.id) { relatedVideo in
                             Button {
                                 navigation.showVideo(relatedVideo)
@@ -1023,6 +1031,14 @@ private extension PlayerScreen {
                                     onMoveToBottom: nil
                                 )
                             }
+                            .onAppear {
+                                viewModel.loadMoreRecommendationsIfNeeded(currentVideo: relatedVideo)
+                            }
+                        }
+
+                        if viewModel.isLoadingRecommendations {
+                            ProgressView("Loading more videos...")
+                                .padding(.top, 4)
                         }
                     }
                 }

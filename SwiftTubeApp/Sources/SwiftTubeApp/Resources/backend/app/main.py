@@ -41,6 +41,7 @@ from .parse import (
     extract_playlist_item_action_command,
     extract_playlist_options,
     extract_playlist_option_commands,
+    extract_related_continuation_token,
     extract_playlist_summaries,
     extract_rating_commands,
     extract_rating_state,
@@ -427,6 +428,7 @@ def _video_info(
     watch_later = _find_playlist_option(playlist_options, "WL")
     playlist_save_enabled = extract_watch_page_save_command(watch_data) is not None
     related_videos = extract_related_videos(watch_data, current_video_id=video_id)
+    related_continuation = extract_related_continuation_token(watch_data)
     # WEB client response is the authoritative source for storyboard spec.
     storyboard = extract_storyboard(web_player_data) or extract_storyboard(player_data)
 
@@ -490,6 +492,7 @@ def _video_info(
             rating=rating,
             watchLater=watch_later,
             playlistSaveEnabled=playlist_save_enabled,
+            recommendationsContinuation=related_continuation,
         )
 
     if not playback_bundle.streams and not player_streams:
@@ -534,6 +537,7 @@ def _video_info(
         rating=rating,
         watchLater=watch_later,
         playlistSaveEnabled=playlist_save_enabled,
+        recommendationsContinuation=related_continuation,
     )
 
 
@@ -542,16 +546,39 @@ def _comments_info(video_id: str, client_web: InnerTube) -> CommentsResponse:
     watch_metadata = extract_watch_metadata(watch_data)
     comments_token = extract_comments_token(watch_data)
     comments = []
+    next_comments_token = comments_token
     if comments_token:
         try:
             comments_response = client_web.next(continuation=comments_token)
             comments = extract_comments(comments_response)
+            next_comments_token = extract_comments_token(comments_response)
         except Exception:
             comments = []
 
     return CommentsResponse(
         comments=comments,
         commentCountText=watch_metadata.get("commentCountText"),
+        continuation=next_comments_token,
+    )
+
+
+def _related_info(
+    video_id: str,
+    client_web: InnerTube,
+    continuation: Optional[str],
+) -> RecommendationsResponse:
+    try:
+        if continuation:
+            data = client_web.next(continuation=continuation)
+        else:
+            data = client_web.next(video_id=video_id)
+    except RequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return RecommendationsResponse(
+        items=extract_related_videos(data, current_video_id=video_id),
+        continuation=extract_related_continuation_token(data),
+        note=None,
     )
 
 
@@ -736,8 +763,44 @@ def update_video_playlist(
     return PlaylistMutationResponse(playlist=option)
 
 
+@app.get("/video/{video_id}/related", response_model=RecommendationsResponse)
+def video_related(
+    video_id: str,
+    continuation: Optional[str] = Query(default=None, min_length=1),
+) -> RecommendationsResponse:
+    using_auth = auth_manager.is_authenticated
+    client_web, _, _wpc = _build_clients(use_auth=using_auth)
+
+    try:
+        return _related_info(video_id, client_web, continuation)
+    except HTTPException:
+        raise
+    except RequestError:
+        if using_auth:
+            auth_manager.clear()
+        return _related_info(video_id, public_client_web, continuation)
+
+
 @app.get("/video/{video_id}/comments", response_model=CommentsResponse)
-def video_comments(video_id: str) -> CommentsResponse:
+def video_comments(
+    video_id: str,
+    continuation: Optional[str] = Query(default=None, min_length=1),
+) -> CommentsResponse:
+    if continuation:
+        using_auth = auth_manager.is_authenticated
+        client_web, _, _wpc = _build_clients(use_auth=using_auth)
+        try:
+            response = client_web.next(continuation=continuation)
+            return CommentsResponse(
+                comments=extract_comments(response),
+                commentCountText=None,
+                continuation=extract_comments_token(response),
+            )
+        except RequestError as exc:
+            if using_auth:
+                auth_manager.clear()
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     using_auth = auth_manager.is_authenticated
     if using_auth:
         client_web, _, _wpc = _build_clients(use_auth=True)

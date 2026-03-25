@@ -650,7 +650,7 @@ def pick_best_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
 
 
 def extract_related_videos(
-    data: Any, current_video_id: Optional[str] = None, limit: int = 24
+    data: Any, current_video_id: Optional[str] = None, limit: int = 12
 ) -> List[VideoItem]:
     items: List[VideoItem] = []
     seen: set[str] = set()
@@ -761,6 +761,41 @@ def extract_related_videos(
             break
 
     return items
+
+
+def extract_related_continuation_token(data: Any) -> Optional[str]:
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+
+        item_section = node.get("itemSectionRenderer")
+        if not isinstance(item_section, dict):
+            continue
+
+        contents = item_section.get("contents", [])
+        if not isinstance(contents, list):
+            continue
+
+        has_video_payload = False
+        token = None
+        for item in contents:
+            if not isinstance(item, dict):
+                continue
+            if item.get("lockupViewModel", {}).get("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO":
+                has_video_payload = True
+            continuation = (
+                item.get("continuationItemRenderer", {})
+                .get("continuationEndpoint", {})
+                .get("continuationCommand", {})
+                .get("token")
+            )
+            if isinstance(continuation, str) and continuation:
+                token = continuation
+
+        if has_video_payload and token:
+            return token
+
+    return None
 
 
 def extract_watch_metadata(data: Any) -> Dict[str, Optional[str]]:
@@ -1406,7 +1441,7 @@ def extract_comments_token(data: Any) -> Optional[str]:
     return None
 
 
-def extract_comments(data: Any, limit: int = 8) -> List[CommentItem]:
+def extract_comments(data: Any, limit: int = 20) -> List[CommentItem]:
     updates = data.get("frameworkUpdates", {}).get("entityBatchUpdate", {})
     mutations = updates.get("mutations", []) if isinstance(updates, dict) else []
 

@@ -397,9 +397,11 @@ final class PlayerViewModel: ObservableObject {
     @Published var isLoading = true
     @Published var errorMessage: String? = nil
     @Published var actionMessage: String? = nil
+    @Published private(set) var recommendations: [VideoItem] = []
     @Published private(set) var comments: [CommentItem] = []
     @Published private(set) var commentCountText: String? = nil
     @Published private(set) var isLoadingComments = false
+    @Published private(set) var isLoadingRecommendations = false
     @Published private(set) var playbackLoadID = UUID()
     @Published private(set) var playlistOptions: [PlaylistOption] = []
     @Published private(set) var isLoadingPlaylistOptions = false
@@ -411,6 +413,8 @@ final class PlayerViewModel: ObservableObject {
     let video: VideoItem
     private var loadTask: Task<Void, Never>? = nil
     private var commentsTask: Task<Void, Never>? = nil
+    private var commentsContinuation: String? = nil
+    private var recommendationsContinuation: String? = nil
 
     init(video: VideoItem) {
         self.video = video
@@ -436,8 +440,12 @@ final class PlayerViewModel: ObservableObject {
         playbackLoadID = UUID()
         actionMessage = nil
         comments = []
+        recommendations = []
         commentCountText = nil
         isLoadingComments = false
+        isLoadingRecommendations = false
+        commentsContinuation = nil
+        recommendationsContinuation = nil
         playlistOptions = []
         isLoadingPlaylistOptions = false
 
@@ -446,8 +454,10 @@ final class PlayerViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             self.playback = playback
             self.comments = []
+            self.recommendations = playback.recommendations
             self.commentCountText = playback.commentCountText
             self.isLoadingComments = false
+            self.recommendationsContinuation = playback.recommendationsContinuation
             isLoading = false
             playbackLoadID = UUID()
             startCommentsLoad()
@@ -455,6 +465,7 @@ final class PlayerViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             playback = nil
             comments = []
+            recommendations = []
             commentCountText = nil
             isLoadingComments = false
             errorMessage = "Failed to load video."
@@ -479,6 +490,65 @@ final class PlayerViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             comments = response.comments
             commentCountText = response.commentCountText ?? commentCountText
+            commentsContinuation = response.continuation
+        } catch {
+            guard !Task.isCancelled else { return }
+        }
+    }
+
+    func loadMoreCommentsIfNeeded(currentComment: CommentItem) {
+        guard let last = comments.last, last == currentComment else { return }
+        guard !isLoadingComments, commentsContinuation != nil else { return }
+
+        Task {
+            await fetchMoreComments()
+        }
+    }
+
+    private func fetchMoreComments() async {
+        guard let commentsContinuation else { return }
+        isLoadingComments = true
+        defer { isLoadingComments = false }
+
+        do {
+            let response = try await BackendClient.shared.fetchComments(
+                id: video.id,
+                continuation: commentsContinuation
+            )
+            guard !Task.isCancelled else { return }
+            comments.append(contentsOf: response.comments)
+            if let count = response.commentCountText {
+                commentCountText = count
+            }
+            self.commentsContinuation = response.continuation
+        } catch {
+            guard !Task.isCancelled else { return }
+        }
+    }
+
+    func loadMoreRecommendationsIfNeeded(currentVideo: VideoItem) {
+        guard let last = recommendations.last, last == currentVideo else { return }
+        guard !isLoadingRecommendations, recommendationsContinuation != nil else { return }
+
+        Task {
+            await fetchMoreRecommendations()
+        }
+    }
+
+    private func fetchMoreRecommendations() async {
+        guard let recommendationsContinuation else { return }
+        isLoadingRecommendations = true
+        defer { isLoadingRecommendations = false }
+
+        do {
+            let response = try await BackendClient.shared.fetchRelatedVideos(
+                id: video.id,
+                continuation: recommendationsContinuation
+            )
+            guard !Task.isCancelled else { return }
+            let seen = Set(recommendations.map(\.id))
+            recommendations.append(contentsOf: response.items.filter { !seen.contains($0.id) })
+            self.recommendationsContinuation = response.continuation
         } catch {
             guard !Task.isCancelled else { return }
         }

@@ -78,6 +78,7 @@ struct CommentItem: Codable, Hashable, Identifiable, Sendable {
 struct CommentsResponse: Codable, Sendable {
     let comments: [CommentItem]
     let commentCountText: String?
+    let continuation: String?
 }
 
 struct StoryboardSpec: Codable, Sendable {
@@ -228,6 +229,7 @@ struct VideoPlayback: Codable, Sendable {
     let rating: RatingState?
     let watchLater: PlaylistOption?
     let playlistSaveEnabled: Bool
+    let recommendationsContinuation: String?
 
     var channelAvatarURL: URL? {
         guard let channelAvatarUrl else { return nil }
@@ -270,7 +272,8 @@ struct VideoPlayback: Codable, Sendable {
             subscription: subscription ?? self.subscription,
             rating: rating ?? self.rating,
             watchLater: watchLater ?? self.watchLater,
-            playlistSaveEnabled: playlistSaveEnabled
+            playlistSaveEnabled: playlistSaveEnabled,
+            recommendationsContinuation: recommendationsContinuation
         )
     }
 }

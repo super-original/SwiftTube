@@ -593,7 +593,7 @@ private struct PlaylistFeedScreen: View {
                                 .foregroundStyle(.white.opacity(0.86))
                         )
                 }
-                .aspectRatio(1, contentMode: .fit)
+                .frame(width: 312, height: 312)
                 .clipShape(RoundedRectangle(cornerRadius: 28))
 
                 if let count = viewModel.feed?.itemCountText {
@@ -656,6 +656,7 @@ private struct PlaylistFeedScreen: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Videos")
                 .font(.title3.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             LazyVStack(spacing: 14) {
                 ForEach(viewModel.items, id: \.self) { video in
@@ -897,8 +898,7 @@ private struct PlaylistVideoRow: View {
                                 .foregroundStyle(.secondary)
                         )
                 }
-                .frame(width: 232)
-                .aspectRatio(16 / 9, contentMode: .fit)
+                .frame(width: 232, height: 130.5)
                 .clipShape(RoundedRectangle(cornerRadius: 18))
 
                 if let duration = video.durationText {

@@ -79,6 +79,7 @@ class CommentItem(BaseModel):
 class CommentsResponse(BaseModel):
     comments: List[CommentItem] = Field(default_factory=list)
     commentCountText: Optional[str] = None
+    continuation: Optional[str] = None
 
 
 class SubscriptionState(BaseModel):
@@ -151,6 +152,7 @@ class VideoPlayback(BaseModel):
     rating: Optional[RatingState] = None
     watchLater: Optional[PlaylistOption] = None
     playlistSaveEnabled: bool = False
+    recommendationsContinuation: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
