@@ -252,8 +252,10 @@ final class PlaylistFeedViewModel: ObservableObject {
     }
 
     func loadMoreIfNeeded(currentVideo: VideoItem) {
-        guard let last = items.last, last == currentVideo else { return }
         guard !isLoading, continuation != nil else { return }
+        guard let currentIndex = items.firstIndex(of: currentVideo) else { return }
+        let thresholdIndex = max(items.count - 5, 0)
+        guard currentIndex >= thresholdIndex else { return }
         Task { await fetch(reset: false) }
     }
 
@@ -497,8 +499,10 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func loadMoreCommentsIfNeeded(currentComment: CommentItem) {
-        guard let last = comments.last, last == currentComment else { return }
         guard !isLoadingComments, commentsContinuation != nil else { return }
+        guard let currentIndex = comments.firstIndex(of: currentComment) else { return }
+        let thresholdIndex = max(comments.count - 5, 0)
+        guard currentIndex >= thresholdIndex else { return }
 
         Task {
             await fetchMoreComments()
@@ -527,8 +531,10 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func loadMoreRecommendationsIfNeeded(currentVideo: VideoItem) {
-        guard let last = recommendations.last, last == currentVideo else { return }
         guard !isLoadingRecommendations, recommendationsContinuation != nil else { return }
+        guard let currentIndex = recommendations.firstIndex(of: currentVideo) else { return }
+        let thresholdIndex = max(recommendations.count - 5, 0)
+        guard currentIndex >= thresholdIndex else { return }
 
         Task {
             await fetchMoreRecommendations()

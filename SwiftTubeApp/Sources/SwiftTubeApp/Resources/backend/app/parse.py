@@ -764,36 +764,66 @@ def extract_related_videos(
 
 
 def extract_related_continuation_token(data: Any) -> Optional[str]:
+    def item_has_video_payload(item: Any) -> bool:
+        if not isinstance(item, dict):
+            return False
+        if any(
+            key in item
+            for key in (
+                "compactVideoRenderer",
+                "videoRenderer",
+                "playlistPanelVideoRenderer",
+                "gridVideoRenderer",
+                "richItemRenderer",
+            )
+        ):
+            return True
+        return item.get("lockupViewModel", {}).get("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO"
+
+    def continuation_lists(node: dict[str, Any]) -> list[list[Any]]:
+        lists: list[list[Any]] = []
+
+        item_section = node.get("itemSectionRenderer")
+        if isinstance(item_section, dict):
+            contents = item_section.get("contents", [])
+            if isinstance(contents, list):
+                lists.append(contents)
+
+        append_items = node.get("appendContinuationItemsAction", {}).get("continuationItems", [])
+        if isinstance(append_items, list):
+            lists.append(append_items)
+
+        reload_items = node.get("reloadContinuationItemsCommand", {}).get("continuationItems", [])
+        if isinstance(reload_items, list):
+            lists.append(reload_items)
+
+        continuation_contents = node.get("continuationContents", {})
+        if isinstance(continuation_contents, dict):
+            for key in ("itemSectionContinuation", "sectionListContinuation"):
+                contents = continuation_contents.get(key, {}).get("contents", [])
+                if isinstance(contents, list):
+                    lists.append(contents)
+
     for node in iter_nodes(data):
         if not isinstance(node, dict):
             continue
+        for contents in continuation_lists(node):
+            has_video_payload = False
+            token = None
+            for item in contents:
+                if item_has_video_payload(item):
+                    has_video_payload = True
+                continuation = (
+                    item.get("continuationItemRenderer", {})
+                    .get("continuationEndpoint", {})
+                    .get("continuationCommand", {})
+                    .get("token")
+                ) if isinstance(item, dict) else None
+                if isinstance(continuation, str) and continuation:
+                    token = continuation
 
-        item_section = node.get("itemSectionRenderer")
-        if not isinstance(item_section, dict):
-            continue
-
-        contents = item_section.get("contents", [])
-        if not isinstance(contents, list):
-            continue
-
-        has_video_payload = False
-        token = None
-        for item in contents:
-            if not isinstance(item, dict):
-                continue
-            if item.get("lockupViewModel", {}).get("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO":
-                has_video_payload = True
-            continuation = (
-                item.get("continuationItemRenderer", {})
-                .get("continuationEndpoint", {})
-                .get("continuationCommand", {})
-                .get("token")
-            )
-            if isinstance(continuation, str) and continuation:
-                token = continuation
-
-        if has_video_payload and token:
-            return token
+            if has_video_payload and token:
+                return token
 
     return None
 
@@ -1438,6 +1468,27 @@ def extract_comments_token(data: Any) -> Optional[str]:
                 )
                 if continuation:
                     return continuation
+
+    for node in iter_nodes(data):
+        if not isinstance(node, dict):
+            continue
+        continuation_items = (
+            node.get("appendContinuationItemsAction", {}).get("continuationItems", [])
+            or node.get("reloadContinuationItemsCommand", {}).get("continuationItems", [])
+        )
+        if not isinstance(continuation_items, list):
+            continue
+        if not any(isinstance(item, dict) and "commentThreadRenderer" in item for item in continuation_items):
+            continue
+        for item in continuation_items:
+            continuation = (
+                item.get("continuationItemRenderer", {})
+                .get("continuationEndpoint", {})
+                .get("continuationCommand", {})
+                .get("token")
+            ) if isinstance(item, dict) else None
+            if continuation:
+                return continuation
     return None
 
 

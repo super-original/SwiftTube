@@ -6,7 +6,7 @@ struct VideoCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: video.thumbnailURL) {
+                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 640) {
                     ZStack {
                         Rectangle()
                             .fill(Color.gray.opacity(0.2))

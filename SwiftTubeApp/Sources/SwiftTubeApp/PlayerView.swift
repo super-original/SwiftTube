@@ -2170,7 +2170,7 @@ private struct ChannelSummary: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            CachedAsyncImage(url: avatarURL) {
+            CachedAsyncImage(url: avatarURL, maxPixelSize: 128) {
                 Circle()
                     .fill(Color.gray.opacity(0.28))
                     .overlay(
@@ -2262,7 +2262,7 @@ private struct CommentRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            CachedAsyncImage(url: comment.avatarURL) {
+            CachedAsyncImage(url: comment.avatarURL, maxPixelSize: 96) {
                 Circle()
                     .fill(Color.gray.opacity(0.28))
                     .overlay(
@@ -2320,7 +2320,7 @@ private struct RecommendationRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: video.thumbnailURL) {
+                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 640) {
                     RoundedRectangle(cornerRadius: 16)
                         .fill(Color.gray.opacity(0.2))
                         .overlay(

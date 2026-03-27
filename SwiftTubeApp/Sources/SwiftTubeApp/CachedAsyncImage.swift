@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CachedAsyncImage<Placeholder: View>: View {
     let url: URL?
+    let maxPixelSize: Int?
     let contentMode: ContentMode
     let placeholder: Placeholder
 
@@ -9,10 +10,12 @@ struct CachedAsyncImage<Placeholder: View>: View {
 
     init(
         url: URL?,
+        maxPixelSize: Int? = nil,
         contentMode: ContentMode = .fill,
         @ViewBuilder placeholder: () -> Placeholder
     ) {
         self.url = url
+        self.maxPixelSize = maxPixelSize
         self.contentMode = contentMode
         self.placeholder = placeholder()
     }
@@ -28,10 +31,13 @@ struct CachedAsyncImage<Placeholder: View>: View {
             }
         }
         .onAppear {
-            loader.load(from: url)
+            loader.load(from: url, maxPixelSize: maxPixelSize)
         }
         .onChange(of: url) { _, newValue in
-            loader.load(from: newValue)
+            loader.load(from: newValue, maxPixelSize: maxPixelSize)
+        }
+        .onChange(of: maxPixelSize) { _, newValue in
+            loader.load(from: url, maxPixelSize: newValue)
         }
     }
 }

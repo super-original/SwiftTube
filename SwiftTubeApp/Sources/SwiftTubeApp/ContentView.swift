@@ -575,7 +575,7 @@ private struct PlaylistFeedScreen: View {
     private var summaryColumn: some View {
         VStack(alignment: .leading, spacing: 18) {
             ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: viewModel.items.first?.thumbnailURL) {
+                CachedAsyncImage(url: viewModel.items.first?.thumbnailURL, maxPixelSize: 720) {
                     RoundedRectangle(cornerRadius: 28)
                         .fill(
                             LinearGradient(
@@ -813,7 +813,7 @@ private struct PlaylistCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ZStack(alignment: .bottomLeading) {
-                CachedAsyncImage(url: playlist.thumbnailURL) {
+                CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: 640) {
                     RoundedRectangle(cornerRadius: 18)
                         .fill(Color.gray.opacity(0.22))
                         .overlay(
@@ -889,7 +889,7 @@ private struct PlaylistVideoRow: View {
             .padding(.top, 24)
 
             ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: video.thumbnailURL) {
+                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 640) {
                     RoundedRectangle(cornerRadius: 18)
                         .fill(Color.gray.opacity(0.18))
                         .overlay(

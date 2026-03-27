@@ -199,13 +199,21 @@ private func preferredManualQualityAudioStream(for playback: VideoPlayback) -> S
         .first
 }
 
+private func isSupportedManualQualityCodec(_ codec: String?) -> Bool {
+    guard let codec else { return false }
+    return codec.hasPrefix("avc1")
+        || codec.hasPrefix("av01")
+        || codec.hasPrefix("hvc1")
+        || codec.hasPrefix("hev1")
+}
+
 private func isManualQualityVideoStream(_ stream: StreamInfo) -> Bool {
     guard stream.hasVideo,
           !stream.hasAudio,
           stream.streamKind != "manifest",
           (stream.height ?? 0) > 0,
           stream.container?.lowercased().hasPrefix("mp4") == true,
-          stream.videoCodec?.hasPrefix("av01") == true else {
+          isSupportedManualQualityCodec(stream.videoCodec) else {
         return false
     }
 

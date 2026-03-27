@@ -317,7 +317,7 @@ def _best_video_stream(streams: List[StreamInfo]) -> Optional[StreamInfo]:
         and not stream.hasAudio
         and (stream.container or "").startswith("mp4")
         and isinstance(stream.videoCodec, str)
-        and stream.videoCodec.startswith("av01")
+        and stream.videoCodec.startswith(("avc1", "av01", "hvc1", "hev1"))
     ]
     if not candidates:
         return None
