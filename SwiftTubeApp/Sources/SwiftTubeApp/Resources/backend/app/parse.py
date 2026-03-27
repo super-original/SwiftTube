@@ -804,6 +804,8 @@ def extract_related_continuation_token(data: Any) -> Optional[str]:
                 if isinstance(contents, list):
                     lists.append(contents)
 
+        return lists
+
     for node in iter_nodes(data):
         if not isinstance(node, dict):
             continue
