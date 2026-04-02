@@ -77,6 +77,8 @@ final class AppNavigationModel: ObservableObject {
     @Published private(set) var activePlaylistCurrentVideoID: String? = nil
     @Published var activePlaylistLoopMode: PlaylistLoopMode = .off
     @Published var activePlaylistShuffleEnabled = false
+    @Published private(set) var pendingVideoStartTime: Double? = nil
+    @Published private(set) var pendingVideoStartVideoID: String? = nil
 
     private var backStack: [AppRoute] = []
     private var forwardStack: [AppRoute] = []
@@ -122,8 +124,11 @@ final class AppNavigationModel: ObservableObject {
 
     func showVideo(
         _ video: VideoItem,
+        startTime: Double? = nil,
         playlistContext: (reference: PlaylistReference, feed: PlaylistFeed)? = nil
     ) {
+        pendingVideoStartVideoID = startTime != nil ? video.id : nil
+        pendingVideoStartTime = startTime
         if let playlistContext {
             activatePlaylistSession(
                 reference: playlistContext.reference,
@@ -136,6 +141,14 @@ final class AppNavigationModel: ObservableObject {
             clearPlaylistSession()
         }
         navigate(to: .video(video))
+    }
+
+    func consumePendingStartTime(for videoID: String) -> Double? {
+        guard pendingVideoStartVideoID == videoID else { return nil }
+        let resolved = pendingVideoStartTime
+        pendingVideoStartVideoID = nil
+        pendingVideoStartTime = nil
+        return resolved
     }
 
     func activatePlaylistSession(

@@ -30,6 +30,13 @@ struct ContentView: View {
             }
         }
         .overlay(backendOverlay)
+        .overlay(alignment: .top) {
+            if shouldShowSearchAssist {
+                searchAssistOverlay
+                    .padding(.top, 12)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
         .sheet(isPresented: $authSession.isSheetPresented) {
             AuthConnectionSheet()
                 .environmentObject(authSession)
@@ -109,6 +116,9 @@ struct ContentView: View {
         .onChange(of: settings.hiddenSidebarItems) { _, _ in
             navigation.ensureValidSidebarSelection(visibleItems: visibleSidebarItems)
         }
+        .onChange(of: searchViewModel.query) { _, _ in
+            searchViewModel.handleQueryChange()
+        }
     }
 }
 
@@ -127,8 +137,13 @@ private extension ContentView {
         visibleSidebarItems.count > 1
     }
 
+    var shouldShowSearchAssist: Bool {
+        !searchViewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !searchViewModel.isActive
+    }
+
     var backgroundView: some View {
-        Color(NSColor.windowBackgroundColor)
+        settings.windowBackgroundColor
             .ignoresSafeArea()
     }
 
@@ -395,7 +410,7 @@ private extension ContentView {
                 .padding(24)
                 .background(
                     RoundedRectangle(cornerRadius: 16)
-                        .fill(Color(NSColor.windowBackgroundColor))
+                        .fill(settings.cardBackgroundColor)
                         .shadow(radius: 12)
                 )
             }
@@ -449,6 +464,24 @@ private extension ContentView {
                 }
             }
         }
+    }
+
+    var searchAssistOverlay: some View {
+        SearchAssistPanel(
+            query: searchViewModel.query,
+            suggestions: searchViewModel.suggestions,
+            linkPreview: searchViewModel.linkPreview,
+            isLoading: searchViewModel.isLoadingSuggestions,
+            onSelectSuggestion: { suggestion in
+                searchViewModel.applySuggestion(suggestion)
+                searchViewModel.submit(navigation: navigation)
+            },
+            onOpenLink: {
+                searchViewModel.submit(navigation: navigation)
+            }
+        )
+        .frame(maxWidth: 540)
+        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
     }
 }
 
@@ -1309,8 +1342,143 @@ private struct PlaceholderCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(NSColor.controlBackgroundColor))
+                .fill(AppSettings.shared.cardBackgroundColor)
         )
         .redacted(reason: .placeholder)
+    }
+}
+
+private struct SearchAssistPanel: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let query: String
+    let suggestions: [String]
+    let linkPreview: SearchViewModel.LinkPreview?
+    let isLoading: Bool
+    let onSelectSuggestion: (String) -> Void
+    let onOpenLink: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let linkPreview {
+                SearchLinkDetectedCard(linkPreview: linkPreview, onOpen: onOpenLink)
+                    .transition(.scale(scale: 0.98).combined(with: .opacity))
+            } else if suggestions.isEmpty {
+                HStack(spacing: 10) {
+                    if isLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(isLoading ? "Finding suggestions..." : "Keep typing to search YouTube")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.subheadline)
+                .padding(14)
+            } else {
+                ForEach(suggestions, id: \.self) { suggestion in
+                    Button {
+                        onSelectSuggestion(suggestion)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(suggestion)
+                                    .foregroundStyle(.primary)
+                                if suggestion != query {
+                                    Text("Search YouTube")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(settings.cardBackgroundColor.opacity(settings.appearanceMode == .light ? 0.98 : 0.96))
+        )
+        .padding(.horizontal, 16)
+        .animation(.snappy(duration: 0.18, extraBounce: 0), value: suggestions)
+        .animation(.snappy(duration: 0.18, extraBounce: 0), value: linkPreview)
+    }
+}
+
+private struct SearchLinkDetectedCard: View {
+    let linkPreview: SearchViewModel.LinkPreview
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 14) {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.red.opacity(0.95), Color.orange.opacity(0.75)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 68, height: 56)
+                    .overlay(
+                        Image(systemName: "play.fill")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(.white)
+                    )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("YouTube Link Detected")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(linkPreview.title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                    Text(linkDetailLine)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: "arrow.right.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(Color.accentColor)
+            }
+            .padding(16)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var linkDetailLine: String {
+        var parts: [String] = []
+        if let channel = linkPreview.channel, !channel.isEmpty {
+            parts.append(channel)
+        }
+        if linkPreview.startTime > 0 {
+            parts.append("Starts at \(formatTime(linkPreview.startTime))")
+        }
+        return parts.isEmpty ? "Open video" : parts.joined(separator: " • ")
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        let totalSeconds = Int(seconds.rounded(.down))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let remainder = totalSeconds % 60
+
+        if hours > 0 {
+            return "\(hours):\(String(format: "%02d", minutes)):\(String(format: "%02d", remainder))"
+        }
+        return "\(minutes):\(String(format: "%02d", remainder))"
     }
 }

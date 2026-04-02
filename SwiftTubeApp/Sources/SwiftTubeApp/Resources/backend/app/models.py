@@ -161,6 +161,11 @@ class SearchResponse(BaseModel):
     query: str = ""
 
 
+class SearchSuggestionsResponse(BaseModel):
+    query: str = ""
+    suggestions: List[str] = Field(default_factory=list)
+
+
 class AuthStatusResponse(BaseModel):
     authenticated: bool = False
     browser: Optional[str] = None

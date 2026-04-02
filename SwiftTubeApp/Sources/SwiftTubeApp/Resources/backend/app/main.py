@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 from innertube import InnerTube
 from innertube.errors import RequestError
 
@@ -26,6 +28,7 @@ from .models import (
     RatingResponse,
     RecommendationsResponse,
     SearchResponse,
+    SearchSuggestionsResponse,
     SubscriptionRequest,
     SubscriptionResponse,
     VideoPlayback,
@@ -152,6 +155,41 @@ def _merge_streams(*stream_groups: list) -> list:
     return merged
 
 
+def _load_search_suggestions(query: str) -> list[str]:
+    try:
+        response = httpx.get(
+            "https://suggestqueries.google.com/complete/search",
+            params={
+                "client": "firefox",
+                "ds": "yt",
+                "q": query,
+            },
+            timeout=8.0,
+        )
+        response.raise_for_status()
+        payload = json.loads(response.text)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if not isinstance(payload, list) or len(payload) < 2 or not isinstance(payload[1], list):
+        return []
+
+    suggestions: list[str] = []
+    seen: set[str] = set()
+    for value in payload[1]:
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        suggestions.append(cleaned)
+        if len(suggestions) >= 8:
+            break
+
+    return suggestions
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "instanceId": INSTANCE_ID, "version": APP_VERSION}
@@ -248,6 +286,16 @@ def search(
     items = extract_video_items(data)
     token = extract_continuation_token(data)
     return SearchResponse(items=items, continuation=token, query=q)
+
+
+@app.get("/search/suggestions", response_model=SearchSuggestionsResponse)
+def search_suggestions(
+    q: str = Query(min_length=1),
+) -> SearchSuggestionsResponse:
+    return SearchSuggestionsResponse(
+        query=q,
+        suggestions=_load_search_suggestions(q),
+    )
 
 
 @app.get("/library/playlists", response_model=PlaylistLibraryResponse)

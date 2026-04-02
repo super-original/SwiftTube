@@ -371,6 +371,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var isHoveringStage = false
     private var currentPlayback: VideoPlayback? = nil
     private weak var window: NSWindow?
+    private var keyboardEventMonitor: Any? = nil
     private var prepareTask: Task<Void, Never>? = nil
     private var hideControlsTask: Task<Void, Never>? = nil
     private var menuInteractionTask: Task<Void, Never>? = nil
@@ -383,7 +384,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var temporaryPlaybackSpeedOverride: Double? = nil
     private var isSpacebarPressed = false
     private var didActivateSpacebarHoldSpeed = false
+    private var initialStartTime: Double = 0
     var onPlaybackEnded: (() -> Void)?
+    var onShortcutAction: ((PlayerKeyAction) -> Void)?
 
     private var scrollMonitor: Any? = nil
 
@@ -527,6 +530,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
     }
 
+    func setInitialStartTime(_ seconds: Double) {
+        initialStartTime = max(0, seconds)
+    }
+
     func reset() {
         prepareTask?.cancel()
         stopHideMonitor()
@@ -560,12 +567,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         temporaryPlaybackSpeedOverride = nil
         isSpacebarPressed = false
         didActivateSpacebarHoldSpeed = false
+        initialStartTime = 0
         scheduleMPVStop(mpvEngine, pauseFirst: true)
         mpvEngine = nil
     }
 
     func stop() {
         reset()
+        removeKeyboardMonitor()
     }
 
     func setWindow(_ window: NSWindow?) {
@@ -590,6 +599,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         self.window = window
         layoutState.isFullscreen = window?.styleMask.contains(.fullScreen) == true
         installScrollMonitor()
+        installKeyboardMonitor()
 
         if let window {
             NotificationCenter.default.addObserver(
@@ -837,6 +847,37 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
     }
 
+    func triggerShortcutAction(_ action: PlayerKeyAction) {
+        switch action {
+        case .playPause:
+            togglePlayback()
+        case .seekShortBack:
+            seekRelative(-AppSettings.shared.seekSeconds(for: .short))
+        case .seekShortForward:
+            seekRelative(AppSettings.shared.seekSeconds(for: .short))
+        case .seekMediumBack:
+            seekRelative(-AppSettings.shared.seekSeconds(for: .medium))
+        case .seekMediumForward:
+            seekRelative(AppSettings.shared.seekSeconds(for: .medium))
+        case .seekLongBack:
+            seekRelative(-AppSettings.shared.seekSeconds(for: .long))
+        case .seekLongForward:
+            seekRelative(AppSettings.shared.seekSeconds(for: .long))
+        case .frameBack:
+            stepFrame(direction: -1)
+        case .frameForward:
+            stepFrame(direction: 1)
+        case .theaterMode:
+            toggleTheaterMode()
+        case .fullscreen:
+            toggleFullscreen()
+        case .subtitles:
+            toggleSubtitles()
+        case .likeVideo, .dislikeVideo, .watchLater, .saveToPlaylist, .subscribe, .share:
+            onShortcutAction?(action)
+        }
+    }
+
     private var activeQualityOption: QualityOption? {
         qualityOptions.first(where: { $0.id == selectedQualityOptionID })
     }
@@ -901,16 +942,18 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             }
             mpvEngine = engine
 
-            try await engine.prepare(startTime: 0, autoPlay: false)
+            let startTime = initialStartTime
+            try await engine.prepare(startTime: startTime, autoPlay: false)
             guard !Task.isCancelled else { return }
             engine.setVolume(volume)
             engine.setRate(effectivePlaybackSpeed)
             engine.play()
 
-            currentTime = 0
-            scrubPosition = 0
+            currentTime = startTime
+            scrubPosition = startTime
             duration = 0
             storyboard = playback.storyboard
+            initialStartTime = 0
             startPollingMPVState(using: engine)
             refreshQualityOptions(for: playback)
             loadSubtitleTracks(for: playback, engine: engine)
@@ -986,16 +1029,18 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 }
                 mpvEngine = engine
 
-                try await engine.prepare(startTime: 0, autoPlay: false)
+                let startTime = initialStartTime
+                try await engine.prepare(startTime: startTime, autoPlay: false)
                 guard !Task.isCancelled else { return }
                 engine.setVolume(volume)
                 engine.setRate(effectivePlaybackSpeed)
                 engine.play()
 
-                currentTime = 0
-                scrubPosition = 0
+                currentTime = startTime
+                scrubPosition = startTime
                 duration = 0
                 pendingQualityOptionID = nil
+                initialStartTime = 0
                 startPollingMPVState(using: engine)
             }
 
@@ -1455,6 +1500,65 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         return "\(minutes):\(String(format: "%02d", remainder))"
     }
 
+    private func installKeyboardMonitor() {
+        guard keyboardEventMonitor == nil else { return }
+        keyboardEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+            guard let self else { return event }
+            return self.handleKeyboardEvent(event)
+        }
+    }
+
+    private func removeKeyboardMonitor() {
+        if let keyboardEventMonitor {
+            NSEvent.removeMonitor(keyboardEventMonitor)
+            self.keyboardEventMonitor = nil
+        }
+    }
+
+    private func handleKeyboardEvent(_ event: NSEvent) -> NSEvent? {
+        guard let window, event.window === window else { return event }
+        guard mpvEngine != nil else { return event }
+        guard !Self.windowHasActiveTextInput(window) else { return event }
+
+        if matchesKeyboardLock(event) {
+            if event.type == .keyDown, !event.isARepeat {
+                keyboardLocked.toggle()
+            }
+            return nil
+        }
+
+        guard !keyboardLocked else { return nil }
+
+        if event.keyCode == 49 {
+            if event.type == .keyDown {
+                if !event.isARepeat {
+                    handleSpacebarKeyDown()
+                }
+            } else {
+                handleSpacebarKeyUp()
+            }
+            return nil
+        }
+
+        guard event.type == .keyDown, !event.isARepeat else { return event.type == .keyUp ? nil : event }
+
+        let settings = AppSettings.shared
+        for action in PlayerKeyAction.allCases {
+            if settings.binding(for: action).matches(event) {
+                triggerShortcutAction(action)
+                return nil
+            }
+        }
+
+        return event
+    }
+
+    private func matchesKeyboardLock(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown || event.type == .keyUp else { return false }
+        guard let keyCode = AppSettings.shared.keyboardLockKey.keyCode else { return false }
+        return event.keyCode == keyCode && KeyBindingModifiers(event.modifierFlags).isEmpty
+    }
+
     // MARK: - Scroll forwarding (NSEvent)
 
     private func installScrollMonitor() {
@@ -1478,6 +1582,15 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         guard let scrollView = Self.findPageScrollView(in: window) else { return event }
         scrollView.scrollWheel(with: event)
         return nil
+    }
+
+    private static func windowHasActiveTextInput(_ window: NSWindow) -> Bool {
+        guard let responder = window.firstResponder else { return false }
+        if responder is NSTextView { return true }
+        if let view = responder as? NSView {
+            return view is NSTextView || view.enclosingMenuItem != nil
+        }
+        return false
     }
 
     private static func findPageScrollView(in window: NSWindow) -> NSScrollView? {

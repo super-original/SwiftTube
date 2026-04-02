@@ -165,7 +165,7 @@ struct PlayerScreen: View {
         }
         .scrollDisabled(layoutState.isFullscreen)
         .background(
-            (layoutState.isFullscreen ? Color.black : Color(NSColor.windowBackgroundColor))
+            (layoutState.isFullscreen ? Color.black : AppSettings.shared.windowBackgroundColor)
                 .ignoresSafeArea()
         )
         .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
@@ -197,6 +197,9 @@ struct PlayerScreen: View {
         }
         .task(id: viewModel.playbackLoadID) {
             if let playback = viewModel.playback {
+                if let startTime = navigation.consumePendingStartTime(for: video.id) {
+                    playbackCoordinator.setInitialStartTime(startTime)
+                }
                 playbackCoordinator.configure(with: playback)
                 if authSession.status.authenticated, playback.playlistSaveEnabled {
                     viewModel.loadPlaylistOptions()
@@ -207,11 +210,13 @@ struct PlayerScreen: View {
         }
         .onAppear {
             playbackCoordinator.onPlaybackEnded = handlePlaybackEnded
+            playbackCoordinator.onShortcutAction = handleShortcutAction
             navigation.setActivePlaylistCurrentVideo(video.id)
         }
         .onDisappear {
             viewModel.stop()
             playbackCoordinator.stop()
+            playbackCoordinator.onShortcutAction = nil
         }
     }
 }
@@ -748,6 +753,35 @@ private extension PlayerScreen {
         }
     }
 
+    func handleShortcutAction(_ action: PlayerKeyAction) {
+        switch action {
+        case .likeVideo:
+            viewModel.toggleRating("like")
+        case .dislikeVideo:
+            viewModel.toggleRating("dislike")
+        case .watchLater:
+            viewModel.toggleWatchLater()
+        case .saveToPlaylist:
+            guard playback?.playlistSaveEnabled == true else { return }
+            if viewModel.playlistOptions.isEmpty {
+                viewModel.loadPlaylistOptions()
+            }
+            isSharePopoverPresented = false
+            withAnimation(.easeOut(duration: 0.2)) {
+                isPlaylistPopoverPresented.toggle()
+            }
+        case .subscribe:
+            viewModel.toggleSubscription()
+        case .share:
+            isPlaylistPopoverPresented = false
+            withAnimation(.easeOut(duration: 0.2)) {
+                isSharePopoverPresented.toggle()
+            }
+        case .playPause, .seekShortBack, .seekShortForward, .seekMediumBack, .seekMediumForward, .seekLongBack, .seekLongForward, .frameBack, .frameForward, .theaterMode, .fullscreen, .subtitles:
+            break
+        }
+    }
+
     var commentsSection: some View {
         DetailCard(title: commentHeaderText) {
             LazyVStack(alignment: .leading, spacing: 18) {
@@ -1061,7 +1095,6 @@ private func feedbackID(_ feedback: ActionFeedback) -> String {
 
 private struct PlayerStageSurface: View {
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
-    @ObservedObject private var settings = AppSettings.shared
     @State private var hoverExitTask: Task<Void, Never>? = nil
     @FocusState private var isFocused: Bool
     let isLoading: Bool
@@ -1168,86 +1201,6 @@ private struct PlayerStageSurface: View {
             .focusable()
             .focusEffectDisabled()
             .focused($isFocused)
-            // Lock key fires regardless of keyboard lock state.
-            .onKeyPress(characters: .init(charactersIn: "`\\zx")) { press in
-                guard let lockChar = AppSettings.shared.keyboardLockKey.character,
-                      press.characters == String(lockChar) else { return .ignored }
-                coordinator.keyboardLocked.toggle()
-                return .handled
-            }
-            .onKeyPress(.space, phases: [.down, .repeat, .up]) { press in
-                // Return .handled even when locked so macOS doesn't play the error beep.
-                guard !coordinator.keyboardLocked else { return .handled }
-                switch press.phase {
-                case .down:
-                    coordinator.handleSpacebarKeyDown()
-                case .repeat:
-                    break
-                case .up:
-                    coordinator.handleSpacebarKeyUp()
-                default:
-                    break
-                }
-                return .handled
-            }
-            .onKeyPress(characters: .init(charactersIn: settings.playPauseKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .handled }
-                coordinator.togglePlayback()
-                return .handled
-            }
-            .onKeyPress(.leftArrow) {
-                guard !coordinator.keyboardLocked else { return .handled }
-                coordinator.seekRelative(-Double(settings.arrowSeekSeconds))
-                return .handled
-            }
-            .onKeyPress(.rightArrow) {
-                guard !coordinator.keyboardLocked else { return .handled }
-                coordinator.seekRelative(Double(settings.arrowSeekSeconds))
-                return .handled
-            }
-            .onKeyPress(characters: .init(charactersIn: settings.seekBackKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .handled }
-                coordinator.seekRelative(-Double(settings.jlSeekSeconds))
-                return .handled
-            }
-            .onKeyPress(characters: .init(charactersIn: settings.seekFwdKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .handled }
-                coordinator.seekRelative(Double(settings.jlSeekSeconds))
-                return .handled
-            }
-            .onKeyPress(characters: .init(charactersIn: settings.frameBackKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .handled }
-                if let secs = settings.commaSeekMode.seconds {
-                    coordinator.seekRelative(-secs)
-                } else {
-                    coordinator.stepFrame(direction: -1)
-                }
-                return .handled
-            }
-            .onKeyPress(characters: .init(charactersIn: settings.frameFwdKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .handled }
-                if let secs = settings.commaSeekMode.seconds {
-                    coordinator.seekRelative(secs)
-                } else {
-                    coordinator.stepFrame(direction: 1)
-                }
-                return .handled
-            }
-            .onKeyPress(characters: .init(charactersIn: settings.theaterKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .handled }
-                coordinator.toggleTheaterMode()
-                return .handled
-            }
-            .onKeyPress(characters: .init(charactersIn: settings.fullscreenKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .handled }
-                coordinator.toggleFullscreen()
-                return .handled
-            }
-            .onKeyPress(characters: .init(charactersIn: settings.subtitleKey)) { _ in
-                guard !coordinator.keyboardLocked else { return .handled }
-                coordinator.toggleSubtitles()
-                return .handled
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {

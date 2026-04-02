@@ -51,22 +51,39 @@ final class HomeViewModel: ObservableObject {
 
 @MainActor
 final class SearchViewModel: ObservableObject {
+    struct ParsedVideoLink: Equatable {
+        let videoID: String
+        let startTime: Double
+    }
+
+    struct LinkPreview: Equatable {
+        let videoID: String
+        let title: String
+        let channel: String?
+        let startTime: Double
+    }
+
     @Published var query: String = ""
     @Published private(set) var results: [VideoItem] = []
     @Published private(set) var isSearching = false
     @Published private(set) var errorMessage: String? = nil
     @Published private(set) var isActive = false
+    @Published private(set) var suggestions: [String] = []
+    @Published private(set) var linkPreview: LinkPreview? = nil
+    @Published private(set) var isLoadingSuggestions = false
 
     private var continuation: String? = nil
     @Published private(set) var lastQuery: String = ""
+    private var suggestionTask: Task<Void, Never>? = nil
+    private var linkPreviewTask: Task<Void, Never>? = nil
 
     func submit(navigation: AppNavigationModel) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        if let videoID = Self.extractVideoID(from: trimmed) {
+        if let parsedLink = Self.extractVideoLink(from: trimmed) {
             let placeholder = VideoItem(
-                id: videoID,
+                id: parsedLink.videoID,
                 title: "Loading...",
                 channel: nil,
                 viewCountText: nil,
@@ -74,7 +91,7 @@ final class SearchViewModel: ObservableObject {
                 durationText: nil,
                 thumbnails: []
             )
-            navigation.showVideo(placeholder)
+            navigation.showVideo(placeholder, startTime: parsedLink.startTime)
             return
         }
 
@@ -82,12 +99,80 @@ final class SearchViewModel: ObservableObject {
     }
 
     func clear() {
+        suggestionTask?.cancel()
+        linkPreviewTask?.cancel()
         query = ""
         results = []
         isActive = false
         errorMessage = nil
         continuation = nil
         lastQuery = ""
+        suggestions = []
+        linkPreview = nil
+        isLoadingSuggestions = false
+    }
+
+    func handleQueryChange() {
+        suggestionTask?.cancel()
+        linkPreviewTask?.cancel()
+
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            suggestions = []
+            linkPreview = nil
+            isLoadingSuggestions = false
+            return
+        }
+
+        if let parsedLink = Self.extractVideoLink(from: trimmed) {
+            suggestions = []
+            isLoadingSuggestions = false
+            linkPreview = LinkPreview(
+                videoID: parsedLink.videoID,
+                title: "YouTube link detected",
+                channel: nil,
+                startTime: parsedLink.startTime
+            )
+
+            linkPreviewTask = Task {
+                do {
+                    let playback = try await BackendClient.shared.fetchVideo(id: parsedLink.videoID)
+                    guard !Task.isCancelled else { return }
+                    linkPreview = LinkPreview(
+                        videoID: parsedLink.videoID,
+                        title: playback.title ?? "YouTube link detected",
+                        channel: playback.channel,
+                        startTime: parsedLink.startTime
+                    )
+                } catch {
+                    guard !Task.isCancelled else { return }
+                }
+            }
+            return
+        }
+
+        linkPreview = nil
+        isLoadingSuggestions = true
+        suggestionTask = Task {
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled else { return }
+
+            do {
+                let response = try await BackendClient.shared.fetchSearchSuggestions(query: trimmed)
+                guard !Task.isCancelled else { return }
+                suggestions = response.suggestions
+            } catch {
+                guard !Task.isCancelled else { return }
+                suggestions = []
+            }
+            isLoadingSuggestions = false
+        }
+    }
+
+    func applySuggestion(_ suggestion: String) {
+        query = suggestion
+        suggestions = []
+        linkPreview = nil
     }
 
     func loadMoreIfNeeded(currentVideo: VideoItem) {
@@ -106,6 +191,8 @@ final class SearchViewModel: ObservableObject {
         isActive = true
         isSearching = true
         errorMessage = nil
+        suggestions = []
+        linkPreview = nil
 
         Task {
             defer { isSearching = false }
@@ -122,7 +209,7 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
-    static func extractVideoID(from input: String) -> String? {
+    static func extractVideoLink(from input: String) -> ParsedVideoLink? {
         var text = input.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Normalize: add scheme if missing so URL parsing works
@@ -138,7 +225,8 @@ final class SearchViewModel: ObservableObject {
         // youtu.be/VIDEO_ID
         if host == "youtu.be" || host == "www.youtu.be" {
             let videoID = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            return videoID.isEmpty ? nil : validVideoID(videoID)
+            guard let validID = videoID.isEmpty ? nil : validVideoID(videoID) else { return nil }
+            return ParsedVideoLink(videoID: validID, startTime: timestamp(from: url))
         }
 
         // youtube.com or m.youtube.com or www.youtube.com
@@ -149,7 +237,8 @@ final class SearchViewModel: ObservableObject {
         if url.path == "/watch" || url.path == "/watch/" {
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
             if let videoID = components?.queryItems?.first(where: { $0.name == "v" })?.value {
-                return validVideoID(videoID)
+                guard let validID = validVideoID(videoID) else { return nil }
+                return ParsedVideoLink(videoID: validID, startTime: timestamp(from: url))
             }
         }
 
@@ -159,7 +248,8 @@ final class SearchViewModel: ObservableObject {
             if url.path.hasPrefix(prefix) {
                 let videoID = String(url.path.dropFirst(prefix.count)).components(separatedBy: "/").first ?? ""
                 if !videoID.isEmpty {
-                    return validVideoID(videoID)
+                    guard let validID = validVideoID(videoID) else { return nil }
+                    return ParsedVideoLink(videoID: validID, startTime: timestamp(from: url))
                 }
             }
         }
@@ -174,6 +264,57 @@ final class SearchViewModel: ObservableObject {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
         guard cleaned.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }
         return cleaned
+    }
+
+    private static func timestamp(from url: URL) -> Double {
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let queryItems = components?.queryItems ?? []
+
+        if let rawTimestamp = queryItems.first(where: { ["t", "start", "time_continue"].contains($0.name) })?.value,
+           let parsed = parseTimestamp(rawTimestamp) {
+            return parsed
+        }
+
+        if let fragment = components?.fragment {
+            let fragmentValue = fragment
+                .components(separatedBy: "&")
+                .first(where: { $0.hasPrefix("t=") || $0.hasPrefix("start=") })?
+                .components(separatedBy: "=")
+                .dropFirst()
+                .joined(separator: "=")
+
+            if let fragmentValue, let parsed = parseTimestamp(fragmentValue) {
+                return parsed
+            }
+        }
+
+        return 0
+    }
+
+    private static func parseTimestamp(_ rawValue: String) -> Double? {
+        let cleaned = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !cleaned.isEmpty else { return nil }
+
+        if let seconds = Double(cleaned.replacingOccurrences(of: "s", with: "")),
+           cleaned.range(of: #"^\d+s?$"#, options: .regularExpression) != nil {
+            return seconds
+        }
+
+        let pattern = #"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: cleaned, range: NSRange(cleaned.startIndex..., in: cleaned)) else {
+            return nil
+        }
+
+        func component(at index: Int) -> Double {
+            let range = match.range(at: index)
+            guard range.location != NSNotFound,
+                  let swiftRange = Range(range, in: cleaned) else { return 0 }
+            return Double(cleaned[swiftRange]) ?? 0
+        }
+
+        let totalSeconds = (component(at: 1) * 3600) + (component(at: 2) * 60) + component(at: 3)
+        return totalSeconds > 0 ? totalSeconds : nil
     }
 }
 

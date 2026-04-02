@@ -5,6 +5,7 @@ struct SwiftTubeApp: App {
     @StateObject private var backendManager = BackendManager()
     @StateObject private var navigationModel = AppNavigationModel()
     @StateObject private var authSession = AuthSessionModel()
+    @ObservedObject private var settings = AppSettings.shared
 
     var body: some Scene {
         WindowGroup {
@@ -13,6 +14,7 @@ struct SwiftTubeApp: App {
                 .environmentObject(backendManager)
                 .environmentObject(navigationModel)
                 .environmentObject(authSession)
+                .preferredColorScheme(settings.preferredColorScheme)
                 .onAppear {
                     backendManager.start()
                     BrandAssets.installApplicationIcon()
@@ -22,6 +24,7 @@ struct SwiftTubeApp: App {
 
         Settings {
             SettingsView()
+                .preferredColorScheme(settings.preferredColorScheme)
         }
     }
 }

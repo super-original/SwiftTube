@@ -39,6 +39,11 @@ struct SearchResponse: Codable, Sendable {
     let query: String
 }
 
+struct SearchSuggestionsResponse: Codable, Sendable {
+    let query: String
+    let suggestions: [String]
+}
+
 struct StreamInfo: Codable, Hashable, Sendable {
     let url: String
     let formatId: String?
