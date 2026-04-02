@@ -4,31 +4,141 @@ import SwiftUI
 
 enum AppAppearanceMode: String, CaseIterable, Identifiable {
     case dark
+    case midnight
+    case midnightOcean
+    case midnightForest
+    case midnightRose
     case light
-    case oledDark
+    case sunrise
+    case sky
+    case mint
+    case rose
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .dark: return "Dark"
+        case .midnight: return "Midnight"
+        case .midnightOcean: return "Midnight Ocean"
+        case .midnightForest: return "Midnight Forest"
+        case .midnightRose: return "Midnight Rose"
         case .light: return "Light"
-        case .oledDark: return "OLED Dark"
+        case .sunrise: return "Sunrise"
+        case .sky: return "Sky"
+        case .mint: return "Mint"
+        case .rose: return "Rose"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .dark: return "Matches the current default SwiftTube look."
+        case .dark: return "Matches the native macOS dark baseline at #1E1E1E."
+        case .midnight: return "Low-glare neutral dark built around #0F0F0F."
+        case .midnightOcean: return "Deep blue midnight with a cool neon cast."
+        case .midnightForest: return "Dark evergreen tones with calmer contrast."
+        case .midnightRose: return "Dark charcoal with a subtle cherry-magenta glow."
         case .light: return "Bright, native macOS styling across the app."
-        case .oledDark: return "Uses a softer #0F0F0F backdrop for low-glare viewing."
+        case .sunrise: return "Warm paper-like light theme with a peach tint."
+        case .sky: return "Airy light theme with cool blue surfaces."
+        case .mint: return "Soft mint light theme with gentle green cards."
+        case .rose: return "Rosy light theme with a soft editorial feel."
         }
     }
 
     var preferredColorScheme: ColorScheme {
         switch self {
-        case .light: return .light
-        case .dark, .oledDark: return .dark
+        case .dark, .midnight, .midnightOcean, .midnightForest, .midnightRose:
+            return .dark
+        case .light, .sunrise, .sky, .mint, .rose:
+            return .light
+        }
+    }
+
+    var windowBackgroundColor: Color {
+        Color(nsColor: nsWindowBackgroundColor)
+    }
+
+    var cardBackgroundColor: Color {
+        Color(nsColor: nsCardBackgroundColor)
+    }
+
+    var previewGradient: LinearGradient {
+        LinearGradient(colors: previewColors, startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    private var nsWindowBackgroundColor: NSColor {
+        switch self {
+        case .dark:
+            return NSColor(calibratedRed: 30 / 255, green: 30 / 255, blue: 30 / 255, alpha: 1)
+        case .midnight:
+            return NSColor(calibratedRed: 15 / 255, green: 15 / 255, blue: 15 / 255, alpha: 1)
+        case .midnightOcean:
+            return NSColor(calibratedRed: 13 / 255, green: 18 / 255, blue: 28 / 255, alpha: 1)
+        case .midnightForest:
+            return NSColor(calibratedRed: 14 / 255, green: 20 / 255, blue: 17 / 255, alpha: 1)
+        case .midnightRose:
+            return NSColor(calibratedRed: 24 / 255, green: 16 / 255, blue: 23 / 255, alpha: 1)
+        case .light:
+            return NSColor.windowBackgroundColor
+        case .sunrise:
+            return NSColor(calibratedRed: 249 / 255, green: 242 / 255, blue: 236 / 255, alpha: 1)
+        case .sky:
+            return NSColor(calibratedRed: 239 / 255, green: 245 / 255, blue: 252 / 255, alpha: 1)
+        case .mint:
+            return NSColor(calibratedRed: 238 / 255, green: 248 / 255, blue: 243 / 255, alpha: 1)
+        case .rose:
+            return NSColor(calibratedRed: 252 / 255, green: 240 / 255, blue: 244 / 255, alpha: 1)
+        }
+    }
+
+    private var nsCardBackgroundColor: NSColor {
+        switch self {
+        case .dark:
+            return NSColor(calibratedRed: 40 / 255, green: 40 / 255, blue: 40 / 255, alpha: 1)
+        case .midnight:
+            return NSColor(calibratedRed: 24 / 255, green: 24 / 255, blue: 24 / 255, alpha: 1)
+        case .midnightOcean:
+            return NSColor(calibratedRed: 24 / 255, green: 31 / 255, blue: 44 / 255, alpha: 1)
+        case .midnightForest:
+            return NSColor(calibratedRed: 25 / 255, green: 34 / 255, blue: 29 / 255, alpha: 1)
+        case .midnightRose:
+            return NSColor(calibratedRed: 36 / 255, green: 24 / 255, blue: 35 / 255, alpha: 1)
+        case .light:
+            return NSColor.controlBackgroundColor
+        case .sunrise:
+            return NSColor(calibratedRed: 1, green: 249 / 255, blue: 244 / 255, alpha: 1)
+        case .sky:
+            return NSColor(calibratedRed: 248 / 255, green: 251 / 255, blue: 1, alpha: 1)
+        case .mint:
+            return NSColor(calibratedRed: 246 / 255, green: 1, blue: 250 / 255, alpha: 1)
+        case .rose:
+            return NSColor(calibratedRed: 1, green: 247 / 255, blue: 250 / 255, alpha: 1)
+        }
+    }
+
+    private var previewColors: [Color] {
+        switch self {
+        case .dark:
+            return [Color(red: 46 / 255, green: 46 / 255, blue: 46 / 255), Color(red: 30 / 255, green: 30 / 255, blue: 30 / 255)]
+        case .midnight:
+            return [Color(red: 24 / 255, green: 24 / 255, blue: 24 / 255), Color(red: 15 / 255, green: 15 / 255, blue: 15 / 255)]
+        case .midnightOcean:
+            return [Color(red: 49 / 255, green: 74 / 255, blue: 124 / 255), Color(red: 13 / 255, green: 18 / 255, blue: 28 / 255)]
+        case .midnightForest:
+            return [Color(red: 74 / 255, green: 108 / 255, blue: 85 / 255), Color(red: 14 / 255, green: 20 / 255, blue: 17 / 255)]
+        case .midnightRose:
+            return [Color(red: 123 / 255, green: 67 / 255, blue: 110 / 255), Color(red: 24 / 255, green: 16 / 255, blue: 23 / 255)]
+        case .light:
+            return [Color.white, Color(red: 228 / 255, green: 232 / 255, blue: 238 / 255)]
+        case .sunrise:
+            return [Color(red: 1, green: 232 / 255, blue: 210 / 255), Color(red: 249 / 255, green: 242 / 255, blue: 236 / 255)]
+        case .sky:
+            return [Color(red: 202 / 255, green: 227 / 255, blue: 1), Color(red: 239 / 255, green: 245 / 255, blue: 252 / 255)]
+        case .mint:
+            return [Color(red: 198 / 255, green: 241 / 255, blue: 224 / 255), Color(red: 238 / 255, green: 248 / 255, blue: 243 / 255)]
+        case .rose:
+            return [Color(red: 1, green: 218 / 255, blue: 230 / 255), Color(red: 252 / 255, green: 240 / 255, blue: 244 / 255)]
         }
     }
 }
@@ -206,7 +316,9 @@ final class AppSettings: ObservableObject {
     }
 
     init() {
-        self.appearanceMode = AppAppearanceMode(rawValue: defaults.string(forKey: "appearanceMode") ?? "") ?? .dark
+        let storedAppearance = defaults.string(forKey: "appearanceMode") ?? ""
+        self.appearanceMode = AppAppearanceMode(rawValue: storedAppearance)
+            ?? (storedAppearance == "oledDark" ? .midnight : .dark)
         self.defaultQuality = DefaultQuality(rawValue: defaults.string(forKey: "defaultQuality") ?? "") ?? .auto
 
         let storedDefaultPlaybackSpeed = defaults.double(forKey: "defaultPlaybackSpeed")
@@ -249,15 +361,11 @@ final class AppSettings: ObservableObject {
     }
 
     var windowBackgroundColor: Color {
-        appearanceMode == .oledDark
-            ? Color(red: 15 / 255, green: 15 / 255, blue: 15 / 255)
-            : Color(NSColor.windowBackgroundColor)
+        appearanceMode.windowBackgroundColor
     }
 
     var cardBackgroundColor: Color {
-        appearanceMode == .oledDark
-            ? Color(red: 24 / 255, green: 24 / 255, blue: 24 / 255)
-            : Color(NSColor.controlBackgroundColor)
+        appearanceMode.cardBackgroundColor
     }
 
     func binding(for action: PlayerKeyAction) -> KeyBinding {

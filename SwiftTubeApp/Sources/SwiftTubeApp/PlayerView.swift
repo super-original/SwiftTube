@@ -376,9 +376,9 @@ private extension PlayerScreen {
     }
 
     var headerSection: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 12) {
             Text(displayTitle)
-                .font(.system(size: 30, weight: .bold))
+                .font(.system(size: 24, weight: .bold))
                 .fixedSize(horizontal: false, vertical: true)
 
             if !statsOverviewItems.isEmpty {
@@ -391,13 +391,13 @@ private extension PlayerScreen {
 
     var channelAndActionsSection: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 20) {
+            HStack(alignment: .center, spacing: 16) {
                 channelSubscriptionCluster
-                Spacer(minLength: 20)
+                Spacer(minLength: 12)
                 actionToolbar
             }
 
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
                 channelSubscriptionCluster
                 actionToolbar
             }
@@ -405,7 +405,7 @@ private extension PlayerScreen {
     }
 
     var channelSubscriptionCluster: some View {
-        HStack(alignment: .center, spacing: 18) {
+        HStack(alignment: .center, spacing: 12) {
             ChannelSummary(
                 avatarURL: playback?.channelAvatarURL,
                 channel: displayChannel,
@@ -417,15 +417,15 @@ private extension PlayerScreen {
     }
 
     var actionToolbar: some View {
-        VStack(alignment: .trailing, spacing: 10) {
+        VStack(alignment: .trailing, spacing: 6) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
+                HStack(spacing: 8) {
                     likeDislikeControl
                     shareButton
                     watchLaterButton
                     playlistButton
                 }
-                .padding(.vertical, 3)
+                .padding(.vertical, 2)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
 
@@ -446,11 +446,11 @@ private extension PlayerScreen {
         } label: {
             HStack(spacing: 10) {
                 Text(isSubscribed ? "Subscribed" : "Subscribe")
-                    .font(.callout.weight(.bold))
+                    .font(.subheadline.weight(.bold))
             }
             .foregroundStyle(isSubscribed ? Color.primary : Color.black)
-            .padding(.horizontal, 22)
-            .frame(height: 46)
+            .padding(.horizontal, 18)
+            .frame(height: 38)
             .background(
                 Capsule()
                     .fill(isSubscribed ? Color.white.opacity(0.14) : Color.white)
@@ -480,8 +480,9 @@ private extension PlayerScreen {
                     Text(rating?.likeCountText ?? playback?.likeCountText ?? "Like")
                         .lineLimit(1)
                 }
-                .frame(height: 44)
-                .padding(.horizontal, 18)
+                .font(.subheadline.weight(.semibold))
+                .frame(height: 36)
+                .padding(.horizontal, 14)
             }
             .buttonStyle(.plain)
             .foregroundStyle(isLiked ? Color.blue : Color.white)
@@ -494,7 +495,7 @@ private extension PlayerScreen {
                 viewModel.toggleRating("dislike")
             } label: {
                 Image(systemName: isDisliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                    .frame(width: 50, height: 44)
+                    .frame(width: 42, height: 36)
             }
             .buttonStyle(.plain)
             .foregroundStyle(isDisliked ? Color.blue : Color.white)
@@ -591,19 +592,19 @@ private extension PlayerScreen {
     ) -> some View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
             Text(title)
                 .lineLimit(1)
             if showsChevron {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
             }
         }
-        .font(.callout.weight(.bold))
+        .font(.subheadline.weight(.semibold))
         .foregroundStyle(isActive ? Color.blue : Color.white)
-        .padding(.horizontal, 18)
-        .frame(height: 44)
+        .padding(.horizontal, 14)
+        .frame(height: 36)
         .background(
             Capsule()
                 .fill(Color.white.opacity(isActive ? 0.13 : 0.08))
@@ -617,7 +618,7 @@ private extension PlayerScreen {
 
     var compactStatsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 ForEach(Array(statsOverviewItems.enumerated()), id: \.offset) { _, item in
                     CompactVideoStatPill(title: item.title, value: item.value)
                 }
@@ -1140,13 +1141,19 @@ private struct PlayerStageSurface: View {
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
-                            if coordinator.isFullscreen,
-                               (location.x <= 2 || location.x >= geo.size.width - 2) {
+                            let touchingFullscreenEdge = coordinator.isFullscreen
+                                && (location.x <= 2 || location.x >= geo.size.width - 2)
+                            if touchingFullscreenEdge {
                                 coordinator.setHovering(false)
                                 break
                             }
                             let inVideo = pad < 1 || (location.x >= pad && location.x <= geo.size.width - pad)
-                            if inVideo { coordinator.handlePointerMovement() }
+                            if inVideo {
+                                if coordinator.controlsVisible == false {
+                                    coordinator.setHovering(true)
+                                }
+                                coordinator.handlePointerMovement()
+                            }
                         case .ended:
                             break
                         }
@@ -2104,18 +2111,18 @@ private struct CompactVideoStatPill: View {
     let value: String
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Text(title.uppercased())
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(.secondary)
                 .tracking(0.8)
 
             Text(value)
-                .font(.subheadline.weight(.semibold))
+                .font(.footnote.weight(.semibold))
                 .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(
             Capsule()
                 .fill(Color.white.opacity(0.06))
@@ -2133,7 +2140,7 @@ private struct ChannelSummary: View {
     let subscriberCount: String?
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             CachedAsyncImage(url: avatarURL, maxPixelSize: 128) {
                 Circle()
                     .fill(Color.gray.opacity(0.28))
@@ -2142,15 +2149,15 @@ private struct ChannelSummary: View {
                             .foregroundStyle(.secondary)
                     )
             }
-            .frame(width: 54, height: 54)
+            .frame(width: 42, height: 42)
             .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(channel ?? "Unknown channel")
-                    .font(.title3.weight(.bold))
+                    .font(.headline.weight(.bold))
                 if let subscriberCount, !subscriberCount.isEmpty {
                     Text(subscriberCount)
-                        .font(.headline.weight(.medium))
+                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -2274,6 +2281,7 @@ private struct CommentRow: View {
 
 private struct RecommendationRow: View {
     let video: VideoItem
+    @State private var isHovered = false
 
     private var statsLine: String {
         let parts = [video.channel, video.viewCountText, video.publishedTimeText]
@@ -2327,9 +2335,17 @@ private struct RecommendationRow: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 18)
-                .fill(Color(NSColor.controlBackgroundColor))
+                .fill(AppSettings.shared.cardBackgroundColor)
         )
         .contentShape(Rectangle())
+        .scaleEffect(isHovered ? 1.01 : 1)
+        .offset(y: isHovered ? -1 : 0)
+        .shadow(color: .black.opacity(isHovered ? 0.16 : 0), radius: 14, y: 8)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.14)) {
+                isHovered = hovering
+            }
+        }
     }
 }
 
@@ -2393,7 +2409,7 @@ private struct ScrubPreviewPositioned: View {
     private let timeLabelWidth: CGFloat = 54
     private let scrubberRowHeight: CGFloat = 38
     // Fixed display width for the preview tile; height is derived from the tile's aspect ratio.
-    private let previewDisplayWidth: CGFloat = 120
+    private let previewDisplayWidth: CGFloat = 136
 
     var body: some View {
         if let fraction = coordinator.scrubPreviewFraction,

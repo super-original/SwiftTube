@@ -480,8 +480,8 @@ private extension ContentView {
                 searchViewModel.submit(navigation: navigation)
             }
         )
-        .frame(maxWidth: 540)
-        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+        .frame(width: 540)
+        .shadow(color: .black.opacity(0.22), radius: 20, y: 10)
     }
 }
 
@@ -1378,43 +1378,79 @@ private struct SearchAssistPanel: View {
                 .padding(14)
             } else {
                 ForEach(suggestions, id: \.self) { suggestion in
-                    Button {
-                        onSelectSuggestion(suggestion)
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "magnifyingglass")
-                                .foregroundStyle(.secondary)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(suggestion)
-                                    .foregroundStyle(.primary)
-                                if suggestion != query {
-                                    Text("Search YouTube")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer()
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                    }
-                    .buttonStyle(.plain)
+                    SearchSuggestionRow(
+                        suggestion: suggestion,
+                        showsSubtitle: suggestion != query,
+                        onSelect: { onSelectSuggestion(suggestion) }
+                    )
                 }
             }
         }
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 24)
-                .fill(settings.cardBackgroundColor.opacity(settings.appearanceMode == .light ? 0.98 : 0.96))
+                .fill(settings.cardBackgroundColor)
         )
-        .padding(.horizontal, 16)
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .stroke(Color.white.opacity(settings.preferredColorScheme == .dark ? 0.06 : 0.18), lineWidth: 1)
+        )
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: suggestions)
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: linkPreview)
+    }
+}
+
+private struct SearchSuggestionRow: View {
+    let suggestion: String
+    let showsSubtitle: Bool
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 12) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isHovered ? .primary : .secondary)
+                    .scaleEffect(isHovered ? 1.06 : 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(suggestion)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    if showsSubtitle {
+                        Text("Search YouTube")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 11)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(isHovered ? Color.white.opacity(0.08) : .clear)
+            )
+            .offset(x: isHovered ? 3 : 0)
+            .scaleEffect(isHovered ? 1.008 : 1)
+        }
+        .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 8)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.14)) {
+                isHovered = hovering
+            }
+        }
     }
 }
 
 private struct SearchLinkDetectedCard: View {
     let linkPreview: SearchViewModel.LinkPreview
     let onOpen: () -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: onOpen) {
@@ -1455,8 +1491,19 @@ private struct SearchLinkDetectedCard: View {
                     .foregroundStyle(Color.accentColor)
             }
             .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(isHovered ? Color.white.opacity(0.06) : .clear)
+            )
+            .scaleEffect(isHovered ? 1.008 : 1)
         }
         .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.14)) {
+                isHovered = hovering
+            }
+        }
     }
 
     private var linkDetailLine: String {

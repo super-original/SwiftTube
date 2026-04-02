@@ -43,40 +43,19 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var selection: SettingsPane? = .appearance
 
     var body: some View {
-        NavigationSplitView {
-            List(SettingsPane.allCases, selection: $selection) { pane in
-                Label {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(pane.title)
-                        Text(pane.subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } icon: {
-                    Image(systemName: pane.systemImage)
-                }
-                .padding(.vertical, 4)
-            }
-            .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
-        } detail: {
-            Group {
-                switch selection ?? .appearance {
-                case .appearance:
-                    AppearancePane()
-                case .sidebar:
-                    SidebarPane()
-                case .playback:
-                    PlaybackPane()
-                case .seeking:
-                    SeekingPane()
-                case .shortcuts:
-                    ShortcutPane()
-                }
-            }
-            .background(settings.windowBackgroundColor.ignoresSafeArea())
+        TabView {
+            AppearancePane()
+                .tabItem { Label(SettingsPane.appearance.title, systemImage: SettingsPane.appearance.systemImage) }
+            SidebarPane()
+                .tabItem { Label(SettingsPane.sidebar.title, systemImage: SettingsPane.sidebar.systemImage) }
+            PlaybackPane()
+                .tabItem { Label(SettingsPane.playback.title, systemImage: SettingsPane.playback.systemImage) }
+            SeekingPane()
+                .tabItem { Label(SettingsPane.seeking.title, systemImage: SettingsPane.seeking.systemImage) }
+            ShortcutPane()
+                .tabItem { Label(SettingsPane.shortcuts.title, systemImage: SettingsPane.shortcuts.systemImage) }
         }
         .frame(width: 820, height: 560)
         .preferredColorScheme(settings.preferredColorScheme)
@@ -98,11 +77,11 @@ private struct AppearancePane: View {
                     } label: {
                         HStack(spacing: 16) {
                             RoundedRectangle(cornerRadius: 18)
-                                .fill(appearancePreview(for: mode))
+                                .fill(mode.previewGradient)
                                 .frame(width: 86, height: 54)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 18)
-                                        .stroke(Color.white.opacity(mode == .light ? 0.12 : 0.18), lineWidth: 1)
+                                        .stroke(Color.white.opacity(mode.preferredColorScheme == .light ? 0.12 : 0.18), lineWidth: 1)
                                 )
 
                             VStack(alignment: .leading, spacing: 5) {
@@ -123,7 +102,7 @@ private struct AppearancePane: View {
                         .padding(18)
                         .background(
                             RoundedRectangle(cornerRadius: 24)
-                                .fill(settings.cardBackgroundColor.opacity(settings.appearanceMode == .light ? 0.95 : 1))
+                                .fill(settings.cardBackgroundColor)
                         )
                     }
                     .buttonStyle(.plain)
@@ -132,16 +111,6 @@ private struct AppearancePane: View {
         }
     }
 
-    private func appearancePreview(for mode: AppAppearanceMode) -> LinearGradient {
-        switch mode {
-        case .dark:
-            return LinearGradient(colors: [Color.black.opacity(0.95), Color(red: 36 / 255, green: 36 / 255, blue: 36 / 255)], startPoint: .topLeading, endPoint: .bottomTrailing)
-        case .light:
-            return LinearGradient(colors: [Color.white, Color(red: 228 / 255, green: 232 / 255, blue: 238 / 255)], startPoint: .topLeading, endPoint: .bottomTrailing)
-        case .oledDark:
-            return LinearGradient(colors: [Color(red: 15 / 255, green: 15 / 255, blue: 15 / 255), Color(red: 29 / 255, green: 29 / 255, blue: 29 / 255)], startPoint: .topLeading, endPoint: .bottomTrailing)
-        }
-    }
 }
 
 private struct SidebarPane: View {
@@ -423,7 +392,7 @@ private struct SidebarArrangementCard: View {
 
             Toggle("Visible", isOn: Binding(
                 get: { isVisible },
-                set: onVisibilityChanged
+                set: { onVisibilityChanged($0) }
             ))
             .labelsHidden()
             .toggleStyle(.switch)
