@@ -1107,6 +1107,11 @@ private struct PlayerStageSurface: View {
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
+                            if coordinator.isFullscreen,
+                               (location.x <= 2 || location.x >= geo.size.width - 2) {
+                                coordinator.setHovering(false)
+                                break
+                            }
                             let inVideo = pad < 1 || (location.x >= pad && location.x <= geo.size.width - pad)
                             if inVideo { coordinator.handlePointerMovement() }
                         case .ended:
@@ -1126,6 +1131,12 @@ private struct PlayerStageSurface: View {
                         edgeToEdge: immersive,
                         sidePad: pad
                     )
+                }
+
+                if coordinator.keyboardLocked {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {}
                 }
 
                 if coordinator.keyboardLocked {

@@ -229,8 +229,9 @@ private extension MPVPlaybackEngine {
         try setOption("hwdec", value: "auto-safe")
         try setOption("hwdec-software-fallback", value: "1")
         // Keep the tempo filter permanently attached so temporary speed changes
-        // do not trigger audible/video-sync hiccups when returning to 1x.
-        try setOption("audio-pitch-correction", value: "no")
+        // do not trigger audible/video-sync hiccups when returning to 1x while
+        // still preserving the original pitch.
+        try setOption("audio-pitch-correction", value: "yes")
         try setOption("af", value: "scaletempo2")
         try setOption("osc", value: "no")
         try setOption("input-default-bindings", value: "no")
