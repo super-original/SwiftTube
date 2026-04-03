@@ -73,7 +73,7 @@ struct ContentView: View {
                     onSubmit: { searchViewModel.submit(navigation: navigation) },
                     onClear: { searchViewModel.clear() }
                 )
-                .frame(minWidth: 300, maxWidth: 540)
+                .frame(minWidth: 340, maxWidth: 600)
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
@@ -138,8 +138,12 @@ private extension ContentView {
     }
 
     var shouldShowSearchAssist: Bool {
-        !searchViewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !searchViewModel.isActive
+        !searchViewModel.isActive
+            && (
+                searchViewModel.linkPreview != nil
+                || searchViewModel.isLoadingSuggestions
+                || !searchViewModel.suggestions.isEmpty
+            )
     }
 
     var backgroundView: some View {
@@ -468,7 +472,6 @@ private extension ContentView {
 
     var searchAssistOverlay: some View {
         SearchAssistPanel(
-            query: searchViewModel.query,
             suggestions: searchViewModel.suggestions,
             linkPreview: searchViewModel.linkPreview,
             isLoading: searchViewModel.isLoadingSuggestions,
@@ -480,7 +483,7 @@ private extension ContentView {
                 searchViewModel.submit(navigation: navigation)
             }
         )
-        .frame(width: 540)
+        .frame(width: 600)
         .shadow(color: .black.opacity(0.22), radius: 20, y: 10)
     }
 }
@@ -1350,7 +1353,6 @@ private struct PlaceholderCard: View {
 
 private struct SearchAssistPanel: View {
     @ObservedObject private var settings = AppSettings.shared
-    let query: String
     let suggestions: [String]
     let linkPreview: SearchViewModel.LinkPreview?
     let isLoading: Bool
@@ -1362,25 +1364,19 @@ private struct SearchAssistPanel: View {
             if let linkPreview {
                 SearchLinkDetectedCard(linkPreview: linkPreview, onOpen: onOpenLink)
                     .transition(.scale(scale: 0.98).combined(with: .opacity))
-            } else if suggestions.isEmpty {
+            } else if isLoading {
                 HStack(spacing: 10) {
-                    if isLoading {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(isLoading ? "Finding suggestions..." : "Keep typing to search YouTube")
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Finding suggestions...")
                         .foregroundStyle(.secondary)
                 }
                 .font(.subheadline)
                 .padding(14)
-            } else {
+            } else if !suggestions.isEmpty {
                 ForEach(suggestions, id: \.self) { suggestion in
                     SearchSuggestionRow(
                         suggestion: suggestion,
-                        showsSubtitle: suggestion != query,
                         onSelect: { onSelectSuggestion(suggestion) }
                     )
                 }
@@ -1402,7 +1398,6 @@ private struct SearchAssistPanel: View {
 
 private struct SearchSuggestionRow: View {
     let suggestion: String
-    let showsSubtitle: Bool
     let onSelect: () -> Void
 
     @State private var isHovered = false
@@ -1418,11 +1413,6 @@ private struct SearchSuggestionRow: View {
                     Text(suggestion)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.primary)
-                    if showsSubtitle {
-                        Text("Search YouTube")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
                 }
                 Spacer()
             }
