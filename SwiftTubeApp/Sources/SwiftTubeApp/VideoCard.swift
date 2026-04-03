@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct VideoCard: View {
+    @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
     @State private var isHovered = false
 
@@ -35,13 +36,14 @@ struct VideoCard: View {
             }
 
             Text(video.title)
-                .font(.headline)
+                .font(.system(size: 17, weight: .semibold))
                 .lineLimit(2)
+                .foregroundStyle(.primary)
 
             if let channel = video.channel {
                 Text(channel)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
 
             HStack(spacing: 6) {
@@ -55,21 +57,21 @@ struct VideoCard: View {
                     Text(published)
                 }
             }
-            .font(.caption)
-            .foregroundColor(.secondary)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(.secondary)
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(AppSettings.shared.cardBackgroundColor)
+                .fill(isHovered ? settings.hoverCardBackgroundColor : .clear)
         )
         .contentShape(RoundedRectangle(cornerRadius: 16))
-        .scaleEffect(isHovered ? 1.012 : 1)
-        .offset(y: isHovered ? -2 : 0)
-        .shadow(color: .black.opacity(isHovered ? 0.18 : 0), radius: 16, y: 10)
+        .scaleEffect(isHovered ? 1.008 : 1)
+        .offset(y: isHovered ? -1 : 0)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.14)) {
+            withAnimation(.easeOut(duration: 0.12)) {
                 isHovered = hovering
             }
         }

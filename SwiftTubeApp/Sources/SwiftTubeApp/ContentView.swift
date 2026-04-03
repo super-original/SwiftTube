@@ -19,12 +19,10 @@ struct ContentView: View {
             backgroundView
 
             if shouldShowSidebar {
-                NavigationSplitView {
+                HStack(spacing: 0) {
                     sidebar
-                } detail: {
                     currentScreen
                 }
-                .navigationSplitViewStyle(.balanced)
             } else {
                 currentScreen
             }
@@ -198,16 +196,32 @@ private extension ContentView {
     }
 
     var sidebar: some View {
-        List(selection: Binding(
-            get: { Optional(navigation.selectedSidebarItem) },
-            set: { if let item = $0 { navigation.selectSidebarItem(item) } }
-        )) {
-            ForEach(visibleSidebarItems) { item in
-                Label(item.title, systemImage: item.systemImage)
-                    .tag(item)
+        VStack(alignment: .leading, spacing: 18) {
+            Spacer()
+                .frame(height: 8)
+
+            VStack(spacing: 8) {
+                ForEach(visibleSidebarItems) { item in
+                    SidebarNavigationButton(
+                        item: item,
+                        isSelected: navigation.selectedSidebarItem == item
+                    ) {
+                        navigation.selectSidebarItem(item)
+                    }
+                }
             }
+            Spacer()
         }
-        .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
+        .padding(.horizontal, 16)
+        .padding(.top, 56)
+        .frame(width: 230)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(settings.sidebarBackgroundColor)
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(settings.separatorColor)
+                .frame(width: 1)
+        }
     }
 
     @ViewBuilder
@@ -1348,6 +1362,48 @@ private struct PlaceholderCard: View {
                 .fill(AppSettings.shared.cardBackgroundColor)
         )
         .redacted(reason: .placeholder)
+    }
+}
+
+private struct SidebarNavigationButton: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let item: SidebarItemKind
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: item.systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 20)
+                Text(item.title)
+                    .font(.title3.weight(.semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(backgroundColor)
+            )
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? .primary : .secondary)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.14)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var backgroundColor: Color {
+        if isSelected {
+            return settings.elevatedBackgroundColor
+        }
+        return isHovered ? settings.hoverCardBackgroundColor : .clear
     }
 }
 
