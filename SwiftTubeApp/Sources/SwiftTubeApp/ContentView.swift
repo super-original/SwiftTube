@@ -600,7 +600,6 @@ private struct PlaylistFeedScreen: View {
                         playlistList
                     }
                 }
-                content
             }
             .padding(24)
         }
@@ -696,9 +695,7 @@ private struct PlaylistFeedScreen: View {
                         .font(.headline.weight(.bold))
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.white)
-                .foregroundStyle(.black)
+                .buttonStyle(PlaylistPrimaryActionButtonStyle())
                 .disabled(viewModel.items.isEmpty)
 
                 Button {
@@ -727,114 +724,113 @@ private struct PlaylistFeedScreen: View {
                 .font(.title3.weight(.semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            LazyVStack(spacing: 14) {
-                ForEach(viewModel.items, id: \.self) { video in
-                    Button {
-                        playPlaylist(startingWith: video)
-                    } label: {
-                        PlaylistVideoRow(
-                            video: video,
-                            isCurrent: isCurrent(video),
-                            isMutating: viewModel.mutationIDs.contains(video.playlistSetVideoId ?? "")
-                        )
+            if viewModel.items.isEmpty {
+                if viewModel.isLoading {
+                    LazyVStack(spacing: 14) {
+                        ForEach(0..<6, id: \.self) { _ in
+                            PlaylistFeedPlaceholderRow()
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        VideoContextMenuContent(
-                            video: video,
-                            userPlaylists: movableLibraryPlaylists(excluding: viewModel.playlist.playlistId),
-                            onPlay: { playPlaylist(startingWith: video) },
-                            onPlayFromHere: { playPlaylist(startingWith: video) },
-                            onAddToWatchLater: viewModel.playlist.kind == .watchLater ? nil : {
-                                _ = Task<Void, Never> {
-                                    do {
-                                        _ = try await BackendClient.shared.updateWatchLater(id: video.id, saved: true)
-                                    } catch {
-                                        viewModel.errorMessage = error.localizedDescription
-                                    }
-                                }
-                            },
-                            onSaveToPlaylist: { playlistID in
-                                _ = Task<Void, Never> {
-                                    do {
-                                        _ = try await BackendClient.shared.updatePlaylist(
-                                            id: video.id,
-                                            playlistId: playlistID,
-                                            saved: true
-                                        )
-                                    } catch {
-                                        viewModel.errorMessage = error.localizedDescription
-                                    }
-                                }
-                            },
-                            onMoveToPlaylist: video.playlistCanRemove ? { playlistID in
-                                _ = Task<Void, Never> {
-                                    do {
-                                        _ = try await BackendClient.shared.updatePlaylist(
-                                            id: video.id,
-                                            playlistId: playlistID,
-                                            saved: true
-                                        )
-                                        viewModel.removeItem(video)
-                                    } catch {
-                                        viewModel.errorMessage = error.localizedDescription
-                                    }
-                                }
-                            } : nil,
-                            onMoveToWatchLater: viewModel.playlist.kind == .watchLater || !video.playlistCanRemove ? nil : {
-                                _ = Task<Void, Never> {
-                                    do {
-                                        _ = try await BackendClient.shared.updateWatchLater(id: video.id, saved: true)
-                                        viewModel.removeItem(video)
-                                    } catch {
-                                        viewModel.errorMessage = error.localizedDescription
-                                    }
-                                }
-                            },
-                            onRemoveFromCurrentPlaylist: video.playlistCanRemove ? { viewModel.removeItem(video) } : nil,
-                            onMoveToTop: video.playlistCanMoveToTop ? { viewModel.moveItemToTop(video) } : nil,
-                            onMoveToBottom: video.playlistCanMoveToBottom ? { viewModel.moveItemToBottom(video) } : nil
-                        )
+                } else if let error = viewModel.errorMessage {
+                    EmptyStateView(
+                        title: "Couldn’t load playlist",
+                        message: error,
+                        actionTitle: "Try Again"
+                    ) {
+                        viewModel.reload()
                     }
-                    .onAppear {
-                        viewModel.loadMoreIfNeeded(currentVideo: video)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    EmptyStateView(
+                        title: "This playlist is empty",
+                        message: "There are no videos here yet.",
+                        actionTitle: "Refresh"
+                    ) {
+                        viewModel.reload()
                     }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if viewModel.items.isEmpty {
-            if viewModel.isLoading {
-                VStack(spacing: 12) {
-                    ForEach(0..<6, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(Color(NSColor.controlBackgroundColor))
-                            .frame(height: 98)
-                    }
-                }
-            } else if let error = viewModel.errorMessage {
-                EmptyStateView(
-                    title: "Couldn’t load playlist",
-                    message: error,
-                    actionTitle: "Try Again"
-                ) {
-                    viewModel.reload()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                EmptyStateView(
-                    title: "This playlist is empty",
-                    message: "There are no videos here yet.",
-                    actionTitle: "Refresh"
-                ) {
-                    viewModel.reload()
+                LazyVStack(spacing: 14) {
+                    ForEach(viewModel.items, id: \.self) { video in
+                        Button {
+                            playPlaylist(startingWith: video)
+                        } label: {
+                            PlaylistVideoRow(
+                                video: video,
+                                isCurrent: isCurrent(video),
+                                isMutating: viewModel.mutationIDs.contains(video.playlistSetVideoId ?? "")
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            VideoContextMenuContent(
+                                video: video,
+                                userPlaylists: movableLibraryPlaylists(excluding: viewModel.playlist.playlistId),
+                                onPlay: { playPlaylist(startingWith: video) },
+                                onPlayFromHere: { playPlaylist(startingWith: video) },
+                                onAddToWatchLater: viewModel.playlist.kind == .watchLater ? nil : {
+                                    _ = Task<Void, Never> {
+                                        do {
+                                            _ = try await BackendClient.shared.updateWatchLater(id: video.id, saved: true)
+                                        } catch {
+                                            viewModel.errorMessage = error.localizedDescription
+                                        }
+                                    }
+                                },
+                                onSaveToPlaylist: { playlistID in
+                                    _ = Task<Void, Never> {
+                                        do {
+                                            _ = try await BackendClient.shared.updatePlaylist(
+                                                id: video.id,
+                                                playlistId: playlistID,
+                                                saved: true
+                                            )
+                                        } catch {
+                                            viewModel.errorMessage = error.localizedDescription
+                                        }
+                                    }
+                                },
+                                onMoveToPlaylist: video.playlistCanRemove ? { playlistID in
+                                    _ = Task<Void, Never> {
+                                        do {
+                                            _ = try await BackendClient.shared.updatePlaylist(
+                                                id: video.id,
+                                                playlistId: playlistID,
+                                                saved: true
+                                            )
+                                            viewModel.removeItem(video)
+                                        } catch {
+                                            viewModel.errorMessage = error.localizedDescription
+                                        }
+                                    }
+                                } : nil,
+                                onMoveToWatchLater: viewModel.playlist.kind == .watchLater || !video.playlistCanRemove ? nil : {
+                                    _ = Task<Void, Never> {
+                                        do {
+                                            _ = try await BackendClient.shared.updateWatchLater(id: video.id, saved: true)
+                                            viewModel.removeItem(video)
+                                        } catch {
+                                            viewModel.errorMessage = error.localizedDescription
+                                        }
+                                    }
+                                },
+                                onRemoveFromCurrentPlaylist: video.playlistCanRemove ? { viewModel.removeItem(video) } : nil,
+                                onMoveToTop: video.playlistCanMoveToTop ? { viewModel.moveItemToTop(video) } : nil,
+                                onMoveToBottom: video.playlistCanMoveToBottom ? { viewModel.moveItemToBottom(video) } : nil
+                            )
+                        }
+                        .onAppear {
+                            viewModel.loadMoreIfNeeded(currentVideo: video)
+                        }
+                    }
+
+                    if viewModel.isLoading {
+                        ProgressView("Loading more...")
+                            .padding(.top, 8)
+                    }
                 }
             }
-        } else if viewModel.isLoading {
-            ProgressView("Loading more...")
-                .padding(.top, 8)
         }
     }
 
@@ -882,44 +878,44 @@ private struct PlaylistCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ZStack(alignment: .bottomLeading) {
-                if playlist.referenceKind == .userPlaylist {
-                    CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: 640) {
-                        RoundedRectangle(cornerRadius: 18)
-                            .fill(Color.gray.opacity(0.22))
-                            .overlay(
-                                Image(systemName: "music.note.list")
-                                    .font(.system(size: 26))
-                                    .foregroundStyle(.secondary)
-                            )
-                    }
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
-                } else {
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(
-                            LinearGradient(
-                                colors: playlist.referenceKind == .watchLater
-                                    ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
-                                    : [Color(red: 0.92, green: 0.40, blue: 0.48), Color(red: 0.38, green: 0.11, blue: 0.23)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .overlay {
-                            VStack(spacing: 10) {
-                                Image(systemName: playlist.referenceKind == .watchLater ? "clock.fill" : "hand.thumbsup.fill")
-                                    .font(.system(size: 34, weight: .bold))
-                                Text(playlist.title)
-                                    .font(.headline.weight(.bold))
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal, 18)
-                            }
-                            .foregroundStyle(.white)
+                ZStack {
+                    if playlist.referenceKind == .userPlaylist {
+                        CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: 640, contentMode: .fill) {
+                            RoundedRectangle(cornerRadius: 18)
+                                .fill(Color.gray.opacity(0.22))
+                                .overlay(
+                                    Image(systemName: "music.note.list")
+                                        .font(.system(size: 26))
+                                        .foregroundStyle(.secondary)
+                                )
                         }
-                        .frame(maxWidth: .infinity)
-                        .aspectRatio(16 / 9, contentMode: .fit)
+                    } else {
+                        RoundedRectangle(cornerRadius: 18)
+                            .fill(
+                                LinearGradient(
+                                    colors: playlist.referenceKind == .watchLater
+                                        ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
+                                        : [Color(red: 0.92, green: 0.40, blue: 0.48), Color(red: 0.38, green: 0.11, blue: 0.23)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .overlay {
+                                VStack(spacing: 10) {
+                                    Image(systemName: playlist.referenceKind == .watchLater ? "clock.fill" : "hand.thumbsup.fill")
+                                        .font(.system(size: 34, weight: .bold))
+                                    Text(playlist.title)
+                                        .font(.headline.weight(.bold))
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal, 18)
+                                }
+                                .foregroundStyle(.white)
+                            }
+                    }
                 }
+                .frame(maxWidth: .infinity)
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
 
                 if let count = playlist.itemCountText, !count.isEmpty {
                     Text(count)
@@ -949,6 +945,65 @@ private struct PlaylistCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct PlaylistFeedPlaceholderRow: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            RoundedRectangle(cornerRadius: 11)
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 22, height: 22)
+                .padding(.top, 22)
+
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 232, height: 130.5)
+
+            VStack(alignment: .leading, spacing: 12) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.white.opacity(0.08))
+                    .frame(maxWidth: 320)
+                    .frame(height: 22)
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.white.opacity(0.06))
+                    .frame(maxWidth: 240)
+                    .frame(height: 15)
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.white.opacity(0.05))
+                    .frame(width: 86, height: 14)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 22)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .redacted(reason: .placeholder)
+    }
+}
+
+private struct PlaylistPrimaryActionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(Color.black.opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.42))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 11)
+            .background(
+                RoundedRectangle(cornerRadius: 999, style: .continuous)
+                    .fill(
+                        Color.white.opacity(
+                            isEnabled
+                                ? (configuration.isPressed ? 0.86 : 1)
+                                : 0.24
+                        )
+                    )
+            )
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
     }
 }
 

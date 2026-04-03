@@ -147,6 +147,7 @@ struct PlayerScreen: View {
     @State private var isDescriptionExpanded = false
     @State private var isSharePopoverPresented = false
     @State private var isPlaylistPopoverPresented = false
+    @State private var isPlaylistRailExpanded = true
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
 
@@ -817,93 +818,179 @@ private extension PlayerScreen {
 
     func playlistQueueColumn(feed: PlaylistFeed) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(feed.title)
-                    .font(.title3.weight(.semibold))
-
-                if !navigation.activePlaylistDetailsLine.isEmpty {
-                    Text(navigation.activePlaylistDetailsLine)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack(spacing: 10) {
-                    Button {
-                        navigation.cycleActivePlaylistLoopMode()
-                    } label: {
-                        Label(navigation.activePlaylistLoopMode.title, systemImage: navigation.activePlaylistLoopMode.symbolName)
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        navigation.toggleActivePlaylistShuffle()
-                    } label: {
-                        Label(
-                            navigation.activePlaylistShuffleEnabled ? "Shuffle On" : "Shuffle Off",
-                            systemImage: "shuffle"
-                        )
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(navigation.activePlaylistShuffleEnabled ? .blue : nil)
-                }
-            }
-
-            LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(navigation.activePlaylistItems, id: \.self) { queueVideo in
-                    Button {
-                        navigation.showVideo(queueVideo)
-                    } label: {
-                        RecommendationRow(video: queueVideo)
-                            .overlay(alignment: .leading) {
-                                if navigation.activePlaylistCurrentVideoID == queueVideo.id {
-                                    RoundedRectangle(cornerRadius: 18)
-                                        .stroke(Color.blue.opacity(0.55), lineWidth: 1.5)
-                                }
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        VideoContextMenuContent(
-                            video: queueVideo,
-                            userPlaylists: movablePlaylistsForQueue(),
-                            onPlay: { navigation.showVideo(queueVideo) },
-                            onPlayFromHere: { navigation.showVideo(queueVideo) },
-                            onAddToWatchLater: navigation.activePlaylistReference?.kind == .watchLater ? nil : {
-                                _ = Task<Void, Never> {
-                                    do {
-                                        _ = try await BackendClient.shared.updateWatchLater(id: queueVideo.id, saved: true)
-                                    } catch {
-                                        viewModel.actionMessage = error.localizedDescription
-                                    }
-                                }
-                            },
-                            onSaveToPlaylist: { playlistID in
-                                _ = Task<Void, Never> {
-                                    do {
-                                        _ = try await BackendClient.shared.updatePlaylist(
-                                            id: queueVideo.id,
-                                            playlistId: playlistID,
-                                            saved: true
-                                        )
-                                    } catch {
-                                        viewModel.actionMessage = error.localizedDescription
-                                    }
-                                }
-                            },
-                            onMoveToPlaylist: queueVideo.playlistCanRemove ? { playlistID in
-                                moveQueueVideo(queueVideo, to: playlistID)
-                            } : nil,
-                            onMoveToWatchLater: navigation.activePlaylistReference?.kind == .watchLater || !queueVideo.playlistCanRemove ? nil : {
-                                moveQueueVideoToWatchLater(queueVideo)
-                            },
-                            onRemoveFromCurrentPlaylist: queueVideo.playlistCanRemove ? { removeQueueVideo(queueVideo) } : nil,
-                            onMoveToTop: queueVideo.playlistCanMoveToTop ? { moveQueueVideo(queueVideo, position: "top") } : nil,
-                            onMoveToBottom: queueVideo.playlistCanMoveToBottom ? { moveQueueVideo(queueVideo, position: "bottom") } : nil
-                        )
-                    }
-                }
+            if isPlaylistRailExpanded {
+                expandedPlaylistQueue(feed: feed)
+            } else {
+                collapsedPlaylistQueue(feed: feed)
             }
         }
+    }
+
+    func expandedPlaylistQueue(feed: PlaylistFeed) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(feed.title)
+                        .font(.title3.weight(.bold))
+
+                    if !navigation.activePlaylistDetailsLine.isEmpty {
+                        Text(navigation.activePlaylistDetailsLine)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(activePlaylistPositionLine)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary.opacity(0.88))
+                }
+
+                Spacer(minLength: 12)
+
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                        isPlaylistRailExpanded = false
+                    }
+                } label: {
+                    Image(systemName: "chevron.up")
+                        .font(.headline.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    navigation.cycleActivePlaylistLoopMode()
+                } label: {
+                    Label(navigation.activePlaylistLoopMode.title, systemImage: navigation.activePlaylistLoopMode.symbolName)
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    navigation.toggleActivePlaylistShuffle()
+                } label: {
+                    Label(
+                        navigation.activePlaylistShuffleEnabled ? "Shuffle On" : "Shuffle Off",
+                        systemImage: "shuffle"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .tint(navigation.activePlaylistShuffleEnabled ? .blue : nil)
+            }
+
+            Divider()
+                .overlay(Color.white.opacity(0.06))
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(navigation.activePlaylistItems.enumerated()), id: \.element) { index, queueVideo in
+                        Button {
+                            navigation.showVideo(queueVideo)
+                        } label: {
+                            PlaylistQueueRailRow(
+                                video: queueVideo,
+                                index: index + 1,
+                                isCurrent: navigation.activePlaylistCurrentVideoID == queueVideo.id,
+                                canReorder: canReorderQueueVideo(queueVideo)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .draggable(queueVideo.id)
+                        .dropDestination(for: String.self) { items, _ in
+                            guard let draggedID = items.first else { return false }
+                            return moveQueueVideo(withID: draggedID, before: queueVideo.id)
+                        }
+                        .contextMenu {
+                            VideoContextMenuContent(
+                                video: queueVideo,
+                                userPlaylists: movablePlaylistsForQueue(),
+                                onPlay: { navigation.showVideo(queueVideo) },
+                                onPlayFromHere: { navigation.showVideo(queueVideo) },
+                                onAddToWatchLater: navigation.activePlaylistReference?.kind == .watchLater ? nil : {
+                                    _ = Task<Void, Never> {
+                                        do {
+                                            _ = try await BackendClient.shared.updateWatchLater(id: queueVideo.id, saved: true)
+                                        } catch {
+                                            viewModel.actionMessage = error.localizedDescription
+                                        }
+                                    }
+                                },
+                                onSaveToPlaylist: { playlistID in
+                                    _ = Task<Void, Never> {
+                                        do {
+                                            _ = try await BackendClient.shared.updatePlaylist(
+                                                id: queueVideo.id,
+                                                playlistId: playlistID,
+                                                saved: true
+                                            )
+                                        } catch {
+                                            viewModel.actionMessage = error.localizedDescription
+                                        }
+                                    }
+                                },
+                                onMoveToPlaylist: queueVideo.playlistCanRemove ? { playlistID in
+                                    moveQueueVideo(queueVideo, to: playlistID)
+                                } : nil,
+                                onMoveToWatchLater: navigation.activePlaylistReference?.kind == .watchLater || !queueVideo.playlistCanRemove ? nil : {
+                                    moveQueueVideoToWatchLater(queueVideo)
+                                },
+                                onRemoveFromCurrentPlaylist: queueVideo.playlistCanRemove ? { removeQueueVideo(queueVideo) } : nil,
+                                onMoveToTop: queueVideo.playlistCanMoveToTop ? { moveQueueVideo(queueVideo, position: "top") } : nil,
+                                onMoveToBottom: queueVideo.playlistCanMoveToBottom ? { moveQueueVideo(queueVideo, position: "bottom") } : nil
+                            )
+                        }
+                    }
+                }
+                .padding(.trailing, 6)
+            }
+            .frame(height: playlistRailHeight)
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(AppSettings.shared.cardBackgroundColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    func collapsedPlaylistQueue(feed: PlaylistFeed) -> some View {
+        Button {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                isPlaylistRailExpanded = true
+            }
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(queueCollapsedTitle(feed: feed))
+                        .font(.headline.weight(.semibold))
+                        .lineLimit(1)
+                    Text(activePlaylistPositionLine)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 12)
+
+                Image(systemName: "chevron.down")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.blue.opacity(0.14))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     func handlePlaybackEnded() {
@@ -959,6 +1046,33 @@ private extension PlayerScreen {
         }
     }
 
+    func moveQueueVideo(withID draggedID: String, before targetID: String) -> Bool {
+        guard draggedID != targetID,
+              let playlistID = navigation.activePlaylistReference?.playlistId else { return false }
+
+        let previousItems = navigation.activePlaylistItems
+        guard let sourceIndex = previousItems.firstIndex(where: { $0.id == draggedID }),
+              let targetIndex = previousItems.firstIndex(where: { $0.id == targetID }) else {
+            return false
+        }
+
+        let updated = reorderedQueue(previousItems, sourceIndex: sourceIndex, targetIndex: targetIndex)
+        guard updated != previousItems else { return false }
+
+        navigation.replaceActivePlaylistItems(updated)
+
+        Task {
+            do {
+                try await syncQueueOrder(updated, playlistId: playlistID)
+            } catch {
+                navigation.replaceActivePlaylistItems(previousItems)
+                viewModel.actionMessage = error.localizedDescription
+            }
+        }
+
+        return true
+    }
+
     func moveQueueVideo(_ video: VideoItem, to playlistID: String) {
         Task {
             do {
@@ -1000,6 +1114,58 @@ private extension PlayerScreen {
         return updated
     }
 
+    func reorderedQueue(_ items: [VideoItem], sourceIndex: Int, targetIndex: Int) -> [VideoItem] {
+        guard items.indices.contains(sourceIndex),
+              items.indices.contains(targetIndex),
+              sourceIndex != targetIndex else {
+            return items
+        }
+
+        var updated = items
+        let moved = updated.remove(at: sourceIndex)
+        let insertIndex = sourceIndex < targetIndex ? max(targetIndex - 1, 0) : targetIndex
+        updated.insert(moved, at: insertIndex)
+        return updated
+    }
+
+    func syncQueueOrder(_ items: [VideoItem], playlistId: String) async throws {
+        for queueVideo in items.reversed() {
+            guard let setVideoId = queueVideo.playlistSetVideoId else { continue }
+            _ = try await BackendClient.shared.reorderPlaylistItem(
+                playlistId: playlistId,
+                setVideoId: setVideoId,
+                position: "top"
+            )
+        }
+    }
+
+    func canReorderQueueVideo(_ video: VideoItem) -> Bool {
+        video.playlistSetVideoId != nil
+    }
+
+    var playlistRailHeight: CGFloat {
+        420
+    }
+
+    var activePlaylistPositionLine: String {
+        let count = navigation.activePlaylistItems.count
+        guard count > 0 else { return "Playlist queue" }
+
+        if let currentID = navigation.activePlaylistCurrentVideoID,
+           let currentIndex = navigation.activePlaylistItems.firstIndex(where: { $0.id == currentID }) {
+            return "\(navigation.activePlaylistTitle ?? "Playlist") • \(currentIndex + 1) / \(count)"
+        }
+
+        return "\(navigation.activePlaylistTitle ?? "Playlist") • \(count) videos"
+    }
+
+    func queueCollapsedTitle(feed: PlaylistFeed) -> String {
+        if let nextVideo = navigation.nextVideoForActivePlaylist(), nextVideo.id != video.id {
+            return "Next: \(nextVideo.title)"
+        }
+        return feed.title
+    }
+
     func movablePlaylistsForQueue() -> [PlaylistSummary] {
         let currentPlaylistID = navigation.activePlaylistReference?.playlistId
         return playlistUserLibrary.filter { $0.playlistId != currentPlaylistID }
@@ -1009,72 +1175,72 @@ private extension PlayerScreen {
         VStack(alignment: .leading, spacing: 14) {
             if hasActivePlaylistContext, let activePlaylistFeed {
                 playlistQueueColumn(feed: activePlaylistFeed)
-            } else {
-                Text("Up next")
-                    .font(.title3)
-                    .fontWeight(.semibold)
+            }
 
-                if recommendations.isEmpty {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(0..<4, id: \.self) { _ in
-                            RoundedRectangle(cornerRadius: 18)
-                                .fill(Color(NSColor.controlBackgroundColor))
-                                .frame(height: 108)
+            Text("Up next")
+                .font(.title3)
+                .fontWeight(.semibold)
+
+            if recommendations.isEmpty {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        RoundedRectangle(cornerRadius: 18)
+                            .fill(Color(NSColor.controlBackgroundColor))
+                            .frame(height: 108)
+                    }
+                }
+            } else {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(recommendations, id: \.id) { relatedVideo in
+                        Button {
+                            navigation.showVideo(relatedVideo)
+                        } label: {
+                            RecommendationRow(video: relatedVideo)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            VideoContextMenuContent(
+                                video: relatedVideo,
+                                userPlaylists: playlistUserLibrary,
+                                onPlay: { navigation.showVideo(relatedVideo) },
+                                onPlayFromHere: nil,
+                                onAddToWatchLater: authSession.status.authenticated ? {
+                                    _ = Task<Void, Never> {
+                                        do {
+                                            _ = try await BackendClient.shared.updateWatchLater(id: relatedVideo.id, saved: true)
+                                        } catch {
+                                            viewModel.actionMessage = error.localizedDescription
+                                        }
+                                    }
+                                } : nil,
+                                onSaveToPlaylist: authSession.status.authenticated ? { playlistID in
+                                    _ = Task<Void, Never> {
+                                        do {
+                                            _ = try await BackendClient.shared.updatePlaylist(
+                                                id: relatedVideo.id,
+                                                playlistId: playlistID,
+                                                saved: true
+                                            )
+                                        } catch {
+                                            viewModel.actionMessage = error.localizedDescription
+                                        }
+                                    }
+                                } : nil,
+                                onMoveToPlaylist: nil,
+                                onMoveToWatchLater: nil,
+                                onRemoveFromCurrentPlaylist: nil,
+                                onMoveToTop: nil,
+                                onMoveToBottom: nil
+                            )
+                        }
+                        .onAppear {
+                            viewModel.loadMoreRecommendationsIfNeeded(currentVideo: relatedVideo)
                         }
                     }
-                } else {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(recommendations, id: \.id) { relatedVideo in
-                            Button {
-                                navigation.showVideo(relatedVideo)
-                            } label: {
-                                RecommendationRow(video: relatedVideo)
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                VideoContextMenuContent(
-                                    video: relatedVideo,
-                                    userPlaylists: playlistUserLibrary,
-                                    onPlay: { navigation.showVideo(relatedVideo) },
-                                    onPlayFromHere: nil,
-                                    onAddToWatchLater: authSession.status.authenticated ? {
-                                        _ = Task<Void, Never> {
-                                            do {
-                                                _ = try await BackendClient.shared.updateWatchLater(id: relatedVideo.id, saved: true)
-                                            } catch {
-                                                viewModel.actionMessage = error.localizedDescription
-                                            }
-                                        }
-                                    } : nil,
-                                    onSaveToPlaylist: authSession.status.authenticated ? { playlistID in
-                                        _ = Task<Void, Never> {
-                                            do {
-                                                _ = try await BackendClient.shared.updatePlaylist(
-                                                    id: relatedVideo.id,
-                                                    playlistId: playlistID,
-                                                    saved: true
-                                                )
-                                            } catch {
-                                                viewModel.actionMessage = error.localizedDescription
-                                            }
-                                        }
-                                    } : nil,
-                                    onMoveToPlaylist: nil,
-                                    onMoveToWatchLater: nil,
-                                    onRemoveFromCurrentPlaylist: nil,
-                                    onMoveToTop: nil,
-                                    onMoveToBottom: nil
-                                )
-                            }
-                            .onAppear {
-                                viewModel.loadMoreRecommendationsIfNeeded(currentVideo: relatedVideo)
-                            }
-                        }
 
-                        if viewModel.isLoadingRecommendations {
-                            ProgressView("Loading more videos...")
-                                .padding(.top, 4)
-                        }
+                    if viewModel.isLoadingRecommendations {
+                        ProgressView("Loading more videos...")
+                            .padding(.top, 4)
                     }
                 }
             }
@@ -2131,6 +2297,93 @@ private struct CompactVideoStatPill: View {
             Capsule()
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
         )
+    }
+}
+
+private struct PlaylistQueueRailRow: View {
+    let video: VideoItem
+    let index: Int
+    let isCurrent: Bool
+    let canReorder: Bool
+
+    @State private var isHovered = false
+
+    private var statsLine: String {
+        [video.channel, video.viewCountText, video.publishedTimeText]
+            .compactMap { $0 }
+            .joined(separator: " • ")
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Group {
+                if isHovered && canReorder {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.body.weight(.semibold))
+                } else if isCurrent {
+                    Image(systemName: "play.fill")
+                        .font(.caption.weight(.bold))
+                } else {
+                    Text("\(index)")
+                        .font(.callout.monospacedDigit().weight(.semibold))
+                }
+            }
+            .foregroundStyle(isCurrent ? .blue : .secondary)
+            .frame(width: 18, alignment: .center)
+            .padding(.top, 18)
+
+            ZStack(alignment: .bottomTrailing) {
+                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 480) {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.gray.opacity(0.18))
+                        .overlay(
+                            Image(systemName: "play.rectangle.fill")
+                                .font(.system(size: 18))
+                                .foregroundStyle(.secondary)
+                        )
+                }
+                .frame(width: 120, height: 67.5)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                if let duration = video.durationText {
+                    Text(duration)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.black.opacity(0.74)))
+                        .foregroundStyle(.white)
+                        .padding(6)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(video.title)
+                    .font(.headline.weight(.semibold))
+                    .lineLimit(2)
+
+                if !statsLine.isEmpty {
+                    Text(statsLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(isCurrent ? Color.blue.opacity(0.14) : Color.white.opacity(isHovered ? 0.08 : 0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(isCurrent ? Color.blue.opacity(0.32) : Color.white.opacity(isHovered ? 0.09 : 0.03), lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .animation(.easeOut(duration: 0.14), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
+        }
     }
 }
 
