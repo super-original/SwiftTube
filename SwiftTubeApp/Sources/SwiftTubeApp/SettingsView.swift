@@ -44,6 +44,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var selection: SettingsPane = .appearance
+    @Namespace private var settingsScrollTop
 
     var body: some View {
         HStack(spacing: 0) {
@@ -90,22 +91,31 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var settingsDetail: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                switch selection {
-                case .appearance:
-                    AppearancePane()
-                case .sidebar:
-                    SidebarPane()
-                case .playback:
-                    PlaybackPane()
-                case .seeking:
-                    SeekingPane()
-                case .shortcuts:
-                    ShortcutPane()
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    Color.clear
+                        .frame(height: 0)
+                        .id(settingsScrollTop)
+
+                    switch selection {
+                    case .appearance:
+                        AppearancePane()
+                    case .sidebar:
+                        SidebarPane()
+                    case .playback:
+                        PlaybackPane()
+                    case .seeking:
+                        SeekingPane()
+                    case .shortcuts:
+                        ShortcutPane()
+                    }
                 }
+                .padding(28)
             }
-            .padding(28)
+            .onChange(of: selection) { _, _ in
+                proxy.scrollTo(settingsScrollTop, anchor: .top)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(settings.windowBackgroundColor)
@@ -268,7 +278,9 @@ private struct ThemeSwatch: View {
             .scaleEffect(isHovered ? 1.05 : 1)
             .overlay(alignment: .bottom) {
                 Text(theme.title)
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(.ultraThinMaterial, in: Capsule())
@@ -294,38 +306,57 @@ private struct ThemeSwatch: View {
 
 private struct SidebarPane: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var draggedItem: SidebarItemKind?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Sidebar",
-                subtitle: "Control which sections appear in the app sidebar and drag them into the order you want."
+                subtitle: "Choose what appears in the native app sidebar, then reorder items with the arrow buttons."
             )
 
-            VStack(spacing: 12) {
+            SettingsCard(title: "Sidebar Items", icon: "sidebar.left") {
                 ForEach(settings.sidebarItemOrder) { item in
                     SidebarArrangementCard(
                         item: item,
                         isVisible: settings.isSidebarItemVisible(item),
-                        isDraggingOver: draggedItem == item
+                        canMoveUp: canMoveUp(item),
+                        canMoveDown: canMoveDown(item)
                     ) { visible in
                         settings.setSidebarItem(item, visible: visible)
+                    } onMoveUp: {
+                        move(item, direction: -1)
+                    } onMoveDown: {
+                        move(item, direction: 1)
                     }
-                    .draggable(item.rawValue) {
-                        SidebarDragPreview(item: item)
-                    }
-                    .dropDestination(for: String.self) { items, _ in
-                        guard let rawValue = items.first,
-                              let dragged = SidebarItemKind(rawValue: rawValue) else { return false }
-                        settings.reorderSidebarItem(dragged, before: item)
-                        return true
-                    } isTargeted: { targeted in
-                        draggedItem = targeted ? item : nil
+
+                    if item != settings.sidebarItemOrder.last {
+                        Rectangle()
+                            .fill(settings.separatorColor)
+                            .frame(height: 1)
                     }
                 }
             }
         }
+    }
+
+    private func canMoveUp(_ item: SidebarItemKind) -> Bool {
+        guard let index = settings.sidebarItemOrder.firstIndex(of: item) else { return false }
+        return index > 0
+    }
+
+    private func canMoveDown(_ item: SidebarItemKind) -> Bool {
+        guard let index = settings.sidebarItemOrder.firstIndex(of: item) else { return false }
+        return index < settings.sidebarItemOrder.count - 1
+    }
+
+    private func move(_ item: SidebarItemKind, direction: Int) {
+        guard let currentIndex = settings.sidebarItemOrder.firstIndex(of: item) else { return }
+        let destination = currentIndex + direction
+        guard settings.sidebarItemOrder.indices.contains(destination) else { return }
+
+        var updatedOrder = settings.sidebarItemOrder
+        updatedOrder.swapAt(currentIndex, destination)
+        settings.sidebarItemOrder = updatedOrder
     }
 }
 
@@ -341,8 +372,7 @@ private struct PlaybackPane: View {
 
             SettingsCard(title: "Quality", icon: "sparkles.tv") {
                 NativePickerRow(
-                    title: "Default quality",
-                    selectionText: settings.defaultQuality.rawValue
+                    title: "Default quality"
                 ) {
                     Picker("Default quality", selection: $settings.defaultQuality) {
                         ForEach(AppSettings.DefaultQuality.allCases) { quality in
@@ -355,8 +385,7 @@ private struct PlaybackPane: View {
 
             SettingsCard(title: "Speed", icon: "speedometer") {
                 NativePickerRow(
-                    title: "Default playback speed",
-                    selectionText: AppSettings.playbackSpeedLabel(settings.defaultPlaybackSpeed)
+                    title: "Default playback speed"
                 ) {
                     Picker("Default playback speed", selection: $settings.defaultPlaybackSpeed) {
                         ForEach(AppSettings.playbackSpeedOptions, id: \.self) { speed in
@@ -369,8 +398,7 @@ private struct PlaybackPane: View {
                 divider
 
                 NativePickerRow(
-                    title: "Spacebar hold speed",
-                    selectionText: AppSettings.playbackSpeedLabel(settings.spacebarHoldPlaybackSpeed)
+                    title: "Spacebar hold speed"
                 ) {
                     Picker("Spacebar hold speed", selection: $settings.spacebarHoldPlaybackSpeed) {
                         ForEach(AppSettings.spacebarHoldPlaybackSpeedOptions, id: \.self) { speed in
@@ -608,10 +636,10 @@ private struct SettingsCard<Content: View>: View {
 
 private struct NativePickerRow<PickerContent: View>: View {
     let title: String
-    let selectionText: String
+    let selectionText: String?
     @ViewBuilder let pickerContent: PickerContent
 
-    init(title: String, selectionText: String, @ViewBuilder pickerContent: () -> PickerContent) {
+    init(title: String, selectionText: String? = nil, @ViewBuilder pickerContent: () -> PickerContent) {
         self.title = title
         self.selectionText = selectionText
         self.pickerContent = pickerContent()
@@ -622,9 +650,11 @@ private struct NativePickerRow<PickerContent: View>: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline)
-                Text(selectionText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                if let selectionText {
+                    Text(selectionText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
             pickerContent
@@ -633,22 +663,34 @@ private struct NativePickerRow<PickerContent: View>: View {
 }
 
 private struct SidebarArrangementCard: View {
-    @ObservedObject private var settings = AppSettings.shared
     let item: SidebarItemKind
     let isVisible: Bool
-    let isDraggingOver: Bool
+    let canMoveUp: Bool
+    let canMoveDown: Bool
     let onVisibilityChanged: (Bool) -> Void
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
 
     var body: some View {
         HStack(spacing: 14) {
-            Image(systemName: "line.3.horizontal")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.secondary)
-
             Label(item.title, systemImage: item.systemImage)
                 .font(.headline)
 
             Spacer()
+
+            HStack(spacing: 8) {
+                Button(action: onMoveUp) {
+                    Image(systemName: "arrow.up")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!canMoveUp)
+
+                Button(action: onMoveDown) {
+                    Image(systemName: "arrow.down")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!canMoveDown)
+            }
 
             Toggle("Visible", isOn: Binding(
                 get: { isVisible },
@@ -658,26 +700,7 @@ private struct SidebarArrangementCard: View {
             ))
             .labelsHidden()
         }
-        .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(settings.elevatedBackgroundColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(isDraggingOver ? Color.accentColor.opacity(0.4) : .clear, lineWidth: 1.5)
-        )
-    }
-}
-
-private struct SidebarDragPreview: View {
-    let item: SidebarItemKind
-
-    var body: some View {
-        Label(item.title, systemImage: item.systemImage)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .padding(.vertical, 6)
     }
 }
 
