@@ -1,12 +1,18 @@
 import AppKit
 import SwiftUI
 
+private enum SidebarSelectionValue: Hashable {
+    case item(SidebarItemKind)
+    case playlist(String)
+}
+
 struct ContentView: View {
     @StateObject private var viewModel = HomeViewModel()
     @StateObject private var searchViewModel = SearchViewModel()
     @StateObject private var playlistLibraryViewModel = PlaylistLibraryViewModel()
     @ObservedObject private var settings = AppSettings.shared
     @State private var isEditingSidebar = false
+    @State private var isPlaylistSectionExpanded = true
     @EnvironmentObject private var backend: BackendManager
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
@@ -14,7 +20,7 @@ struct ContentView: View {
     private let columns = [
         GridItem(.adaptive(minimum: 240), spacing: 20, alignment: .top)
     ]
-    private let searchChromeWidth: CGFloat = 500
+    private let searchChromeWidth: CGFloat = 300
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -37,6 +43,21 @@ struct ContentView: View {
                 .environmentObject(authSession)
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        isEditingSidebar.toggle()
+                    }
+                } label: {
+                    if isEditingSidebar {
+                        Text("Done")
+                    } else {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                }
+                .help(isEditingSidebar ? "Done Editing Sidebar" : "Edit Sidebar")
+            }
+
             ToolbarItem(placement: .navigation) {
                 Button {
                     searchViewModel.clear()
@@ -141,8 +162,21 @@ private extension ContentView {
         }
     }
 
+    var orderedSidebarPlaylists: [PlaylistSummary] {
+        settings.orderedSidebarPlaylists(userOwnedPlaylists)
+    }
+
+    var visibleSidebarPlaylists: [PlaylistSummary] {
+        orderedSidebarPlaylists.filter { settings.isSidebarPlaylistVisible($0.playlistId) }
+    }
+
+    var shouldShowPlaylistSection: Bool {
+        authSession.status.authenticated
+            && (settings.isSidebarItemVisible(.playlists) || !visibleSidebarPlaylists.isEmpty)
+    }
+
     var shouldShowSidebar: Bool {
-        visibleSidebarItems.count > 1
+        true
     }
 
     var shouldShowSearchAssist: Bool {
@@ -206,51 +240,117 @@ private extension ContentView {
     }
 
     var sidebar: some View {
-        List(selection: sidebarSelection) {
-            Section {
-                ForEach(sidebarListItems) { item in
-                    if isEditingSidebar {
-                        SidebarCustomizationRow(
-                            item: item,
-                            isVisible: settings.isSidebarItemVisible(item)
-                        ) { visible in
-                            settings.setSidebarItem(item, visible: visible)
-                        }
-                    } else {
-                        Label(item.title, systemImage: item.systemImage)
-                            .tag(item as SidebarItemKind?)
-                    }
-                }
-                .onMove(perform: isEditingSidebar ? settings.moveSidebarItems : nil)
-            } header: {
-                HStack {
-                    Text("Sidebar")
-                    Spacer()
-                    Button(isEditingSidebar ? "Done" : "Edit") {
-                        withAnimation(.easeInOut(duration: 0.16)) {
-                            isEditingSidebar.toggle()
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                }
-                .textCase(nil)
+        Group {
+            if isEditingSidebar {
+                editingSidebar
+            } else {
+                normalSidebar
             }
         }
         .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
     }
 
-    var sidebarSelection: Binding<SidebarItemKind?> {
-        Binding(
-            get: { isEditingSidebar ? nil : navigation.selectedSidebarItem },
-            set: { newValue in
-                guard !isEditingSidebar, let item = newValue else { return }
-                navigation.selectSidebarItem(item)
+    var normalSidebar: some View {
+        List(selection: sidebarSelection) {
+            ForEach(visibleSidebarItems.filter { $0 != .playlists }) { item in
+                Label(item.title, systemImage: item.systemImage)
+                    .tag(SidebarSelectionValue.item(item))
             }
-        )
+
+            if shouldShowPlaylistSection {
+                Section {
+                    DisclosureGroup("Playlists", isExpanded: $isPlaylistSectionExpanded) {
+                        if settings.isSidebarItemVisible(.playlists) {
+                            Label("All Playlists", systemImage: "square.grid.2x2")
+                                .tag(SidebarSelectionValue.item(.playlists))
+                        }
+
+                        ForEach(visibleSidebarPlaylists) { playlist in
+                            PlaylistSidebarRow(playlist: playlist)
+                                .tag(SidebarSelectionValue.playlist(playlist.playlistId))
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    var sidebarListItems: [SidebarItemKind] {
-        isEditingSidebar ? settings.sidebarItemOrder : visibleSidebarItems
+    var editingSidebar: some View {
+        List {
+            Section("Sidebar") {
+                ForEach(settings.sidebarItemOrder) { item in
+                    SidebarEditingRow(
+                        title: item.title,
+                        systemImage: item.systemImage,
+                        isVisible: settings.isSidebarItemVisible(item),
+                        isLocked: item == .home
+                    ) { visible in
+                        settings.setSidebarItem(item, visible: visible)
+                    }
+                }
+                .onMove(perform: settings.moveSidebarItems)
+            }
+
+            if !orderedSidebarPlaylists.isEmpty {
+                Section("Playlists") {
+                    SidebarEditingRow(
+                        title: "All Playlists",
+                        systemImage: "square.grid.2x2",
+                        isVisible: settings.isSidebarItemVisible(.playlists),
+                        isLocked: false
+                    ) { visible in
+                        settings.setSidebarItem(.playlists, visible: visible)
+                    }
+
+                    ForEach(orderedSidebarPlaylists) { playlist in
+                        SidebarEditingRow(
+                            title: playlist.title,
+                            systemImage: "music.note.list",
+                            isVisible: settings.isSidebarPlaylistVisible(playlist.playlistId),
+                            isLocked: false
+                        ) { visible in
+                            settings.setSidebarPlaylist(playlist.playlistId, visible: visible)
+                        }
+                    }
+                    .onMove { source, destination in
+                        settings.moveSidebarPlaylists(
+                            from: source,
+                            to: destination,
+                            availablePlaylists: orderedSidebarPlaylists
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    var sidebarSelection: Binding<SidebarSelectionValue?> {
+        Binding(
+            get: {
+                guard !isEditingSidebar else { return nil }
+                if let activePlaylist = navigation.activePlaylistReference,
+                   activePlaylist.kind == .userPlaylist {
+                    return .playlist(activePlaylist.playlistId)
+                }
+                return .item(navigation.selectedSidebarItem)
+            },
+            set: { newValue in
+                guard !isEditingSidebar, let newValue else { return }
+                switch newValue {
+                case .item(let item):
+                    navigation.selectSidebarItem(item)
+                case .playlist(let playlistID):
+                    guard let playlist = orderedSidebarPlaylists.first(where: { $0.playlistId == playlistID }) else { return }
+                    navigation.showPlaylist(
+                        PlaylistReference(
+                            playlistId: playlist.playlistId,
+                            title: playlist.title,
+                            kind: .userPlaylist
+                        )
+                    )
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -531,27 +631,40 @@ private extension ContentView {
     }
 }
 
-private struct SidebarCustomizationRow: View {
-    let item: SidebarItemKind
+private struct SidebarEditingRow: View {
+    let title: String
+    let systemImage: String
     let isVisible: Bool
+    let isLocked: Bool
     let onVisibilityChanged: (Bool) -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Label(item.title, systemImage: item.systemImage)
-                .foregroundStyle(isVisible ? .primary : .secondary)
-
-            Spacer()
-
-            Button {
-                onVisibilityChanged(!isVisible)
-            } label: {
-                Image(systemName: isVisible ? "eye.fill" : "eye.slash.fill")
-                    .foregroundStyle(isVisible ? .secondary : Color.accentColor)
+        HStack(spacing: 12) {
+            Toggle(isOn: Binding(
+                get: { isVisible },
+                set: { newValue in
+                    onVisibilityChanged(newValue)
+                }
+            )) {
+                Label(title, systemImage: systemImage)
             }
-            .buttonStyle(.borderless)
+            .toggleStyle(.checkbox)
+            .disabled(isLocked)
         }
-        .opacity(isVisible ? 1 : 0.68)
+        .opacity(isVisible || isLocked ? 1 : 0.68)
+    }
+}
+
+private struct PlaylistSidebarRow: View {
+    let playlist: PlaylistSummary
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "music.note.list")
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            Text(playlist.title)
+        }
     }
 }
 

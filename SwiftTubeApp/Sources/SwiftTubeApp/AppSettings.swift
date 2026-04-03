@@ -487,6 +487,8 @@ final class AppSettings: ObservableObject {
     private let defaults = UserDefaults.standard
     private let sidebarOrderKey = "sidebarItemOrder"
     private let sidebarHiddenKey = "hiddenSidebarItems"
+    private let sidebarPlaylistOrderKey = "sidebarPlaylistOrder"
+    private let hiddenSidebarPlaylistIDsKey = "hiddenSidebarPlaylistIDs"
     private let keyBindingsKey = "playerKeyBindings"
 
     @Published var appearanceMode: AppAppearanceMode {
@@ -533,6 +535,14 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(Array(hiddenSidebarItems), forKey: sidebarHiddenKey) }
     }
 
+    @Published var sidebarPlaylistOrder: [String] {
+        didSet { defaults.set(sidebarPlaylistOrder, forKey: sidebarPlaylistOrderKey) }
+    }
+
+    @Published var hiddenSidebarPlaylistIDs: Set<String> {
+        didSet { defaults.set(Array(hiddenSidebarPlaylistIDs), forKey: hiddenSidebarPlaylistIDsKey) }
+    }
+
     init() {
         let storedAppearance = defaults.string(forKey: "appearanceMode") ?? ""
         self.appearanceMode = AppAppearanceMode(rawValue: storedAppearance)
@@ -568,6 +578,8 @@ final class AppSettings: ObservableObject {
         let missingItems = SidebarItemKind.allCases.filter { !orderedItems.contains($0) }
         self.sidebarItemOrder = orderedItems + missingItems
         self.hiddenSidebarItems = Set((defaults.array(forKey: sidebarHiddenKey) as? [String]) ?? [])
+        self.sidebarPlaylistOrder = (defaults.array(forKey: sidebarPlaylistOrderKey) as? [String]) ?? []
+        self.hiddenSidebarPlaylistIDs = Set((defaults.array(forKey: hiddenSidebarPlaylistIDsKey) as? [String]) ?? [])
     }
 
     static let seekSecondsOptions = [3, 5, 10, 15, 30, 45, 60, 90]
@@ -634,10 +646,12 @@ final class AppSettings: ObservableObject {
     }
 
     func isSidebarItemVisible(_ item: SidebarItemKind) -> Bool {
-        !hiddenSidebarItems.contains(item.rawValue)
+        if item == .home { return true }
+        return !hiddenSidebarItems.contains(item.rawValue)
     }
 
     func setSidebarItem(_ item: SidebarItemKind, visible: Bool) {
+        guard item != .home else { return }
         if visible {
             hiddenSidebarItems.remove(item.rawValue)
         } else {
@@ -645,8 +659,33 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    func isSidebarPlaylistVisible(_ playlistID: String) -> Bool {
+        !hiddenSidebarPlaylistIDs.contains(playlistID)
+    }
+
+    func setSidebarPlaylist(_ playlistID: String, visible: Bool) {
+        if visible {
+            hiddenSidebarPlaylistIDs.remove(playlistID)
+        } else {
+            hiddenSidebarPlaylistIDs.insert(playlistID)
+        }
+    }
+
     func moveSidebarItems(from source: IndexSet, to destination: Int) {
         sidebarItemOrder.move(fromOffsets: source, toOffset: destination)
+    }
+
+    func orderedSidebarPlaylists(_ playlists: [PlaylistSummary]) -> [PlaylistSummary] {
+        let lookup = Dictionary(uniqueKeysWithValues: playlists.map { ($0.playlistId, $0) })
+        let ordered = sidebarPlaylistOrder.compactMap { lookup[$0] }
+        let missing = playlists.filter { !sidebarPlaylistOrder.contains($0.playlistId) }
+        return ordered + missing
+    }
+
+    func moveSidebarPlaylists(from source: IndexSet, to destination: Int, availablePlaylists: [PlaylistSummary]) {
+        var orderedIDs = orderedSidebarPlaylists(availablePlaylists).map(\.playlistId)
+        orderedIDs.move(fromOffsets: source, toOffset: destination)
+        sidebarPlaylistOrder = orderedIDs
     }
 
     func reorderSidebarItem(_ dragged: SidebarItemKind, before target: SidebarItemKind) {
