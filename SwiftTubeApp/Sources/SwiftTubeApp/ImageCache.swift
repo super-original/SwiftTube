@@ -14,6 +14,24 @@ private struct DecodedImageRequest: Hashable {
     }
 }
 
+private final class DecodedImageMemoryCache: @unchecked Sendable {
+    static let shared = DecodedImageMemoryCache()
+
+    private let cache = NSCache<NSString, DecodedImageBox>()
+
+    private init() {
+        cache.countLimit = 512
+    }
+
+    func image(for key: NSString) -> DecodedImage? {
+        cache.object(forKey: key)?.image
+    }
+
+    func insert(_ image: DecodedImage, for key: NSString) {
+        cache.setObject(DecodedImageBox(image: image), forKey: key)
+    }
+}
+
 private final class DecodedImageBox: NSObject {
     let image: DecodedImage
 
@@ -25,17 +43,15 @@ private final class DecodedImageBox: NSObject {
 actor ImageCache {
     static let shared = ImageCache()
 
-    private let cache = NSCache<NSString, DecodedImageBox>()
+    private let cache = DecodedImageMemoryCache.shared
     private var inFlightTasks: [DecodedImageRequest: Task<DecodedImage, Error>] = [:]
 
-    private init() {
-        cache.countLimit = 512
-    }
+    private init() {}
 
     func loadDecodedImage(from url: URL, maxPixelSize: Int? = nil) async throws -> DecodedImage {
         let request = DecodedImageRequest(url: url, maxPixelSize: maxPixelSize)
 
-        if let cached = cache.object(forKey: request.cacheKey)?.image {
+        if let cached = cache.image(for: request.cacheKey) {
             return cached
         }
 
@@ -53,7 +69,7 @@ actor ImageCache {
         }
 
         let image = try await task.value
-        cache.setObject(DecodedImageBox(image: image), forKey: request.cacheKey)
+        cache.insert(image, for: request.cacheKey)
         return image
     }
 
@@ -141,16 +157,27 @@ final class ImageLoader: ObservableObject {
     }
 
     func load(from url: URL?, maxPixelSize: Int? = nil) {
-        loadTask?.cancel()
-        image = nil
-
         guard let url else {
+            loadTask?.cancel()
             activeRequest = nil
+            image = nil
             return
         }
 
         let request = DecodedImageRequest(url: url, maxPixelSize: maxPixelSize)
+        if activeRequest == request {
+            return
+        }
+
+        loadTask?.cancel()
         activeRequest = request
+
+        if let cachedImage = DecodedImageMemoryCache.shared.image(for: request.cacheKey) {
+            image = cachedImage
+            return
+        }
+
+        image = nil
 
         loadTask = Task { [weak self] in
             do {

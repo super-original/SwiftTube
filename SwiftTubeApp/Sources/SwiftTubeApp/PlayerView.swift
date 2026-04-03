@@ -2563,7 +2563,7 @@ private struct RecommendationRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 640) {
+                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 320) {
                     RoundedRectangle(cornerRadius: 16)
                         .fill(Color.gray.opacity(0.2))
                         .overlay(
