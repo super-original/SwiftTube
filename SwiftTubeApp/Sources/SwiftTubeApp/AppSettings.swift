@@ -675,6 +675,16 @@ final class AppSettings: ObservableObject {
         sidebarItemOrder.move(fromOffsets: source, toOffset: destination)
     }
 
+    func moveSidebarItem(_ item: SidebarItemKind, direction: Int) {
+        guard let currentIndex = sidebarItemOrder.firstIndex(of: item) else { return }
+        let destinationIndex = currentIndex + direction
+        guard sidebarItemOrder.indices.contains(destinationIndex) else { return }
+
+        var updatedOrder = sidebarItemOrder
+        updatedOrder.swapAt(currentIndex, destinationIndex)
+        sidebarItemOrder = updatedOrder
+    }
+
     func orderedSidebarPlaylists(_ playlists: [PlaylistSummary]) -> [PlaylistSummary] {
         let lookup = Dictionary(uniqueKeysWithValues: playlists.map { ($0.playlistId, $0) })
         let ordered = sidebarPlaylistOrder.compactMap { lookup[$0] }
@@ -685,6 +695,16 @@ final class AppSettings: ObservableObject {
     func moveSidebarPlaylists(from source: IndexSet, to destination: Int, availablePlaylists: [PlaylistSummary]) {
         var orderedIDs = orderedSidebarPlaylists(availablePlaylists).map(\.playlistId)
         orderedIDs.move(fromOffsets: source, toOffset: destination)
+        sidebarPlaylistOrder = orderedIDs
+    }
+
+    func moveSidebarPlaylist(_ playlistID: String, direction: Int, availablePlaylists: [PlaylistSummary]) {
+        var orderedIDs = orderedSidebarPlaylists(availablePlaylists).map(\.playlistId)
+        guard let currentIndex = orderedIDs.firstIndex(of: playlistID) else { return }
+        let destinationIndex = currentIndex + direction
+        guard orderedIDs.indices.contains(destinationIndex) else { return }
+
+        orderedIDs.swapAt(currentIndex, destinationIndex)
         sidebarPlaylistOrder = orderedIDs
     }
 

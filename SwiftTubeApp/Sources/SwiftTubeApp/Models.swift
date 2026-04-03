@@ -151,6 +151,17 @@ struct PlaylistSummary: Codable, Hashable, Identifiable, Sendable {
         guard let urlString = thumbnails.last?.url else { return nil }
         return URL(string: urlString)
     }
+
+    var referenceKind: PlaylistReference.Kind {
+        switch playlistId {
+        case "WL":
+            return .watchLater
+        case "LL":
+            return .likedVideos
+        default:
+            return .userPlaylist
+        }
+    }
 }
 
 struct PlaylistFeed: Codable, Sendable {

@@ -15,62 +15,86 @@ struct VideoContextMenuContent: View {
     let onMoveToBottom: (() -> Void)?
 
     var body: some View {
-        Button("Play", action: onPlay)
+        Button(action: onPlay) {
+            Label("Play", systemImage: "play.fill")
+        }
 
         if let onPlayFromHere {
-            Button("Play From Here", action: onPlayFromHere)
+            Button(action: onPlayFromHere) {
+                Label("Play From Here", systemImage: "text.line.first.and.arrowtriangle.forward")
+            }
         }
 
         Divider()
 
-        Button("Copy Link") {
+        Button {
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(videoURL.absoluteString, forType: .string)
+        } label: {
+            Label("Copy Link", systemImage: "link")
         }
 
-        Button("Open in YouTube") {
+        Button {
             NSWorkspace.shared.open(videoURL)
+        } label: {
+            Label("Open in YouTube", systemImage: "safari")
         }
 
         if let onAddToWatchLater {
             Divider()
-            Button("Add to Watch Later", action: onAddToWatchLater)
+            Button(action: onAddToWatchLater) {
+                Label("Add to Watch Later", systemImage: "clock")
+            }
         }
 
         if let onSaveToPlaylist,
            !userPlaylists.isEmpty {
-            Menu("Save to Playlist") {
+            Menu {
                 ForEach(userPlaylists) { playlist in
-                    Button(playlist.title) {
+                    Button {
                         onSaveToPlaylist(playlist.playlistId)
+                    } label: {
+                        Label(playlist.title, systemImage: "music.note.list")
                     }
                 }
+            } label: {
+                Label("Save to Playlist", systemImage: "text.badge.plus")
             }
         }
 
         if let onMoveToWatchLater {
             Divider()
-            Menu("Move to") {
-                Button("Watch Later", action: onMoveToWatchLater)
+            Menu {
+                Button(action: onMoveToWatchLater) {
+                    Label("Watch Later", systemImage: "clock")
+                }
                 if let onMoveToPlaylist,
                    !userPlaylists.isEmpty {
                     Divider()
                     ForEach(userPlaylists) { playlist in
-                        Button(playlist.title) {
+                        Button {
                             onMoveToPlaylist(playlist.playlistId)
+                        } label: {
+                            Label(playlist.title, systemImage: "music.note.list")
                         }
                     }
                 }
+            } label: {
+                Label("Move to", systemImage: "folder")
             }
         } else if let onMoveToPlaylist,
                   !userPlaylists.isEmpty {
-            Menu("Move to Playlist") {
+            Menu {
                 ForEach(userPlaylists) { playlist in
-                    Button(playlist.title) {
+                    Button {
                         onMoveToPlaylist(playlist.playlistId)
+                    } label: {
+                        Label(playlist.title, systemImage: "music.note.list")
                     }
                 }
+            } label: {
+                Label("Move to Playlist", systemImage: "folder")
             }
         }
 
@@ -79,15 +103,21 @@ struct VideoContextMenuContent: View {
         }
 
         if let onRemoveFromCurrentPlaylist {
-            Button("Remove from This Playlist", role: .destructive, action: onRemoveFromCurrentPlaylist)
+            Button(role: .destructive, action: onRemoveFromCurrentPlaylist) {
+                Label("Remove from This Playlist", systemImage: "trash")
+            }
         }
 
         if let onMoveToTop {
-            Button("Move to Top", action: onMoveToTop)
+            Button(action: onMoveToTop) {
+                Label("Move to Top", systemImage: "arrow.up.to.line")
+            }
         }
 
         if let onMoveToBottom {
-            Button("Move to Bottom", action: onMoveToBottom)
+            Button(action: onMoveToBottom) {
+                Label("Move to Bottom", systemImage: "arrow.down.to.line")
+            }
         }
     }
 

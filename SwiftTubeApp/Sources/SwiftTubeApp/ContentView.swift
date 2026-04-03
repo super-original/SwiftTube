@@ -45,21 +45,6 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        isEditingSidebar.toggle()
-                    }
-                } label: {
-                    if isEditingSidebar {
-                        Text("Done")
-                    } else {
-                        Image(systemName: "slider.horizontal.3")
-                    }
-                }
-                .help(isEditingSidebar ? "Done Editing Sidebar" : "Edit Sidebar")
-            }
-
-            ToolbarItem(placement: .navigation) {
-                Button {
                     searchViewModel.clear()
                     navigation.showHome()
                 } label: {
@@ -240,117 +225,192 @@ private extension ContentView {
     }
 
     var sidebar: some View {
-        Group {
-            if isEditingSidebar {
-                editingSidebar
-            } else {
-                normalSidebar
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        isEditingSidebar.toggle()
+                    }
+                } label: {
+                    Image(systemName: isEditingSidebar ? "checkmark" : "pencil")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(isEditingSidebar ? Color.accentColor : .secondary)
+                .background(
+                    Circle()
+                        .fill(isEditingSidebar ? Color.accentColor.opacity(0.14) : Color.clear)
+                )
+                .contentShape(Circle())
+                .help(isEditingSidebar ? "Done Editing Sidebar" : "Edit Sidebar")
             }
+
+            normalSidebar
         }
+        .padding(.top, 8)
         .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
     }
 
     var normalSidebar: some View {
-        List(selection: sidebarSelection) {
+        List {
             ForEach(visibleSidebarItems.filter { $0 != .playlists }) { item in
-                Label(item.title, systemImage: item.systemImage)
-                    .tag(SidebarSelectionValue.item(item))
+                SidebarActionRow(
+                    title: item.title,
+                    icon: {
+                        switch item {
+                        case .watchLater:
+                            PlaylistSpecialIcon(
+                                symbol: "clock.fill",
+                                colors: [Color(red: 0.16, green: 0.34, blue: 0.82), Color(red: 0.11, green: 0.17, blue: 0.40)]
+                            )
+                        case .likedVideos:
+                            PlaylistSpecialIcon(
+                                symbol: "hand.thumbsup.fill",
+                                colors: [Color(red: 0.90, green: 0.36, blue: 0.44), Color(red: 0.43, green: 0.11, blue: 0.22)]
+                            )
+                        default:
+                            Image(systemName: item.systemImage)
+                        }
+                    },
+                    isSelected: sidebarSelectionValue == .item(item),
+                    isEditing: isEditingSidebar,
+                    isVisible: settings.isSidebarItemVisible(item),
+                    isLocked: item == .home,
+                    canMoveUp: canMoveSidebarItem(item, direction: -1),
+                    canMoveDown: canMoveSidebarItem(item, direction: 1),
+                    indent: 0,
+                    action: {
+                        navigation.selectSidebarItem(item)
+                    },
+                    onVisibilityChanged: { visible in
+                        settings.setSidebarItem(item, visible: visible)
+                    },
+                    onMoveUp: {
+                        settings.moveSidebarItem(item, direction: -1)
+                    },
+                    onMoveDown: {
+                        settings.moveSidebarItem(item, direction: 1)
+                    }
+                )
+                .listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10))
             }
 
             if shouldShowPlaylistSection {
                 Section {
                     DisclosureGroup("Playlists", isExpanded: $isPlaylistSectionExpanded) {
                         if settings.isSidebarItemVisible(.playlists) {
-                            Label("All Playlists", systemImage: "square.grid.2x2")
-                                .tag(SidebarSelectionValue.item(.playlists))
+                            SidebarActionRow(
+                                title: "All Playlists",
+                                icon: {
+                                    Image(systemName: "square.grid.2x2")
+                                },
+                                isSelected: sidebarSelectionValue == .item(.playlists),
+                                isEditing: isEditingSidebar,
+                                isVisible: settings.isSidebarItemVisible(.playlists),
+                                isLocked: false,
+                                canMoveUp: false,
+                                canMoveDown: false,
+                                indent: 18,
+                                action: {
+                                    navigation.showPlaylistLibrary()
+                                },
+                                onVisibilityChanged: { visible in
+                                    settings.setSidebarItem(.playlists, visible: visible)
+                                },
+                                onMoveUp: nil,
+                                onMoveDown: nil
+                            )
                         }
 
                         ForEach(visibleSidebarPlaylists) { playlist in
-                            PlaylistSidebarRow(playlist: playlist)
-                                .tag(SidebarSelectionValue.playlist(playlist.playlistId))
+                            SidebarActionRow(
+                                title: playlist.title,
+                                icon: {
+                                    PlaylistSidebarIcon(playlist: playlist)
+                                },
+                                isSelected: sidebarSelectionValue == .playlist(playlist.playlistId),
+                                isEditing: isEditingSidebar,
+                                isVisible: settings.isSidebarPlaylistVisible(playlist.playlistId),
+                                isLocked: false,
+                                canMoveUp: canMoveSidebarPlaylist(playlist, direction: -1),
+                                canMoveDown: canMoveSidebarPlaylist(playlist, direction: 1),
+                                indent: 18,
+                                action: {
+                                    navigation.showPlaylist(
+                                        PlaylistReference(
+                                            playlistId: playlist.playlistId,
+                                            title: playlist.title,
+                                            kind: .userPlaylist
+                                        )
+                                    )
+                                },
+                                onVisibilityChanged: { visible in
+                                    settings.setSidebarPlaylist(playlist.playlistId, visible: visible)
+                                },
+                                onMoveUp: {
+                                    settings.moveSidebarPlaylist(
+                                        playlist.playlistId,
+                                        direction: -1,
+                                        availablePlaylists: orderedSidebarPlaylists
+                                    )
+                                },
+                                onMoveDown: {
+                                    settings.moveSidebarPlaylist(
+                                        playlist.playlistId,
+                                        direction: 1,
+                                        availablePlaylists: orderedSidebarPlaylists
+                                    )
+                                }
+                            )
                         }
                     }
                 }
             }
         }
+        .listStyle(.sidebar)
     }
 
-    var editingSidebar: some View {
-        List {
-            Section("Sidebar") {
-                ForEach(settings.sidebarItemOrder) { item in
-                    SidebarEditingRow(
-                        title: item.title,
-                        systemImage: item.systemImage,
-                        isVisible: settings.isSidebarItemVisible(item),
-                        isLocked: item == .home
-                    ) { visible in
-                        settings.setSidebarItem(item, visible: visible)
-                    }
-                }
-                .onMove(perform: settings.moveSidebarItems)
+    var sidebarSelectionValue: SidebarSelectionValue {
+        switch navigation.currentRoute {
+        case .home:
+            return .item(.home)
+        case .playlistLibrary:
+            return .item(.playlists)
+        case .playlistFeed(let playlist):
+            switch playlist.kind {
+            case .watchLater:
+                return .item(.watchLater)
+            case .likedVideos:
+                return .item(.likedVideos)
+            case .userPlaylist:
+                return .playlist(playlist.playlistId)
             }
-
-            if !orderedSidebarPlaylists.isEmpty {
-                Section("Playlists") {
-                    SidebarEditingRow(
-                        title: "All Playlists",
-                        systemImage: "square.grid.2x2",
-                        isVisible: settings.isSidebarItemVisible(.playlists),
-                        isLocked: false
-                    ) { visible in
-                        settings.setSidebarItem(.playlists, visible: visible)
-                    }
-
-                    ForEach(orderedSidebarPlaylists) { playlist in
-                        SidebarEditingRow(
-                            title: playlist.title,
-                            systemImage: "music.note.list",
-                            isVisible: settings.isSidebarPlaylistVisible(playlist.playlistId),
-                            isLocked: false
-                        ) { visible in
-                            settings.setSidebarPlaylist(playlist.playlistId, visible: visible)
-                        }
-                    }
-                    .onMove { source, destination in
-                        settings.moveSidebarPlaylists(
-                            from: source,
-                            to: destination,
-                            availablePlaylists: orderedSidebarPlaylists
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    var sidebarSelection: Binding<SidebarSelectionValue?> {
-        Binding(
-            get: {
-                guard !isEditingSidebar else { return nil }
-                if let activePlaylist = navigation.activePlaylistReference,
-                   activePlaylist.kind == .userPlaylist {
+        case .video:
+            if let activePlaylist = navigation.activePlaylistReference {
+                switch activePlaylist.kind {
+                case .watchLater:
+                    return .item(.watchLater)
+                case .likedVideos:
+                    return .item(.likedVideos)
+                case .userPlaylist:
                     return .playlist(activePlaylist.playlistId)
                 }
-                return .item(navigation.selectedSidebarItem)
-            },
-            set: { newValue in
-                guard !isEditingSidebar, let newValue else { return }
-                switch newValue {
-                case .item(let item):
-                    navigation.selectSidebarItem(item)
-                case .playlist(let playlistID):
-                    guard let playlist = orderedSidebarPlaylists.first(where: { $0.playlistId == playlistID }) else { return }
-                    navigation.showPlaylist(
-                        PlaylistReference(
-                            playlistId: playlist.playlistId,
-                            title: playlist.title,
-                            kind: .userPlaylist
-                        )
-                    )
-                }
             }
-        )
+            return .item(navigation.selectedSidebarItem)
+        }
+    }
+
+    func canMoveSidebarItem(_ item: SidebarItemKind, direction: Int) -> Bool {
+        guard let index = settings.sidebarItemOrder.firstIndex(of: item) else { return false }
+        return settings.sidebarItemOrder.indices.contains(index + direction)
+    }
+
+    func canMoveSidebarPlaylist(_ playlist: PlaylistSummary, direction: Int) -> Bool {
+        let ordered = orderedSidebarPlaylists
+        guard let index = ordered.firstIndex(where: { $0.playlistId == playlist.playlistId }) else { return false }
+        return ordered.indices.contains(index + direction)
     }
 
     @ViewBuilder
@@ -631,40 +691,116 @@ private extension ContentView {
     }
 }
 
-private struct SidebarEditingRow: View {
+private struct SidebarActionRow<Icon: View>: View {
     let title: String
-    let systemImage: String
+    @ViewBuilder let icon: () -> Icon
+    let isSelected: Bool
+    let isEditing: Bool
     let isVisible: Bool
     let isLocked: Bool
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let indent: CGFloat
+    let action: () -> Void
     let onVisibilityChanged: (Bool) -> Void
+    let onMoveUp: (() -> Void)?
+    let onMoveDown: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: 12) {
-            Toggle(isOn: Binding(
-                get: { isVisible },
-                set: { newValue in
-                    onVisibilityChanged(newValue)
+        Button(action: action) {
+            HStack(spacing: 12) {
+                icon()
+                    .frame(width: 18, height: 18)
+                Text(title)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if isEditing {
+                    HStack(spacing: 6) {
+                        if let onMoveUp {
+                            Button(action: onMoveUp) {
+                                Image(systemName: "chevron.up")
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!canMoveUp)
+                            .foregroundStyle(canMoveUp ? Color.secondary : Color.secondary.opacity(0.35))
+                        }
+
+                        if let onMoveDown {
+                            Button(action: onMoveDown) {
+                                Image(systemName: "chevron.down")
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!canMoveDown)
+                            .foregroundStyle(canMoveDown ? Color.secondary : Color.secondary.opacity(0.35))
+                        }
+
+                        Button {
+                            onVisibilityChanged(!isVisible)
+                        } label: {
+                            Image(systemName: isVisible ? "eye" : "eye.slash")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isLocked)
+                        .foregroundStyle(isLocked ? Color.secondary.opacity(0.35) : .secondary)
+                    }
                 }
-            )) {
-                Label(title, systemImage: systemImage)
             }
-            .toggleStyle(.checkbox)
-            .disabled(isLocked)
+            .padding(.leading, indent)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? Color.accentColor.opacity(0.20) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.25) : Color.clear, lineWidth: 1)
+            )
         }
-        .opacity(isVisible || isLocked ? 1 : 0.68)
+        .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .opacity(isVisible || isLocked ? 1 : 0.60)
     }
 }
 
-private struct PlaylistSidebarRow: View {
+private struct PlaylistSidebarIcon: View {
     let playlist: PlaylistSummary
 
     var body: some View {
-        HStack(spacing: 10) {
+        switch playlist.referenceKind {
+        case .watchLater:
+            PlaylistSpecialIcon(
+                symbol: "clock.fill",
+                colors: [Color(red: 0.16, green: 0.34, blue: 0.82), Color(red: 0.11, green: 0.17, blue: 0.40)]
+            )
+        case .likedVideos:
+            PlaylistSpecialIcon(
+                symbol: "hand.thumbsup.fill",
+                colors: [Color(red: 0.90, green: 0.36, blue: 0.44), Color(red: 0.43, green: 0.11, blue: 0.22)]
+            )
+        case .userPlaylist:
             Image(systemName: "music.note.list")
                 .foregroundStyle(.secondary)
-                .frame(width: 16)
-            Text(playlist.title)
         }
+    }
+}
+
+private struct PlaylistSpecialIcon: View {
+    let symbol: String
+    let colors: [Color]
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 6)
+            .fill(
+                LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+            )
+            .overlay {
+                Image(systemName: symbol)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 18, height: 18)
     }
 }
 
@@ -725,7 +861,7 @@ private struct PlaylistLibraryScreen: View {
                             PlaylistReference(
                                 playlistId: playlist.playlistId,
                                 title: playlist.title,
-                                kind: playlist.playlistId == "WL" ? .watchLater : playlist.playlistId == "LL" ? .likedVideos : .userPlaylist
+                                kind: playlist.referenceKind
                             )
                         )
                     } label: {
@@ -791,26 +927,51 @@ private struct PlaylistFeedScreen: View {
     private var summaryColumn: some View {
         VStack(alignment: .leading, spacing: 18) {
             ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: viewModel.items.first?.thumbnailURL, maxPixelSize: 720) {
+                if viewModel.playlist.kind == .userPlaylist {
+                    CachedAsyncImage(url: viewModel.items.first?.thumbnailURL, maxPixelSize: 720) {
+                        RoundedRectangle(cornerRadius: 28)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.24, green: 0.40, blue: 0.54),
+                                        Color(red: 0.06, green: 0.13, blue: 0.20)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .overlay(
+                                Image(systemName: "music.note.list")
+                                    .font(.system(size: 42, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.86))
+                            )
+                    }
+                    .frame(width: 312, height: 312)
+                    .clipShape(RoundedRectangle(cornerRadius: 28))
+                } else {
                     RoundedRectangle(cornerRadius: 28)
                         .fill(
                             LinearGradient(
-                                colors: [
-                                    Color(red: 0.24, green: 0.40, blue: 0.54),
-                                    Color(red: 0.06, green: 0.13, blue: 0.20)
-                                ],
+                                colors: viewModel.playlist.kind == .watchLater
+                                    ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
+                                    : [Color(red: 0.92, green: 0.40, blue: 0.48), Color(red: 0.38, green: 0.11, blue: 0.23)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
-                        .overlay(
-                            Image(systemName: "music.note.list")
-                                .font(.system(size: 42, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.86))
-                        )
+                        .overlay {
+                            VStack(spacing: 14) {
+                                Image(systemName: viewModel.playlist.kind == .watchLater ? "clock.fill" : "hand.thumbsup.fill")
+                                    .font(.system(size: 50, weight: .bold))
+                                Text(viewModel.playlist.title)
+                                    .font(.system(size: 28, weight: .bold))
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 28)
+                            }
+                            .foregroundStyle(.white)
+                        }
+                        .frame(width: 312, height: 312)
                 }
-                .frame(width: 312, height: 312)
-                .clipShape(RoundedRectangle(cornerRadius: 28))
 
                 if let count = viewModel.feed?.itemCountText {
                     Text(count)
@@ -1029,18 +1190,44 @@ private struct PlaylistCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ZStack(alignment: .bottomLeading) {
-                CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: 640) {
+                if playlist.referenceKind == .userPlaylist {
+                    CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: 640) {
+                        RoundedRectangle(cornerRadius: 18)
+                            .fill(Color.gray.opacity(0.22))
+                            .overlay(
+                                Image(systemName: "music.note.list")
+                                    .font(.system(size: 26))
+                                    .foregroundStyle(.secondary)
+                            )
+                    }
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                } else {
                     RoundedRectangle(cornerRadius: 18)
-                        .fill(Color.gray.opacity(0.22))
-                        .overlay(
-                            Image(systemName: "music.note.list")
-                                .font(.system(size: 26))
-                                .foregroundStyle(.secondary)
+                        .fill(
+                            LinearGradient(
+                                colors: playlist.referenceKind == .watchLater
+                                    ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
+                                    : [Color(red: 0.92, green: 0.40, blue: 0.48), Color(red: 0.38, green: 0.11, blue: 0.23)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
+                        .overlay {
+                            VStack(spacing: 10) {
+                                Image(systemName: playlist.referenceKind == .watchLater ? "clock.fill" : "hand.thumbsup.fill")
+                                    .font(.system(size: 34, weight: .bold))
+                                Text(playlist.title)
+                                    .font(.headline.weight(.bold))
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 18)
+                            }
+                            .foregroundStyle(.white)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .aspectRatio(16 / 9, contentMode: .fit)
                 }
-                .frame(maxWidth: .infinity)
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
 
                 if let count = playlist.itemCountText, !count.isEmpty {
                     Text(count)
