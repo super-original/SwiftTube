@@ -179,11 +179,11 @@ private struct AppearancePane: View {
     @State private var hoveredTheme: AppAppearanceMode?
 
     private var darkThemes: [AppAppearanceMode] {
-        [.dark, .midnight, .midnightOcean, .midnightForest, .midnightRose, .midnightAurora, .midnightEmber, .midnightAmethyst]
+        [.dark, .midnight, .midnightOcean, .midnightForest, .midnightRose, .midnightAurora, .midnightEmber, .midnightAmethyst, .midnightLagoon, .midnightCocoa]
     }
 
     private var lightThemes: [AppAppearanceMode] {
-        [.light, .sunrise, .sky, .mint, .rose, .sand, .lavender, .citrus]
+        [.light, .sunrise, .sky, .mint, .rose, .sand, .lavender, .citrus, .pearl, .coral]
     }
 
     private var spotlightTheme: AppAppearanceMode {
@@ -225,7 +225,7 @@ private struct ThemeGroup: View {
     let themes: [AppAppearanceMode]
     @Binding var hoveredTheme: AppAppearanceMode?
 
-    private let columns = Array(repeating: GridItem(.fixed(86), spacing: 14), count: 5)
+    private let columns = Array(repeating: GridItem(.fixed(72), spacing: 12), count: 6)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -259,17 +259,17 @@ private struct ThemeSwatch: View {
     var body: some View {
         Button(action: onSelect) {
             ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 18)
+                RoundedRectangle(cornerRadius: 16)
                     .fill(theme.previewGradient)
-                    .frame(width: 86, height: 86)
+                    .frame(width: 72, height: 72)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 18)
+                        RoundedRectangle(cornerRadius: 16)
                             .stroke(borderColor, lineWidth: isSelected ? 2.5 : 1)
                     )
 
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 24, weight: .bold))
+                        .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(Color.accentColor, .white)
                         .background(Circle().fill(Color.white))
                         .offset(x: 7, y: -7)
@@ -278,9 +278,9 @@ private struct ThemeSwatch: View {
             .scaleEffect(isHovered ? 1.05 : 1)
             .overlay(alignment: .bottom) {
                 Text(theme.title)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(.ultraThinMaterial, in: Capsule())
@@ -289,7 +289,7 @@ private struct ThemeSwatch: View {
             }
         }
         .buttonStyle(.plain)
-        .padding(.bottom, 26)
+        .padding(.bottom, 22)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.14)) {
                 isHovered = hovering
@@ -305,58 +305,19 @@ private struct ThemeSwatch: View {
 }
 
 private struct SidebarPane: View {
-    @ObservedObject private var settings = AppSettings.shared
-
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Sidebar",
-                subtitle: "Choose what appears in the native app sidebar, then reorder items with the arrow buttons."
+                subtitle: "Use the native sidebar Edit button in the main window to reorder sections or hide the ones you don't need."
             )
 
-            SettingsCard(title: "Sidebar Items", icon: "sidebar.left") {
-                ForEach(settings.sidebarItemOrder) { item in
-                    SidebarArrangementCard(
-                        item: item,
-                        isVisible: settings.isSidebarItemVisible(item),
-                        canMoveUp: canMoveUp(item),
-                        canMoveDown: canMoveDown(item)
-                    ) { visible in
-                        settings.setSidebarItem(item, visible: visible)
-                    } onMoveUp: {
-                        move(item, direction: -1)
-                    } onMoveDown: {
-                        move(item, direction: 1)
-                    }
-
-                    if item != settings.sidebarItemOrder.last {
-                        Rectangle()
-                            .fill(settings.separatorColor)
-                            .frame(height: 1)
-                    }
-                }
+            SettingsCard(title: "Customize In Sidebar", icon: "sidebar.left") {
+                Text("Open the app sidebar, click Edit, then drag sections into the order you want or use the eye button to hide them.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private func canMoveUp(_ item: SidebarItemKind) -> Bool {
-        guard let index = settings.sidebarItemOrder.firstIndex(of: item) else { return false }
-        return index > 0
-    }
-
-    private func canMoveDown(_ item: SidebarItemKind) -> Bool {
-        guard let index = settings.sidebarItemOrder.firstIndex(of: item) else { return false }
-        return index < settings.sidebarItemOrder.count - 1
-    }
-
-    private func move(_ item: SidebarItemKind, direction: Int) {
-        guard let currentIndex = settings.sidebarItemOrder.firstIndex(of: item) else { return }
-        let destination = currentIndex + direction
-        guard settings.sidebarItemOrder.indices.contains(destination) else { return }
-
-        var updatedOrder = settings.sidebarItemOrder
-        updatedOrder.swapAt(currentIndex, destination)
-        settings.sidebarItemOrder = updatedOrder
     }
 }
 
@@ -408,10 +369,6 @@ private struct PlaybackPane: View {
                     .labelsHidden()
                 }
 
-                Text("Space still toggles play and pause instantly. Hold it for 0.8 seconds to temporarily switch to the configured hold speed until you release it.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 2)
             }
         }
     }
@@ -430,14 +387,13 @@ private struct SeekingPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Seeking",
-                subtitle: "Set the timing for the three seek categories. Their shortcuts are shown here and can be changed in Keybinds."
+                subtitle: "Set the timing for the three seek categories."
             )
 
             ForEach(SeekCategory.allCases) { category in
                 SettingsCard(title: category.title, icon: icon(for: category)) {
                     NativePickerRow(
-                        title: "Seek amount",
-                        selectionText: "\(Int(settings.seekSeconds(for: category)))s"
+                        title: "Seek amount"
                     ) {
                         Picker("Seek amount", selection: Binding(
                             get: { Int(settings.seekSeconds(for: category)) },
@@ -450,19 +406,9 @@ private struct SeekingPane: View {
                         .labelsHidden()
                     }
 
-                    divider
-
-                    bindingLine(
-                        title: "Back",
-                        icon: "arrow.uturn.backward",
-                        bindingText: bindingText(for: category, isForward: false)
-                    )
-
-                    bindingLine(
-                        title: "Forward",
-                        icon: "arrow.uturn.forward",
-                        bindingText: bindingText(for: category, isForward: true)
-                    )
+                    Text("You can customize the shortcuts for this seek category in the Keybinds section.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
 
                     Text(category.description)
                         .font(.callout)
@@ -480,33 +426,6 @@ private struct SeekingPane: View {
         }
     }
 
-    private func bindingText(for category: SeekCategory, isForward: Bool) -> String {
-        let action: PlayerKeyAction = switch (category, isForward) {
-        case (.short, false): .seekShortBack
-        case (.short, true): .seekShortForward
-        case (.medium, false): .seekMediumBack
-        case (.medium, true): .seekMediumForward
-        case (.long, false): .seekLongBack
-        case (.long, true): .seekLongForward
-        }
-        return settings.binding(for: action).displayText
-    }
-
-    private var divider: some View {
-        Rectangle()
-            .fill(settings.separatorColor)
-            .frame(height: 1)
-    }
-
-    private func bindingLine(title: String, icon: String, bindingText: String) -> some View {
-        HStack {
-            Label(title, systemImage: icon)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(bindingText)
-                .font(.headline)
-        }
-    }
 }
 
 private struct ShortcutPane: View {
@@ -659,48 +578,6 @@ private struct NativePickerRow<PickerContent: View>: View {
             Spacer()
             pickerContent
         }
-    }
-}
-
-private struct SidebarArrangementCard: View {
-    let item: SidebarItemKind
-    let isVisible: Bool
-    let canMoveUp: Bool
-    let canMoveDown: Bool
-    let onVisibilityChanged: (Bool) -> Void
-    let onMoveUp: () -> Void
-    let onMoveDown: () -> Void
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Label(item.title, systemImage: item.systemImage)
-                .font(.headline)
-
-            Spacer()
-
-            HStack(spacing: 8) {
-                Button(action: onMoveUp) {
-                    Image(systemName: "arrow.up")
-                }
-                .buttonStyle(.borderless)
-                .disabled(!canMoveUp)
-
-                Button(action: onMoveDown) {
-                    Image(systemName: "arrow.down")
-                }
-                .buttonStyle(.borderless)
-                .disabled(!canMoveDown)
-            }
-
-            Toggle("Visible", isOn: Binding(
-                get: { isVisible },
-                set: { newValue in
-                    onVisibilityChanged(newValue)
-                }
-            ))
-            .labelsHidden()
-        }
-        .padding(.vertical, 6)
     }
 }
 

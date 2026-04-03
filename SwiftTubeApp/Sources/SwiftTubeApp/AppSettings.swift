@@ -11,6 +11,8 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
     case midnightAurora
     case midnightEmber
     case midnightAmethyst
+    case midnightLagoon
+    case midnightCocoa
     case light
     case sunrise
     case sky
@@ -19,6 +21,8 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
     case sand
     case lavender
     case citrus
+    case pearl
+    case coral
 
     var id: String { rawValue }
 
@@ -32,6 +36,8 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
         case .midnightAurora: return "Midnight Aurora"
         case .midnightEmber: return "Midnight Ember"
         case .midnightAmethyst: return "Midnight Amethyst"
+        case .midnightLagoon: return "Midnight Lagoon"
+        case .midnightCocoa: return "Midnight Cocoa"
         case .light: return "Light"
         case .sunrise: return "Sunrise"
         case .sky: return "Sky"
@@ -40,6 +46,8 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
         case .sand: return "Sand"
         case .lavender: return "Lavender"
         case .citrus: return "Citrus"
+        case .pearl: return "Pearl"
+        case .coral: return "Coral"
         }
     }
 
@@ -53,6 +61,8 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
         case .midnightAurora: return "A vivid blue-violet midnight with aurora highlights."
         case .midnightEmber: return "Warm charcoal with copper and ember undertones."
         case .midnightAmethyst: return "A plush midnight purple with a richer glow."
+        case .midnightLagoon: return "A teal midnight with calmer aquatic depth."
+        case .midnightCocoa: return "Velvety espresso brown with softer warmth."
         case .light: return "Bright, native macOS styling across the app."
         case .sunrise: return "Warm paper-like light theme with a peach tint."
         case .sky: return "Airy light theme with cool blue surfaces."
@@ -61,14 +71,16 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
         case .sand: return "Soft neutral light theme with warm beige surfaces."
         case .lavender: return "A pale violet light theme with softer contrast."
         case .citrus: return "Fresh cream theme with lemon-lime highlights."
+        case .pearl: return "Clean pearl-white light theme with subtle silver blues."
+        case .coral: return "A soft coral light theme with warmer accents."
         }
     }
 
     var preferredColorScheme: ColorScheme {
         switch self {
-        case .dark, .midnight, .midnightOcean, .midnightForest, .midnightRose, .midnightAurora, .midnightEmber, .midnightAmethyst:
+        case .dark, .midnight, .midnightOcean, .midnightForest, .midnightRose, .midnightAurora, .midnightEmber, .midnightAmethyst, .midnightLagoon, .midnightCocoa:
             return .dark
-        case .light, .sunrise, .sky, .mint, .rose, .sand, .lavender, .citrus:
+        case .light, .sunrise, .sky, .mint, .rose, .sand, .lavender, .citrus, .pearl, .coral:
             return .light
         }
     }
@@ -119,6 +131,10 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
             return NSColor(calibratedRed: 28 / 255, green: 18 / 255, blue: 16 / 255, alpha: 1)
         case .midnightAmethyst:
             return NSColor(calibratedRed: 20 / 255, green: 16 / 255, blue: 31 / 255, alpha: 1)
+        case .midnightLagoon:
+            return NSColor(calibratedRed: 12 / 255, green: 22 / 255, blue: 24 / 255, alpha: 1)
+        case .midnightCocoa:
+            return NSColor(calibratedRed: 27 / 255, green: 20 / 255, blue: 17 / 255, alpha: 1)
         case .light:
             return NSColor.windowBackgroundColor
         case .sunrise:
@@ -135,6 +151,10 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
             return NSColor(calibratedRed: 245 / 255, green: 241 / 255, blue: 252 / 255, alpha: 1)
         case .citrus:
             return NSColor(calibratedRed: 248 / 255, green: 247 / 255, blue: 229 / 255, alpha: 1)
+        case .pearl:
+            return NSColor(calibratedRed: 244 / 255, green: 246 / 255, blue: 250 / 255, alpha: 1)
+        case .coral:
+            return NSColor(calibratedRed: 252 / 255, green: 239 / 255, blue: 234 / 255, alpha: 1)
         }
     }
 
@@ -156,6 +176,10 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
             return NSColor(calibratedRed: 44 / 255, green: 29 / 255, blue: 24 / 255, alpha: 1)
         case .midnightAmethyst:
             return NSColor(calibratedRed: 34 / 255, green: 27 / 255, blue: 50 / 255, alpha: 1)
+        case .midnightLagoon:
+            return NSColor(calibratedRed: 19 / 255, green: 35 / 255, blue: 37 / 255, alpha: 1)
+        case .midnightCocoa:
+            return NSColor(calibratedRed: 41 / 255, green: 31 / 255, blue: 26 / 255, alpha: 1)
         case .light:
             return NSColor.controlBackgroundColor
         case .sunrise:
@@ -172,6 +196,10 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
             return NSColor(calibratedRed: 250 / 255, green: 247 / 255, blue: 1, alpha: 1)
         case .citrus:
             return NSColor(calibratedRed: 1, green: 253 / 255, blue: 239 / 255, alpha: 1)
+        case .pearl:
+            return NSColor(calibratedRed: 1, green: 1, blue: 1, alpha: 1)
+        case .coral:
+            return NSColor(calibratedRed: 1, green: 245 / 255, blue: 241 / 255, alpha: 1)
         }
     }
 
@@ -193,6 +221,10 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
             return NSColor(calibratedRed: 35 / 255, green: 22 / 255, blue: 18 / 255, alpha: 1)
         case .midnightAmethyst:
             return NSColor(calibratedRed: 27 / 255, green: 22 / 255, blue: 40 / 255, alpha: 1)
+        case .midnightLagoon:
+            return NSColor(calibratedRed: 16 / 255, green: 30 / 255, blue: 32 / 255, alpha: 1)
+        case .midnightCocoa:
+            return NSColor(calibratedRed: 34 / 255, green: 25 / 255, blue: 21 / 255, alpha: 1)
         case .light:
             return NSColor(calibratedRed: 243 / 255, green: 245 / 255, blue: 248 / 255, alpha: 1)
         case .sunrise:
@@ -209,6 +241,10 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
             return NSColor(calibratedRed: 239 / 255, green: 233 / 255, blue: 249 / 255, alpha: 1)
         case .citrus:
             return NSColor(calibratedRed: 240 / 255, green: 246 / 255, blue: 218 / 255, alpha: 1)
+        case .pearl:
+            return NSColor(calibratedRed: 236 / 255, green: 240 / 255, blue: 246 / 255, alpha: 1)
+        case .coral:
+            return NSColor(calibratedRed: 247 / 255, green: 233 / 255, blue: 227 / 255, alpha: 1)
         }
     }
 
@@ -230,6 +266,10 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
             return NSColor(calibratedRed: 47 / 255, green: 30 / 255, blue: 24 / 255, alpha: 1)
         case .midnightAmethyst:
             return NSColor(calibratedRed: 40 / 255, green: 31 / 255, blue: 57 / 255, alpha: 1)
+        case .midnightLagoon:
+            return NSColor(calibratedRed: 24 / 255, green: 43 / 255, blue: 46 / 255, alpha: 1)
+        case .midnightCocoa:
+            return NSColor(calibratedRed: 47 / 255, green: 35 / 255, blue: 29 / 255, alpha: 1)
         case .light:
             return NSColor.white
         case .sunrise:
@@ -246,6 +286,10 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
             return NSColor(calibratedRed: 250 / 255, green: 247 / 255, blue: 1, alpha: 1)
         case .citrus:
             return NSColor(calibratedRed: 251 / 255, green: 1, blue: 244 / 255, alpha: 1)
+        case .pearl:
+            return NSColor(calibratedRed: 252 / 255, green: 253 / 255, blue: 1, alpha: 1)
+        case .coral:
+            return NSColor(calibratedRed: 1, green: 243 / 255, blue: 239 / 255, alpha: 1)
         }
     }
 
@@ -289,6 +333,10 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
             return [Color(red: 215 / 255, green: 117 / 255, blue: 55 / 255), Color(red: 76 / 255, green: 35 / 255, blue: 19 / 255)]
         case .midnightAmethyst:
             return [Color(red: 149 / 255, green: 110 / 255, blue: 1), Color(red: 67 / 255, green: 45 / 255, blue: 126 / 255)]
+        case .midnightLagoon:
+            return [Color(red: 54 / 255, green: 150 / 255, blue: 150 / 255), Color(red: 13 / 255, green: 54 / 255, blue: 58 / 255)]
+        case .midnightCocoa:
+            return [Color(red: 141 / 255, green: 101 / 255, blue: 77 / 255), Color(red: 52 / 255, green: 36 / 255, blue: 28 / 255)]
         case .light:
             return [Color.white, Color(red: 228 / 255, green: 232 / 255, blue: 238 / 255)]
         case .sunrise:
@@ -305,6 +353,10 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
             return [Color(red: 225 / 255, green: 206 / 255, blue: 1), Color(red: 239 / 255, green: 233 / 255, blue: 249 / 255)]
         case .citrus:
             return [Color(red: 211 / 255, green: 244 / 255, blue: 119 / 255), Color(red: 1, green: 236 / 255, blue: 154 / 255)]
+        case .pearl:
+            return [Color.white, Color(red: 217 / 255, green: 228 / 255, blue: 244 / 255)]
+        case .coral:
+            return [Color(red: 1, green: 214 / 255, blue: 199 / 255), Color(red: 1, green: 241 / 255, blue: 234 / 255)]
         }
     }
 }

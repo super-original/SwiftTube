@@ -20,6 +20,7 @@ struct SwiftTubeApp: App {
                     BrandAssets.installApplicationIcon()
                 }
         }
+        .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
 
         Settings {

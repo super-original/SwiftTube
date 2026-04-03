@@ -6,6 +6,7 @@ struct ContentView: View {
     @StateObject private var searchViewModel = SearchViewModel()
     @StateObject private var playlistLibraryViewModel = PlaylistLibraryViewModel()
     @ObservedObject private var settings = AppSettings.shared
+    @State private var isEditingSidebar = false
     @EnvironmentObject private var backend: BackendManager
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
@@ -13,7 +14,7 @@ struct ContentView: View {
     private let columns = [
         GridItem(.adaptive(minimum: 240), spacing: 20, alignment: .top)
     ]
-    private let searchChromeWidth: CGFloat = 560
+    private let searchChromeWidth: CGFloat = 500
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -23,21 +24,14 @@ struct ContentView: View {
                 NavigationSplitView {
                     sidebar
                 } detail: {
-                    currentScreen
+                    currentScreenContainer
                 }
                 .navigationSplitViewStyle(.balanced)
             } else {
-                currentScreen
+                currentScreenContainer
             }
         }
         .overlay(backendOverlay)
-        .overlay(alignment: .top) {
-            if shouldShowSearchAssist {
-                searchAssistOverlay
-                    .padding(.top, 12)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
         .sheet(isPresented: $authSession.isSheetPresented) {
             AuthConnectionSheet()
                 .environmentObject(authSession)
@@ -124,6 +118,19 @@ struct ContentView: View {
 }
 
 private extension ContentView {
+    @ViewBuilder
+    var currentScreenContainer: some View {
+        ZStack(alignment: .top) {
+            currentScreen
+
+            if shouldShowSearchAssist {
+                searchAssistOverlay
+                    .padding(.top, 12)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+    }
+
     var visibleSidebarItems: [SidebarItemKind] {
         settings.visibleSidebarItems(isAuthenticated: authSession.status.authenticated)
     }
@@ -199,16 +206,51 @@ private extension ContentView {
     }
 
     var sidebar: some View {
-        List(selection: Binding(
-            get: { Optional(navigation.selectedSidebarItem) },
-            set: { if let item = $0 { navigation.selectSidebarItem(item) } }
-        )) {
-            ForEach(visibleSidebarItems) { item in
-                Label(item.title, systemImage: item.systemImage)
-                    .tag(item)
+        List(selection: sidebarSelection) {
+            Section {
+                ForEach(sidebarListItems) { item in
+                    if isEditingSidebar {
+                        SidebarCustomizationRow(
+                            item: item,
+                            isVisible: settings.isSidebarItemVisible(item)
+                        ) { visible in
+                            settings.setSidebarItem(item, visible: visible)
+                        }
+                    } else {
+                        Label(item.title, systemImage: item.systemImage)
+                            .tag(item as SidebarItemKind?)
+                    }
+                }
+                .onMove(perform: isEditingSidebar ? settings.moveSidebarItems : nil)
+            } header: {
+                HStack {
+                    Text("Sidebar")
+                    Spacer()
+                    Button(isEditingSidebar ? "Done" : "Edit") {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            isEditingSidebar.toggle()
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .textCase(nil)
             }
         }
         .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
+    }
+
+    var sidebarSelection: Binding<SidebarItemKind?> {
+        Binding(
+            get: { isEditingSidebar ? nil : navigation.selectedSidebarItem },
+            set: { newValue in
+                guard !isEditingSidebar, let item = newValue else { return }
+                navigation.selectSidebarItem(item)
+            }
+        )
+    }
+
+    var sidebarListItems: [SidebarItemKind] {
+        isEditingSidebar ? settings.sidebarItemOrder : visibleSidebarItems
     }
 
     @ViewBuilder
@@ -486,6 +528,30 @@ private extension ContentView {
         )
         .frame(width: searchChromeWidth)
         .shadow(color: .black.opacity(0.22), radius: 20, y: 10)
+    }
+}
+
+private struct SidebarCustomizationRow: View {
+    let item: SidebarItemKind
+    let isVisible: Bool
+    let onVisibilityChanged: (Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Label(item.title, systemImage: item.systemImage)
+                .foregroundStyle(isVisible ? .primary : .secondary)
+
+            Spacer()
+
+            Button {
+                onVisibilityChanged(!isVisible)
+            } label: {
+                Image(systemName: isVisible ? "eye.fill" : "eye.slash.fill")
+                    .foregroundStyle(isVisible ? .secondary : Color.accentColor)
+            }
+            .buttonStyle(.borderless)
+        }
+        .opacity(isVisible ? 1 : 0.68)
     }
 }
 
