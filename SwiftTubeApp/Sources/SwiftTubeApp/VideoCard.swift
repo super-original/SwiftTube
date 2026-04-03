@@ -79,17 +79,14 @@ struct VideoChannelIdentityLine: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            CachedAsyncImage(url: avatarURL, maxPixelSize: Int(avatarSize * 3)) {
-                Circle()
-                    .fill(Color.gray.opacity(0.24))
-                    .overlay(
-                        Image(systemName: "person.fill")
-                            .font(.system(size: max(avatarSize * 0.5, 10)))
-                            .foregroundStyle(.secondary)
-                    )
+            if let avatarURL {
+                CachedAsyncImage(url: avatarURL, maxPixelSize: Int(avatarSize * 3)) {
+                    Circle()
+                        .fill(Color.gray.opacity(0.24))
+                }
+                .frame(width: avatarSize, height: avatarSize)
+                .clipShape(Circle())
             }
-            .frame(width: avatarSize, height: avatarSize)
-            .clipShape(Circle())
 
             Text(channel ?? "Unknown channel")
                 .font(font)

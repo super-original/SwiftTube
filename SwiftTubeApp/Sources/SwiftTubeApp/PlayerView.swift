@@ -1181,7 +1181,7 @@ private extension PlayerScreen {
                 .fontWeight(.semibold)
 
             if recommendations.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
+                LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(0..<4, id: \.self) { _ in
                         RoundedRectangle(cornerRadius: 14)
                             .fill(Color(NSColor.controlBackgroundColor).opacity(0.55))
@@ -1189,7 +1189,7 @@ private extension PlayerScreen {
                     }
                 }
             } else {
-                VStack(alignment: .leading, spacing: 8) {
+                LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(recommendations, id: \.id) { relatedVideo in
                         Button {
                             navigation.showVideo(relatedVideo)
