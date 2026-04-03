@@ -376,6 +376,7 @@ final class PlaylistFeedViewModel: ObservableObject {
     let playlist: PlaylistReference
     private var continuation: String? = nil
     private var hasLoadedInitial = false
+    private var isReordering = false
 
     init(playlist: PlaylistReference) {
         self.playlist = playlist
@@ -518,6 +519,41 @@ final class PlaylistFeedViewModel: ObservableObject {
         }
     }
 
+    func reorderItem(withID draggedID: String, toInsertionIndex insertionIndex: Int) -> Bool {
+        guard !isReordering,
+              let sourceIndex = items.firstIndex(where: { $0.id == draggedID }) else {
+            return false
+        }
+
+        let clampedIndex = max(0, min(insertionIndex, items.count))
+        let updated = reorderedItems(items, sourceIndex: sourceIndex, insertionIndex: clampedIndex)
+        guard updated != items else { return false }
+
+        let previousItems = items
+        items = updated
+        if let feed {
+            self.feed = feed.with(items: updated)
+        }
+
+        Task {
+            isReordering = true
+            defer { isReordering = false }
+
+            do {
+                try await syncPlaylistOrder(updated)
+                errorMessage = nil
+            } catch {
+                items = previousItems
+                if let feed {
+                    self.feed = feed.with(items: previousItems)
+                }
+                errorMessage = error.localizedDescription
+            }
+        }
+
+        return true
+    }
+
     private func move(_ video: VideoItem, in items: [VideoItem], toTop: Bool) -> [VideoItem] {
         guard let currentIndex = items.firstIndex(where: { $0.playlistSetVideoId == video.playlistSetVideoId }) else {
             return items
@@ -531,6 +567,27 @@ final class PlaylistFeedViewModel: ObservableObject {
             updated.append(item)
         }
         return updated
+    }
+
+    private func reorderedItems(_ items: [VideoItem], sourceIndex: Int, insertionIndex: Int) -> [VideoItem] {
+        guard items.indices.contains(sourceIndex) else { return items }
+
+        var updated = items
+        let moved = updated.remove(at: sourceIndex)
+        let targetIndex = sourceIndex < insertionIndex ? max(insertionIndex - 1, 0) : insertionIndex
+        updated.insert(moved, at: min(max(targetIndex, 0), updated.count))
+        return updated
+    }
+
+    private func syncPlaylistOrder(_ items: [VideoItem]) async throws {
+        for item in items.reversed() {
+            guard let setVideoId = item.playlistSetVideoId else { continue }
+            _ = try await BackendClient.shared.reorderPlaylistItem(
+                playlistId: playlist.playlistId,
+                setVideoId: setVideoId,
+                position: "top"
+            )
+        }
     }
 }
 

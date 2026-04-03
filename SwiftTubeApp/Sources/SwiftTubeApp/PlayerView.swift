@@ -882,8 +882,12 @@ private extension PlayerScreen {
                 .overlay(Color.white.opacity(0.06))
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 6) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(navigation.activePlaylistItems.enumerated()), id: \.element) { index, queueVideo in
+                        PlaylistQueueDropZone {
+                            moveQueueVideo(withID: $0, toInsertionIndex: index)
+                        }
+
                         Button {
                             navigation.showVideo(queueVideo)
                         } label: {
@@ -896,10 +900,6 @@ private extension PlayerScreen {
                         }
                         .buttonStyle(.plain)
                         .draggable(queueVideo.id)
-                        .dropDestination(for: String.self) { items, _ in
-                            guard let draggedID = items.first else { return false }
-                            return moveQueueVideo(withID: draggedID, before: queueVideo.id)
-                        }
                         .contextMenu {
                             VideoContextMenuContent(
                                 video: queueVideo,
@@ -939,6 +939,11 @@ private extension PlayerScreen {
                                 onMoveToBottom: queueVideo.playlistCanMoveToBottom ? { moveQueueVideo(queueVideo, position: "bottom") } : nil
                             )
                         }
+                        .padding(.bottom, 6)
+                    }
+
+                    PlaylistQueueDropZone {
+                        moveQueueVideo(withID: $0, toInsertionIndex: navigation.activePlaylistItems.count)
                     }
                 }
                 .padding(.trailing, 6)
@@ -1046,17 +1051,15 @@ private extension PlayerScreen {
         }
     }
 
-    func moveQueueVideo(withID draggedID: String, before targetID: String) -> Bool {
-        guard draggedID != targetID,
-              let playlistID = navigation.activePlaylistReference?.playlistId else { return false }
+    func moveQueueVideo(withID draggedID: String, toInsertionIndex insertionIndex: Int) -> Bool {
+        guard let playlistID = navigation.activePlaylistReference?.playlistId else { return false }
 
         let previousItems = navigation.activePlaylistItems
-        guard let sourceIndex = previousItems.firstIndex(where: { $0.id == draggedID }),
-              let targetIndex = previousItems.firstIndex(where: { $0.id == targetID }) else {
+        guard let sourceIndex = previousItems.firstIndex(where: { $0.id == draggedID }) else {
             return false
         }
 
-        let updated = reorderedQueue(previousItems, sourceIndex: sourceIndex, targetIndex: targetIndex)
+        let updated = reorderedQueue(previousItems, sourceIndex: sourceIndex, insertionIndex: insertionIndex)
         guard updated != previousItems else { return false }
 
         navigation.replaceActivePlaylistItems(updated)
@@ -1114,17 +1117,13 @@ private extension PlayerScreen {
         return updated
     }
 
-    func reorderedQueue(_ items: [VideoItem], sourceIndex: Int, targetIndex: Int) -> [VideoItem] {
-        guard items.indices.contains(sourceIndex),
-              items.indices.contains(targetIndex),
-              sourceIndex != targetIndex else {
-            return items
-        }
+    func reorderedQueue(_ items: [VideoItem], sourceIndex: Int, insertionIndex: Int) -> [VideoItem] {
+        guard items.indices.contains(sourceIndex) else { return items }
 
         var updated = items
         let moved = updated.remove(at: sourceIndex)
-        let insertIndex = sourceIndex < targetIndex ? max(targetIndex - 1, 0) : targetIndex
-        updated.insert(moved, at: insertIndex)
+        let targetIndex = sourceIndex < insertionIndex ? max(insertionIndex - 1, 0) : insertionIndex
+        updated.insert(moved, at: min(max(targetIndex, 0), updated.count))
         return updated
     }
 
@@ -2329,8 +2328,7 @@ private struct PlaylistQueueRailRow: View {
                 }
             }
             .foregroundStyle(isCurrent ? .blue : .secondary)
-            .frame(width: 18, alignment: .center)
-            .padding(.top, 18)
+            .frame(width: 18, height: 67.5, alignment: .center)
 
             ZStack(alignment: .bottomTrailing) {
                 CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 480) {
@@ -2384,6 +2382,26 @@ private struct PlaylistQueueRailRow: View {
         .onHover { hovering in
             isHovered = hovering
         }
+    }
+}
+
+private struct PlaylistQueueDropZone: View {
+    let onInsert: (String) -> Bool
+    @State private var isTargeted = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 999, style: .continuous)
+            .fill(isTargeted ? Color.blue.opacity(0.65) : .clear)
+            .frame(height: isTargeted ? 4 : 10)
+            .padding(.leading, 18)
+            .padding(.trailing, 10)
+            .animation(.easeOut(duration: 0.12), value: isTargeted)
+            .dropDestination(for: String.self) { items, _ in
+                guard let draggedID = items.first else { return false }
+                return onInsert(draggedID)
+            } isTargeted: { hovering in
+                isTargeted = hovering
+            }
     }
 }
 
