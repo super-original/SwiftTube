@@ -305,19 +305,81 @@ private struct ThemeSwatch: View {
 }
 
 private struct SidebarPane: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var draggedItem: SidebarItemKind?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Sidebar",
-                subtitle: "Use the native sidebar Edit button in the main window to reorder sections or hide the ones you don't need."
+                subtitle: "Drag items into the order you want, and toggle off the ones you don't need."
             )
 
-            SettingsCard(title: "Customize In Sidebar", icon: "sidebar.left") {
-                Text("Open the app sidebar, click Edit, then drag sections into the order you want or use the eye button to hide them.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+            SettingsCard(title: "Navigation Items", icon: "sidebar.left") {
+                VStack(spacing: 0) {
+                    ForEach(settings.sidebarItemOrder) { item in
+                        SidebarSettingsListRow(
+                            item: item,
+                            isVisible: settings.isSidebarItemVisible(item),
+                            isDraggingOver: draggedItem == item
+                        ) { visible in
+                            settings.setSidebarItem(item, visible: visible)
+                        }
+                        .draggable(item.rawValue) {
+                            Label(item.title, systemImage: item.systemImage)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        }
+                        .dropDestination(for: String.self) { items, _ in
+                            guard let rawValue = items.first,
+                                  let dragged = SidebarItemKind(rawValue: rawValue) else { return false }
+                            settings.reorderSidebarItem(dragged, before: item)
+                            return true
+                        } isTargeted: { targeted in
+                            draggedItem = targeted ? item : nil
+                        }
+
+                        if item != settings.sidebarItemOrder.last {
+                            Rectangle()
+                                .fill(settings.separatorColor)
+                                .frame(height: 1)
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+private struct SidebarSettingsListRow: View {
+    let item: SidebarItemKind
+    let isVisible: Bool
+    let isDraggingOver: Bool
+    let onVisibilityChanged: (Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "line.3.horizontal")
+                .foregroundStyle(.secondary)
+            Toggle(isOn: Binding(
+                get: { isVisible },
+                set: { newValue in
+                    onVisibilityChanged(newValue)
+                }
+            )) {
+                Label(item.title, systemImage: item.systemImage)
+                    .foregroundStyle(item == .home ? .primary : (isVisible ? .primary : .secondary))
+            }
+            .toggleStyle(.checkbox)
+            .disabled(item == .home)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(isDraggingOver ? Color.accentColor.opacity(0.12) : .clear)
+        )
     }
 }
 
