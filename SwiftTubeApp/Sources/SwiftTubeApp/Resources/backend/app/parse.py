@@ -206,13 +206,21 @@ def build_thumbnails(thumbnail_obj: Any) -> List[Thumbnail]:
     for item in items:
         if not isinstance(item, dict):
             continue
-        url = item.get("url")
+        url = _normalize_url(item.get("url"))
         if not url:
             continue
         thumbnails.append(
             Thumbnail(url=url, width=item.get("width"), height=item.get("height"))
         )
     return thumbnails
+
+
+def _normalize_url(url: Any) -> Optional[str]:
+    if not isinstance(url, str) or not url:
+        return None
+    if url.startswith("//"):
+        return f"https:{url}"
+    return url
 
 
 def build_source_thumbnails(source_obj: Any) -> List[Thumbnail]:
@@ -227,7 +235,7 @@ def build_source_thumbnails(source_obj: Any) -> List[Thumbnail]:
     for source in sources:
         if not isinstance(source, dict):
             continue
-        url = source.get("url")
+        url = _normalize_url(source.get("url"))
         if not url:
             continue
         thumbnails.append(
@@ -254,6 +262,28 @@ def _thumbnail_url_from_candidate(candidate: Any) -> Optional[str]:
         url = first_thumbnail_url(build_thumbnails(value))
         if url is not None:
             return url
+
+    return None
+
+
+def _channel_id_from_text(obj: Any) -> Optional[str]:
+    if not isinstance(obj, dict):
+        return None
+
+    runs = obj.get("runs")
+    if not isinstance(runs, list):
+        return None
+
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        browse_id = (
+            run.get("navigationEndpoint", {})
+            .get("browseEndpoint", {})
+            .get("browseId")
+        )
+        if isinstance(browse_id, str) and browse_id.startswith("UC"):
+            return browse_id
 
     return None
 
@@ -297,6 +327,43 @@ def _channel_avatar_url(obj: Any) -> Optional[str]:
     return None
 
 
+def _channel_id(obj: Any) -> Optional[str]:
+    if not isinstance(obj, dict):
+        return None
+
+    direct_id = obj.get("channelId")
+    if isinstance(direct_id, str) and direct_id:
+        return direct_id
+
+    for source in (
+        obj.get("ownerText"),
+        obj.get("shortBylineText"),
+        obj.get("longBylineText"),
+        obj.get("bylineText"),
+    ):
+        channel_id = _channel_id_from_text(source)
+        if channel_id is not None:
+            return channel_id
+
+    browse_id = (
+        obj.get("owner", {})
+        .get("videoOwnerRenderer", {})
+        .get("navigationEndpoint", {})
+        .get("browseEndpoint", {})
+        .get("browseId")
+    )
+    if isinstance(browse_id, str) and browse_id.startswith("UC"):
+        return browse_id
+
+    for value in obj.values():
+        if isinstance(value, (dict, list)):
+            channel_id = _channel_id(value)
+            if channel_id is not None:
+                return channel_id
+
+    return None
+
+
 def row_text_parts(row: Any) -> List[str]:
     if not isinstance(row, dict):
         return []
@@ -312,6 +379,12 @@ def row_text_parts(row: Any) -> List[str]:
         if text:
             results.append(text)
     return results
+
+
+def _split_metadata_text(text: Optional[str]) -> List[str]:
+    if not isinstance(text, str):
+        return []
+    return [part.strip() for part in re.split(r"\s*[·•]\s*", text) if part.strip()]
 
 
 def extract_lockup_duration(lockup: Any) -> Optional[str]:
@@ -401,6 +474,7 @@ def parse_lockup_video_item(lockup: Any) -> Optional[VideoItem]:
         id=video_id,
         title=title,
         channel=channel,
+        channelId=_channel_id(lockup),
         channelAvatarUrl=_channel_avatar_url(lockup),
         viewCountText=view_count,
         publishedTimeText=published,
@@ -493,6 +567,10 @@ def extract_video_items(data: Any, limit: int = 120) -> List[VideoItem]:
             renderer = node.get("videoRenderer")
         elif "gridVideoRenderer" in node:
             renderer = node.get("gridVideoRenderer")
+        elif "videoCardRenderer" in node:
+            renderer = node.get("videoCardRenderer")
+        elif "compactVideoRenderer" in node:
+            renderer = node.get("compactVideoRenderer")
         if not isinstance(renderer, dict):
             continue
         video_id = renderer.get("videoId")
@@ -512,6 +590,11 @@ def extract_video_items(data: Any, limit: int = 120) -> List[VideoItem]:
         )
         published = get_text(renderer.get("publishedTimeText"))
         duration = get_text(renderer.get("lengthText"))
+        metadata_parts = _split_metadata_text(get_text(renderer.get("metadataText")))
+        if view_count is None and metadata_parts:
+            view_count = metadata_parts[0]
+        if published is None and len(metadata_parts) > 1:
+            published = metadata_parts[1]
         thumbnails = build_thumbnails(renderer.get("thumbnail"))
 
         items.append(
@@ -519,6 +602,7 @@ def extract_video_items(data: Any, limit: int = 120) -> List[VideoItem]:
                 id=video_id,
                 title=title,
                 channel=channel,
+                channelId=_channel_id(renderer),
                 channelAvatarUrl=_channel_avatar_url(renderer),
                 viewCountText=view_count,
                 publishedTimeText=published,
@@ -798,6 +882,7 @@ def extract_related_videos(
                 id=video_id,
                 title=title,
                 channel=channel,
+                channelId=_channel_id(lockup),
                 channelAvatarUrl=_channel_avatar_url(lockup),
                 viewCountText=view_count,
                 publishedTimeText=published,
@@ -1013,6 +1098,10 @@ def extract_watch_metadata(data: Any) -> Dict[str, Optional[str]]:
     return metadata
 
 
+def extract_channel_avatar_url(data: Any) -> Optional[str]:
+    return _channel_avatar_url(data)
+
+
 def _menu_service_item_renderers(menu: Any) -> List[Dict[str, Any]]:
     if not isinstance(menu, dict):
         return []
@@ -1136,6 +1225,7 @@ def extract_playlist_feed(data: Any, playlist_id: str) -> PlaylistFeed:
                 id=video_id,
                 title=get_text(renderer.get("title")) or "Untitled",
                 channel=get_text(renderer.get("shortBylineText")) or get_text(renderer.get("longBylineText")),
+                channelId=_channel_id(renderer),
                 channelAvatarUrl=_channel_avatar_url(renderer),
                 viewCountText=get_text(renderer.get("videoInfo")),
                 publishedTimeText=get_text(renderer.get("publishedTimeText")),

@@ -15,6 +15,7 @@ from .auth import BrowserAuthManager
 from .models import (
     AuthStatusResponse,
     BrowserAuthRequest,
+    ChannelAvatarResponse,
     CommentsResponse,
     PlaylistFeed,
     PlaylistItemMutationRequest,
@@ -37,6 +38,7 @@ from .models import (
 )
 from .parse import (
     extract_browse_ids_from_guide,
+    extract_channel_avatar_url,
     extract_comments,
     extract_comments_token,
     extract_continuation_token,
@@ -80,6 +82,7 @@ public_client_player = InnerTube("WEB_PARENT_TOOLS")
 # Must be a distinct instance from public_client_web to allow concurrent calls.
 public_client_web_player = InnerTube("WEB")
 auth_manager = BrowserAuthManager()
+channel_avatar_cache: dict[str, Optional[str]] = {}
 
 
 def _build_clients(use_auth: bool) -> tuple[InnerTube, InnerTube, InnerTube]:
@@ -153,6 +156,21 @@ def _merge_streams(*stream_groups: list) -> list:
             merged.append(stream)
 
     return merged
+
+
+def _load_channel_avatar(channel_id: str) -> Optional[str]:
+    if channel_id in channel_avatar_cache:
+        return channel_avatar_cache[channel_id]
+
+    try:
+        browse_data = InnerTube("WEB").browse(browse_id=channel_id)
+    except RequestError:
+        channel_avatar_cache[channel_id] = None
+        return None
+
+    avatar_url = extract_channel_avatar_url(browse_data)
+    channel_avatar_cache[channel_id] = avatar_url
+    return avatar_url
 
 
 def _load_search_suggestions(query: str) -> list[str]:
@@ -295,6 +313,14 @@ def search_suggestions(
     return SearchSuggestionsResponse(
         query=q,
         suggestions=_load_search_suggestions(q),
+    )
+
+
+@app.get("/channel/{channel_id}/avatar", response_model=ChannelAvatarResponse)
+def channel_avatar(channel_id: str) -> ChannelAvatarResponse:
+    return ChannelAvatarResponse(
+        channelId=channel_id,
+        avatarUrl=_load_channel_avatar(channel_id),
     )
 
 

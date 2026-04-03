@@ -42,6 +42,7 @@ struct VideoCard: View {
 
             VideoChannelIdentityLine(
                 avatarURL: video.channelAvatarURL,
+                channelID: video.channelId,
                 channel: video.channel,
                 avatarSize: 22,
                 font: .system(size: 14, weight: .medium)
@@ -73,25 +74,56 @@ struct VideoCard: View {
 
 struct VideoChannelIdentityLine: View {
     let avatarURL: URL?
+    let channelID: String?
     let channel: String?
     let avatarSize: CGFloat
     let font: Font
 
     var body: some View {
         HStack(spacing: 8) {
-            if let avatarURL {
-                CachedAsyncImage(url: avatarURL, maxPixelSize: Int(avatarSize * 3)) {
-                    Circle()
-                        .fill(Color.gray.opacity(0.24))
-                }
-                .frame(width: avatarSize, height: avatarSize)
-                .clipShape(Circle())
-            }
+            ChannelAvatarView(
+                avatarURL: avatarURL,
+                channelID: channelID,
+                avatarSize: avatarSize
+            )
 
             Text(channel ?? "Unknown channel")
                 .font(font)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+        }
+    }
+}
+
+private struct ChannelAvatarView: View {
+    let avatarURL: URL?
+    let channelID: String?
+    let avatarSize: CGFloat
+
+    @StateObject private var loader = ChannelAvatarLoader()
+
+    private var taskKey: String {
+        "\(channelID ?? "none")|\(avatarURL?.absoluteString ?? "none")"
+    }
+
+    var body: some View {
+        CachedAsyncImage(
+            url: loader.resolvedURL ?? avatarURL,
+            maxPixelSize: Int(avatarSize * 3),
+            contentMode: .fill
+        ) {
+            Circle()
+                .fill(Color.gray.opacity(0.24))
+                .overlay(
+                    Image(systemName: "person.fill")
+                        .font(.system(size: avatarSize * 0.46, weight: .semibold))
+                        .foregroundStyle(.secondary.opacity(0.8))
+                )
+        }
+        .frame(width: avatarSize, height: avatarSize)
+        .clipShape(Circle())
+        .task(id: taskKey) {
+            loader.load(channelID: channelID, fallbackURL: avatarURL)
         }
     }
 }

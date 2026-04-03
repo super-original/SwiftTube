@@ -20,6 +20,7 @@ class VideoItem(BaseModel):
     id: str
     title: str
     channel: Optional[str] = None
+    channelId: Optional[str] = None
     channelAvatarUrl: Optional[str] = None
     viewCountText: Optional[str] = None
     publishedTimeText: Optional[str] = None
@@ -37,6 +38,11 @@ class RecommendationsResponse(BaseModel):
     items: List[VideoItem] = Field(default_factory=list)
     continuation: Optional[str] = None
     note: Optional[str] = None
+
+
+class ChannelAvatarResponse(BaseModel):
+    channelId: str
+    avatarUrl: Optional[str] = None
 
 
 class StreamInfo(BaseModel):

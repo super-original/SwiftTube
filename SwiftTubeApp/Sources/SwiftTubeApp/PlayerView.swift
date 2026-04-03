@@ -810,6 +810,7 @@ private extension PlayerScreen {
                     if viewModel.isLoadingComments {
                         ProgressView("Loading more comments...")
                             .padding(.top, 4)
+                            .frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -1240,6 +1241,7 @@ private extension PlayerScreen {
                     if viewModel.isLoadingRecommendations {
                         ProgressView("Loading more videos...")
                             .padding(.top, 4)
+                            .frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -2567,7 +2569,7 @@ private struct RecommendationRow: View {
                                 .foregroundStyle(.secondary)
                         )
                 }
-                .frame(width: 168, height: 94.5)
+                .frame(width: 160, height: 90)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
                 if let duration = video.durationText {
@@ -2584,13 +2586,14 @@ private struct RecommendationRow: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(video.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13.5, weight: .semibold))
                     .lineLimit(2)
 
                 VideoChannelIdentityLine(
                     avatarURL: video.channelAvatarURL,
+                    channelID: video.channelId,
                     channel: video.channel,
                     avatarSize: 20,
                     font: .system(size: 12.5, weight: .medium)
@@ -2605,7 +2608,7 @@ private struct RecommendationRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(isHovered ? settings.hoverCardBackgroundColor : .clear)

@@ -10,6 +10,7 @@ struct VideoItem: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let title: String
     let channel: String?
+    let channelId: String?
     let channelAvatarUrl: String?
     let viewCountText: String?
     let publishedTimeText: String?
@@ -37,6 +38,16 @@ struct RecommendationsResponse: Codable, Sendable {
     let items: [VideoItem]
     let continuation: String?
     let note: String?
+}
+
+struct ChannelAvatarResponse: Codable, Sendable {
+    let channelId: String
+    let avatarUrl: String?
+
+    var avatarURL: URL? {
+        guard let avatarUrl else { return nil }
+        return URL(string: avatarUrl)
+    }
 }
 
 struct SearchResponse: Codable, Sendable {

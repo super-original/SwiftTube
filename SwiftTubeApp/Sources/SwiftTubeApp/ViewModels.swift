@@ -1,5 +1,34 @@
 import Foundation
 
+private let paginationDuplicateHopLimit = 3
+
+private func appendUniqueItems<Item, ID: Hashable>(
+    existing: [Item],
+    incoming: [Item],
+    id: KeyPath<Item, ID>
+) -> (items: [Item], appendedCount: Int) {
+    var seen = Set(existing.map { $0[keyPath: id] })
+    var merged = existing
+    var appendedCount = 0
+
+    for item in incoming {
+        let itemID = item[keyPath: id]
+        if seen.insert(itemID).inserted {
+            merged.append(item)
+            appendedCount += 1
+        }
+    }
+
+    return (merged, appendedCount)
+}
+
+private func deduplicatedItems<Item, ID: Hashable>(
+    _ items: [Item],
+    id: KeyPath<Item, ID>
+) -> [Item] {
+    appendUniqueItems(existing: [], incoming: items, id: id).items
+}
+
 @MainActor
 final class HomeViewModel: ObservableObject {
     @Published private(set) var videos: [VideoItem] = []
@@ -38,10 +67,32 @@ final class HomeViewModel: ObservableObject {
         }
 
         do {
-            let response = try await BackendClient.shared.fetchRecommendations(continuation: continuation)
-            continuation = response.continuation
-            videos.append(contentsOf: response.items)
-            notice = response.note
+            var mergedVideos = reset ? [] : videos
+            var nextContinuation = continuation
+            var remainingDuplicatePages = paginationDuplicateHopLimit
+            var latestNote = notice
+
+            while true {
+                let response = try await BackendClient.shared.fetchRecommendations(continuation: nextContinuation)
+                let mergeResult = appendUniqueItems(existing: mergedVideos, incoming: response.items, id: \.id)
+                mergedVideos = mergeResult.items
+                latestNote = response.note
+
+                let shouldAdvance = mergeResult.appendedCount == 0
+                    && response.continuation != nil
+                    && response.continuation != nextContinuation
+                    && remainingDuplicatePages > 0
+                if !shouldAdvance {
+                    continuation = response.continuation
+                    videos = mergedVideos
+                    notice = latestNote
+                    break
+                }
+
+                nextContinuation = response.continuation
+                remainingDuplicatePages -= 1
+            }
+
             errorMessage = nil
         } catch {
             errorMessage = "Failed to load recommendations."
@@ -86,6 +137,7 @@ final class SearchViewModel: ObservableObject {
                 id: parsedLink.videoID,
                 title: "Loading...",
                 channel: nil,
+                channelId: nil,
                 channelAvatarUrl: nil,
                 viewCountText: nil,
                 publishedTimeText: nil,
@@ -198,12 +250,31 @@ final class SearchViewModel: ObservableObject {
         Task {
             defer { isSearching = false }
             do {
-                let response = try await BackendClient.shared.fetchSearch(
-                    query: searchQuery,
-                    continuation: reset ? nil : continuation
-                )
-                continuation = response.continuation
-                results.append(contentsOf: response.items)
+                var mergedResults = reset ? [] : results
+                var nextContinuation = reset ? nil : continuation
+                var remainingDuplicatePages = paginationDuplicateHopLimit
+
+                while true {
+                    let response = try await BackendClient.shared.fetchSearch(
+                        query: searchQuery,
+                        continuation: nextContinuation
+                    )
+                    let mergeResult = appendUniqueItems(existing: mergedResults, incoming: response.items, id: \.id)
+                    mergedResults = mergeResult.items
+
+                    let shouldAdvance = mergeResult.appendedCount == 0
+                        && response.continuation != nil
+                        && response.continuation != nextContinuation
+                        && remainingDuplicatePages > 0
+                    if !shouldAdvance {
+                        continuation = response.continuation
+                        results = mergedResults
+                        break
+                    }
+
+                    nextContinuation = response.continuation
+                    remainingDuplicatePages -= 1
+                }
             } catch {
                 errorMessage = "Search failed. Please try again."
             }
@@ -356,9 +427,29 @@ final class PlaylistLibraryViewModel: ObservableObject {
         }
 
         do {
-            let response = try await BackendClient.shared.fetchPlaylistLibrary(continuation: continuation)
-            continuation = response.continuation
-            playlists.append(contentsOf: response.items)
+            var mergedPlaylists = reset ? [] : playlists
+            var nextContinuation = continuation
+            var remainingDuplicatePages = paginationDuplicateHopLimit
+
+            while true {
+                let response = try await BackendClient.shared.fetchPlaylistLibrary(continuation: nextContinuation)
+                let mergeResult = appendUniqueItems(existing: mergedPlaylists, incoming: response.items, id: \.playlistId)
+                mergedPlaylists = mergeResult.items
+
+                let shouldAdvance = mergeResult.appendedCount == 0
+                    && response.continuation != nil
+                    && response.continuation != nextContinuation
+                    && remainingDuplicatePages > 0
+                if !shouldAdvance {
+                    continuation = response.continuation
+                    playlists = mergedPlaylists
+                    break
+                }
+
+                nextContinuation = response.continuation
+                remainingDuplicatePages -= 1
+            }
+
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -414,19 +505,40 @@ final class PlaylistFeedViewModel: ObservableObject {
         }
 
         do {
-            let response = try await BackendClient.shared.fetchPlaylistFeed(
-                id: playlist.playlistId,
-                continuation: continuation
-            )
-            let resolvedTitle = response.title == "Playlist"
-                ? (feed?.title ?? playlist.title)
-                : response.title
-            let resolvedFeed = response.with(title: resolvedTitle)
-            if reset || feed == nil {
-                feed = resolvedFeed
+            var mergedItems = reset ? [] : items
+            var nextContinuation = continuation
+            var remainingDuplicatePages = paginationDuplicateHopLimit
+
+            while true {
+                let response = try await BackendClient.shared.fetchPlaylistFeed(
+                    id: playlist.playlistId,
+                    continuation: nextContinuation
+                )
+                let resolvedTitle = response.title == "Playlist"
+                    ? (feed?.title ?? playlist.title)
+                    : response.title
+                let resolvedFeed = response.with(title: resolvedTitle)
+                if reset || feed == nil {
+                    feed = resolvedFeed
+                }
+
+                let mergeResult = appendUniqueItems(existing: mergedItems, incoming: response.items, id: \.id)
+                mergedItems = mergeResult.items
+
+                let shouldAdvance = mergeResult.appendedCount == 0
+                    && response.continuation != nil
+                    && response.continuation != nextContinuation
+                    && remainingDuplicatePages > 0
+                if !shouldAdvance {
+                    continuation = response.continuation
+                    items = mergedItems
+                    break
+                }
+
+                nextContinuation = response.continuation
+                remainingDuplicatePages -= 1
             }
-            continuation = response.continuation
-            items.append(contentsOf: response.items)
+
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -655,7 +767,7 @@ final class PlayerViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             self.playback = playback
             self.comments = []
-            self.recommendations = playback.recommendations
+            self.recommendations = deduplicatedItems(playback.recommendations, id: \.id)
             self.commentCountText = playback.commentCountText
             self.isLoadingComments = false
             self.recommendationsContinuation = playback.recommendationsContinuation
@@ -689,7 +801,7 @@ final class PlayerViewModel: ObservableObject {
         do {
             let response = try await BackendClient.shared.fetchComments(id: video.id)
             guard !Task.isCancelled else { return }
-            comments = response.comments
+            comments = deduplicatedItems(response.comments, id: \.id)
             commentCountText = response.commentCountText ?? commentCountText
             commentsContinuation = response.continuation
         } catch {
@@ -714,16 +826,36 @@ final class PlayerViewModel: ObservableObject {
         defer { isLoadingComments = false }
 
         do {
-            let response = try await BackendClient.shared.fetchComments(
-                id: video.id,
-                continuation: commentsContinuation
-            )
-            guard !Task.isCancelled else { return }
-            comments.append(contentsOf: response.comments)
-            if let count = response.commentCountText {
-                commentCountText = count
+            var mergedComments = comments
+            var nextContinuation: String? = commentsContinuation
+            var remainingDuplicatePages = paginationDuplicateHopLimit
+
+            while true {
+                let response = try await BackendClient.shared.fetchComments(
+                    id: video.id,
+                    continuation: nextContinuation
+                )
+                guard !Task.isCancelled else { return }
+
+                let mergeResult = appendUniqueItems(existing: mergedComments, incoming: response.comments, id: \.id)
+                mergedComments = mergeResult.items
+                if let count = response.commentCountText {
+                    commentCountText = count
+                }
+
+                let shouldAdvance = mergeResult.appendedCount == 0
+                    && response.continuation != nil
+                    && response.continuation != nextContinuation
+                    && remainingDuplicatePages > 0
+                if !shouldAdvance {
+                    comments = mergedComments
+                    self.commentsContinuation = response.continuation
+                    break
+                }
+
+                nextContinuation = response.continuation
+                remainingDuplicatePages -= 1
             }
-            self.commentsContinuation = response.continuation
         } catch {
             guard !Task.isCancelled else { return }
         }
@@ -746,14 +878,33 @@ final class PlayerViewModel: ObservableObject {
         defer { isLoadingRecommendations = false }
 
         do {
-            let response = try await BackendClient.shared.fetchRelatedVideos(
-                id: video.id,
-                continuation: recommendationsContinuation
-            )
-            guard !Task.isCancelled else { return }
-            let seen = Set(recommendations.map(\.id))
-            recommendations.append(contentsOf: response.items.filter { !seen.contains($0.id) })
-            self.recommendationsContinuation = response.continuation
+            var mergedRecommendations = recommendations
+            var nextContinuation: String? = recommendationsContinuation
+            var remainingDuplicatePages = paginationDuplicateHopLimit
+
+            while true {
+                let response = try await BackendClient.shared.fetchRelatedVideos(
+                    id: video.id,
+                    continuation: nextContinuation
+                )
+                guard !Task.isCancelled else { return }
+
+                let mergeResult = appendUniqueItems(existing: mergedRecommendations, incoming: response.items, id: \.id)
+                mergedRecommendations = mergeResult.items
+
+                let shouldAdvance = mergeResult.appendedCount == 0
+                    && response.continuation != nil
+                    && response.continuation != nextContinuation
+                    && remainingDuplicatePages > 0
+                if !shouldAdvance {
+                    recommendations = mergedRecommendations
+                    self.recommendationsContinuation = response.continuation
+                    break
+                }
+
+                nextContinuation = response.continuation
+                remainingDuplicatePages -= 1
+            }
         } catch {
             guard !Task.isCancelled else { return }
         }

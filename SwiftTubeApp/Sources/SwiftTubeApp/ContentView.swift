@@ -286,6 +286,7 @@ private extension ContentView {
             if viewModel.isLoading {
                 ProgressView("Loading more...")
                     .padding(.top, 16)
+                    .frame(maxWidth: .infinity)
             }
         }
     }
@@ -369,6 +370,7 @@ private extension ContentView {
             if searchViewModel.isSearching {
                 ProgressView("Loading more...")
                     .padding(.top, 16)
+                    .frame(maxWidth: .infinity)
             }
         }
     }
@@ -569,6 +571,7 @@ private struct PlaylistLibraryScreen: View {
             if viewModel.isLoading {
                 ProgressView("Loading more...")
                     .padding(.top, 16)
+                    .frame(maxWidth: .infinity)
             }
         }
     }
@@ -833,6 +836,7 @@ private struct PlaylistFeedScreen: View {
                     if viewModel.isLoading {
                         ProgressView("Loading more...")
                             .padding(.top, 8)
+                            .frame(maxWidth: .infinity)
                     }
                 }
             }

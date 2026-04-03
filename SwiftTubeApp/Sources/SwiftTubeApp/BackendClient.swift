@@ -18,6 +18,13 @@ final class BackendClient {
         return try await performRequest(url: url)
     }
 
+    func fetchChannelAvatar(channelID: String) async throws -> ChannelAvatarResponse {
+        let url = baseURL.appendingPathComponent("channel/")
+            .appendingPathComponent(channelID)
+            .appendingPathComponent("avatar")
+        return try await performRequest(url: url)
+    }
+
     func fetchSearch(query: String, continuation: String? = nil) async throws -> SearchResponse {
         var components = URLComponents(url: baseURL.appendingPathComponent("search"), resolvingAgainstBaseURL: false)
         var queryItems = [URLQueryItem(name: "q", value: query)]
