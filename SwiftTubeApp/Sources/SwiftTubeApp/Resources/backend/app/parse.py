@@ -242,6 +242,61 @@ def first_thumbnail_url(thumbnails: List[Thumbnail]) -> Optional[str]:
     return thumbnails[0].url
 
 
+def _thumbnail_url_from_candidate(candidate: Any) -> Optional[str]:
+    if not isinstance(candidate, dict):
+        return None
+
+    for value in (
+        candidate,
+        candidate.get("thumbnail"),
+        candidate.get("image"),
+    ):
+        url = first_thumbnail_url(build_thumbnails(value))
+        if url is not None:
+            return url
+
+    return None
+
+
+def _channel_avatar_url(obj: Any) -> Optional[str]:
+    if not isinstance(obj, dict):
+        return None
+
+    direct_candidates = [
+        obj.get("channelThumbnail"),
+        obj.get("avatar"),
+        obj.get("ownerThumbnail"),
+        obj.get("channelThumbnailSupportedRenderers", {})
+        .get("channelThumbnailWithLinkRenderer", {}),
+        obj.get("channelThumbnailSupportedRenderers", {})
+        .get("channelThumbnailRenderer", {}),
+        obj.get("owner", {}).get("videoOwnerRenderer", {}),
+    ]
+
+    for candidate in direct_candidates:
+        url = _thumbnail_url_from_candidate(candidate)
+        if url is not None:
+            return url
+
+    for key, value in obj.items():
+        if key in {
+            "channelThumbnail",
+            "avatar",
+            "ownerThumbnail",
+            "channelThumbnailSupportedRenderers",
+            "videoOwnerRenderer",
+        }:
+            url = _thumbnail_url_from_candidate(value)
+            if url is not None:
+                return url
+        if isinstance(value, (dict, list)):
+            url = _channel_avatar_url(value)
+            if url is not None:
+                return url
+
+    return None
+
+
 def row_text_parts(row: Any) -> List[str]:
     if not isinstance(row, dict):
         return []
@@ -346,6 +401,7 @@ def parse_lockup_video_item(lockup: Any) -> Optional[VideoItem]:
         id=video_id,
         title=title,
         channel=channel,
+        channelAvatarUrl=_channel_avatar_url(lockup),
         viewCountText=view_count,
         publishedTimeText=published,
         durationText=extract_lockup_duration(lockup),
@@ -463,6 +519,7 @@ def extract_video_items(data: Any, limit: int = 120) -> List[VideoItem]:
                 id=video_id,
                 title=title,
                 channel=channel,
+                channelAvatarUrl=_channel_avatar_url(renderer),
                 viewCountText=view_count,
                 publishedTimeText=published,
                 durationText=duration,
@@ -741,6 +798,7 @@ def extract_related_videos(
                 id=video_id,
                 title=title,
                 channel=channel,
+                channelAvatarUrl=_channel_avatar_url(lockup),
                 viewCountText=view_count,
                 publishedTimeText=published,
                 durationText=duration,
@@ -1078,6 +1136,7 @@ def extract_playlist_feed(data: Any, playlist_id: str) -> PlaylistFeed:
                 id=video_id,
                 title=get_text(renderer.get("title")) or "Untitled",
                 channel=get_text(renderer.get("shortBylineText")) or get_text(renderer.get("longBylineText")),
+                channelAvatarUrl=_channel_avatar_url(renderer),
                 viewCountText=get_text(renderer.get("videoInfo")),
                 publishedTimeText=get_text(renderer.get("publishedTimeText")),
                 durationText=get_text(renderer.get("lengthText")),

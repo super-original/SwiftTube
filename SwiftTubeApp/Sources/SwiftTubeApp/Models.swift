@@ -10,6 +10,7 @@ struct VideoItem: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let title: String
     let channel: String?
+    let channelAvatarUrl: String?
     let viewCountText: String?
     let publishedTimeText: String?
     let durationText: String?
@@ -24,6 +25,11 @@ struct VideoItem: Codable, Identifiable, Hashable, Sendable {
     var thumbnailURL: URL? {
         guard let urlString = thumbnails.last?.url else { return nil }
         return URL(string: urlString)
+    }
+
+    var channelAvatarURL: URL? {
+        guard let channelAvatarUrl else { return nil }
+        return URL(string: channelAvatarUrl)
     }
 }
 

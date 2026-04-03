@@ -1181,15 +1181,15 @@ private extension PlayerScreen {
                 .fontWeight(.semibold)
 
             if recommendations.isEmpty {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(0..<4, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 18)
-                            .fill(Color(NSColor.controlBackgroundColor))
-                            .frame(height: 108)
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color(NSColor.controlBackgroundColor).opacity(0.55))
+                            .frame(height: 92)
                     }
                 }
             } else {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(recommendations, id: \.id) { relatedVideo in
                         Button {
                             navigation.showVideo(relatedVideo)
@@ -2551,19 +2551,14 @@ private struct CommentRow: View {
 }
 
 private struct RecommendationRow: View {
+    @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
     @State private var isHovered = false
-
-    private var statsLine: String {
-        let parts = [video.channel, video.viewCountText, video.publishedTimeText]
-            .compactMap { $0 }
-        return parts.joined(separator: " • ")
-    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 320) {
+                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 256) {
                     RoundedRectangle(cornerRadius: 16)
                         .fill(Color.gray.opacity(0.2))
                         .overlay(
@@ -2572,9 +2567,8 @@ private struct RecommendationRow: View {
                                 .foregroundStyle(.secondary)
                         )
                 }
-                .frame(width: 210)
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .frame(width: 168, height: 94.5)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
 
                 if let duration = video.durationText {
                     Text(duration)
@@ -2590,28 +2584,35 @@ private struct RecommendationRow: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 Text(video.title)
-                    .font(.headline)
+                    .font(.system(size: 14, weight: .semibold))
                     .lineLimit(2)
-                if !statsLine.isEmpty {
-                    Text(statsLine)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(3)
-                }
+
+                VideoChannelIdentityLine(
+                    avatarURL: video.channelAvatarURL,
+                    channel: video.channel,
+                    avatarSize: 20,
+                    font: .system(size: 12.5, weight: .medium)
+                )
+
+                VideoStatsMetadataLine(
+                    viewCountText: video.viewCountText,
+                    publishedTimeText: video.publishedTimeText,
+                    font: .system(size: 12.5, weight: .medium)
+                )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(12)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(AppSettings.shared.cardBackgroundColor)
+            RoundedRectangle(cornerRadius: 14)
+                .fill(isHovered ? settings.hoverCardBackgroundColor : .clear)
         )
-        .contentShape(Rectangle())
-        .scaleEffect(isHovered ? 1.01 : 1)
-        .offset(y: isHovered ? -1 : 0)
-        .shadow(color: .black.opacity(isHovered ? 0.16 : 0), radius: 14, y: 8)
+        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .scaleEffect(isHovered ? 1.006 : 1)
+        .offset(y: isHovered ? -0.5 : 0)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.14)) {
                 isHovered = hovering

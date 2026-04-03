@@ -20,6 +20,7 @@ class VideoItem(BaseModel):
     id: str
     title: str
     channel: Optional[str] = None
+    channelAvatarUrl: Optional[str] = None
     viewCountText: Optional[str] = None
     publishedTimeText: Optional[str] = None
     durationText: Optional[str] = None

@@ -86,6 +86,7 @@ final class SearchViewModel: ObservableObject {
                 id: parsedLink.videoID,
                 title: "Loading...",
                 channel: nil,
+                channelAvatarUrl: nil,
                 viewCountText: nil,
                 publishedTimeText: nil,
                 durationText: nil,

@@ -6,9 +6,9 @@ struct VideoCard: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 640) {
+                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 480) {
                     ZStack {
                         Rectangle()
                             .fill(Color.gray.opacity(0.2))
@@ -40,25 +40,18 @@ struct VideoCard: View {
                 .lineLimit(2)
                 .foregroundStyle(.primary)
 
-            if let channel = video.channel {
-                Text(channel)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
+            VideoChannelIdentityLine(
+                avatarURL: video.channelAvatarURL,
+                channel: video.channel,
+                avatarSize: 22,
+                font: .system(size: 14, weight: .medium)
+            )
 
-            HStack(spacing: 6) {
-                if let viewCount = video.viewCountText {
-                    Text(viewCount)
-                }
-                if let published = video.publishedTimeText {
-                    if video.viewCountText != nil {
-                        Text("•")
-                    }
-                    Text(published)
-                }
-            }
-            .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(.secondary)
+            VideoStatsMetadataLine(
+                viewCountText: video.viewCountText,
+                publishedTimeText: video.publishedTimeText,
+                font: .system(size: 14, weight: .medium)
+            )
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -75,5 +68,58 @@ struct VideoCard: View {
                 isHovered = hovering
             }
         }
+    }
+}
+
+struct VideoChannelIdentityLine: View {
+    let avatarURL: URL?
+    let channel: String?
+    let avatarSize: CGFloat
+    let font: Font
+
+    var body: some View {
+        HStack(spacing: 8) {
+            CachedAsyncImage(url: avatarURL, maxPixelSize: Int(avatarSize * 3)) {
+                Circle()
+                    .fill(Color.gray.opacity(0.24))
+                    .overlay(
+                        Image(systemName: "person.fill")
+                            .font(.system(size: max(avatarSize * 0.5, 10)))
+                            .foregroundStyle(.secondary)
+                    )
+            }
+            .frame(width: avatarSize, height: avatarSize)
+            .clipShape(Circle())
+
+            Text(channel ?? "Unknown channel")
+                .font(font)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+}
+
+struct VideoStatsMetadataLine: View {
+    let viewCountText: String?
+    let publishedTimeText: String?
+    let font: Font
+
+    var body: some View {
+        let parts = [viewCountText, publishedTimeText].compactMap { value -> String? in
+            guard let value, value.isEmpty == false else { return nil }
+            return value
+        }
+
+        HStack(spacing: 6) {
+            ForEach(Array(parts.enumerated()), id: \.offset) { index, value in
+                if index > 0 {
+                    Text("•")
+                }
+                Text(value)
+                    .lineLimit(1)
+            }
+        }
+        .font(font)
+        .foregroundStyle(.secondary)
     }
 }
