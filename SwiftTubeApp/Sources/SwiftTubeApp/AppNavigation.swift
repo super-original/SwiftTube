@@ -2,6 +2,7 @@ import Foundation
 
 enum SidebarItemKind: String, CaseIterable, Identifiable, Codable {
     case home
+    case history
     case playlists
     case watchLater
     case likedVideos
@@ -11,6 +12,7 @@ enum SidebarItemKind: String, CaseIterable, Identifiable, Codable {
     var title: String {
         switch self {
         case .home: return "Home"
+        case .history: return "History"
         case .playlists: return "Playlists"
         case .watchLater: return "Watch Later"
         case .likedVideos: return "Liked Videos"
@@ -20,6 +22,7 @@ enum SidebarItemKind: String, CaseIterable, Identifiable, Codable {
     var systemImage: String {
         switch self {
         case .home: return "house"
+        case .history: return "clock.arrow.trianglehead.counterclockwise.rotate.90"
         case .playlists: return "music.note.list"
         case .watchLater: return "clock"
         case .likedVideos: return "hand.thumbsup"
@@ -55,6 +58,7 @@ struct PlaylistReference: Equatable, Hashable, Identifiable, Sendable {
 
 enum AppRoute: Equatable {
     case home
+    case watchHistory
     case playlistLibrary
     case playlistFeed(PlaylistReference)
     case video(VideoItem)
@@ -96,6 +100,11 @@ final class AppNavigationModel: ObservableObject {
         navigate(to: .home)
     }
 
+    func showWatchHistory() {
+        selectedSidebarItem = .history
+        navigate(to: .watchHistory)
+    }
+
     func showPlaylistLibrary() {
         selectedSidebarItem = .playlists
         navigate(to: .playlistLibrary)
@@ -127,8 +136,9 @@ final class AppNavigationModel: ObservableObject {
         startTime: Double? = nil,
         playlistContext: (reference: PlaylistReference, feed: PlaylistFeed)? = nil
     ) {
-        pendingVideoStartVideoID = startTime != nil ? video.id : nil
-        pendingVideoStartTime = startTime
+        let resolvedStartTime = startTime ?? video.progress?.bestResumeSeconds
+        pendingVideoStartVideoID = resolvedStartTime != nil ? video.id : nil
+        pendingVideoStartTime = resolvedStartTime
         if let playlistContext {
             activatePlaylistSession(
                 reference: playlistContext.reference,
@@ -259,6 +269,8 @@ final class AppNavigationModel: ObservableObject {
         switch item {
         case .home:
             showHome()
+        case .history:
+            showWatchHistory()
         case .playlists:
             showPlaylistLibrary()
         case .watchLater:
@@ -283,6 +295,8 @@ final class AppNavigationModel: ObservableObject {
         }
 
         if case .playlistLibrary = currentRoute, !visibleItems.contains(.playlists) {
+            selectSidebarItem(visibleItems[0])
+        } else if case .watchHistory = currentRoute, !visibleItems.contains(.history) {
             selectSidebarItem(visibleItems[0])
         } else if case .playlistFeed(let playlist) = currentRoute {
             switch playlist.kind {
@@ -328,6 +342,8 @@ final class AppNavigationModel: ObservableObject {
         switch route {
         case .home:
             selectedSidebarItem = .home
+        case .watchHistory:
+            selectedSidebarItem = .history
         case .playlistLibrary:
             selectedSidebarItem = .playlists
         case .playlistFeed(let playlist):

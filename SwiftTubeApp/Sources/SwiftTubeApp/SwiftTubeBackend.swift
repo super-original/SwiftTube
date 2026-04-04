@@ -1,12 +1,29 @@
 import Foundation
 
+private struct WatchTrackingSnapshot: Sendable {
+    let playbackURL: URL?
+    let watchtimeURL: URL?
+    let durationSeconds: Double?
+}
+
+private struct ActiveWatchSyncSession: Sendable {
+    let videoID: String
+    let cpn: String
+    let tracking: WatchTrackingSnapshot
+    var lastWatchtimeSecond: Double
+    var sentInitialPlayback = false
+}
+
 actor SwiftTubeBackend {
     static let shared = SwiftTubeBackend()
 
     private let authManager = YouTubeAuthManager()
+    private let watchHistoryStore = WatchHistoryStore()
     private lazy var api = YouTubeAPI(authManager: authManager)
     private var channelAvatarCache: [String: String?] = [:]
     private var playbackCache: [String: YTDLPPlaybackData] = [:]
+    private var trackingCache: [String: WatchTrackingSnapshot] = [:]
+    private var activeWatchSyncSessions: [String: ActiveWatchSyncSession] = [:]
 
     func start() async throws {
         // The in-process backend has no bootstrap work; auth validation happens on demand.
@@ -89,6 +106,7 @@ actor SwiftTubeBackend {
             }
         }
 
+        items = await mergeStoredProgress(into: items)
         return RecommendationsResponse(items: items, continuation: token, note: note)
     }
 
@@ -108,9 +126,23 @@ actor SwiftTubeBackend {
         }
 
         return SearchResponse(
-            items: extractVideoItems(from: data),
+            items: await mergeStoredProgress(into: extractVideoItems(from: data)),
             continuation: extractContinuationToken(from: data),
             query: query
+        )
+    }
+
+    func fetchWatchHistory(continuation: String? = nil) async throws -> WatchHistoryResponse {
+        _ = try await requireAuthenticatedMaterial()
+        let data = try await api.browse(
+            browseID: continuation == nil ? "FEhistory" : nil,
+            continuation: continuation,
+            authenticated: true
+        )
+
+        return WatchHistoryResponse(
+            items: await mergeStoredProgress(into: extractHistoryItems(from: data)),
+            continuation: extractContinuationToken(from: data)
         )
     }
 
@@ -141,6 +173,31 @@ actor SwiftTubeBackend {
         }
 
         return try await buildVideoPlayback(videoID: videoID, authenticated: false)
+    }
+
+    func recordPlaybackProgress(
+        videoID: String,
+        currentTime: Double,
+        duration: Double?,
+        didFinish: Bool
+    ) async throws -> PlaybackProgressMutationResponse {
+        let progress = await watchHistoryStore.recordProgress(
+            videoID: videoID,
+            currentTime: currentTime,
+            duration: duration,
+            didFinish: didFinish
+        )
+
+        if await authManager.currentMaterial() != nil {
+            await syncYouTubeWatchProgress(
+                videoID: videoID,
+                currentTime: currentTime,
+                duration: duration,
+                didFinish: didFinish
+            )
+        }
+
+        return PlaybackProgressMutationResponse(progress: progress)
     }
 
     func fetchComments(id videoID: String, continuation: String? = nil) async throws -> CommentsResponse {
@@ -204,7 +261,7 @@ actor SwiftTubeBackend {
             continuation: continuation,
             authenticated: true
         )
-        return extractPlaylistFeed(from: data, playlistID: playlistID.removingPrefix("VL"))
+        return await mergeStoredProgress(into: extractPlaylistFeed(from: data, playlistID: playlistID.removingPrefix("VL")))
     }
 
     func fetchRelatedVideos(id videoID: String, continuation: String? = nil) async throws -> RecommendationsResponse {
@@ -398,7 +455,7 @@ actor SwiftTubeBackend {
         }
 
         return RecommendationsResponse(
-            items: extractRelatedVideos(from: data, currentVideoID: videoID),
+            items: await mergeStoredProgress(into: extractRelatedVideos(from: data, currentVideoID: videoID)),
             continuation: extractRelatedContinuationToken(from: data),
             note: nil
         )
@@ -409,6 +466,9 @@ actor SwiftTubeBackend {
         async let playerTask = api.player(videoID: videoID, profile: .webParentTools, authenticated: authenticated)
         async let webPlayerTask = api.player(videoID: videoID, profile: .web, authenticated: authenticated)
         async let mwebPlayerTask = api.player(videoID: videoID, profile: .mweb, authenticated: authenticated)
+        let watchPageTask = authenticated
+            ? Task<String?, Never> { try? await self.api.watchPage(videoID: videoID, authenticated: true) }
+            : nil
         let publicYTDLPTask = Task<YTDLPPlaybackData?, Error> {
             try await self.cachedYTDLPPlayback(videoID: videoID, cookieFileURL: nil, cacheScope: "public")
         }
@@ -479,6 +539,17 @@ actor SwiftTubeBackend {
         let details = playerData["videoDetails"] as? JSONDictionary
         let title: String? = metadata["title"] ?? preferredYTDLPPlayback?.title ?? (details?["title"] as? String)
         let duration = metadata["durationText"] ?? preferredYTDLPPlayback?.durationText ?? metadataDurationText(from: details)
+        let durationSeconds = parseDurationSeconds(from: duration)
+        let tracking = extractWatchTracking(from: await watchPageTask?.value, fallbackDuration: durationSeconds)
+        if let tracking {
+            trackingCache[videoID] = tracking
+        }
+        let progress = mergeVideoProgress(
+            remote: nil,
+            local: await watchHistoryStore.progressEntry(for: videoID),
+            durationSeconds: durationSeconds
+        )
+        let relatedItems = await mergeStoredProgress(into: extractRelatedVideos(from: watchData, currentVideoID: videoID))
 
         return VideoPlayback(
             id: videoID,
@@ -495,7 +566,7 @@ actor SwiftTubeBackend {
             description: metadata["description"] ?? nil,
             commentCountText: metadata["commentCountText"] ?? nil,
             streams: resolvedStreams,
-            recommendations: extractRelatedVideos(from: watchData, currentVideoID: videoID),
+            recommendations: relatedItems,
             comments: [],
             playbackStrategy: playbackBundle.playbackStrategy,
             preferredManifestStream: playbackBundle.preferredManifestStream,
@@ -506,6 +577,8 @@ actor SwiftTubeBackend {
             bestStream: playbackBundle.bestStream ?? bestStream,
             subtitles: deduplicatedSubtitles(playbackBundle.subtitles),
             storyboard: extractStoryboard(from: webPlayerData.isEmpty ? playerData : webPlayerData) ?? extractStoryboard(from: playerData),
+            progress: progress,
+            resumeStartTimeSeconds: progress?.bestResumeSeconds,
             subscription: extractSubscriptionState(from: watchData, metadata: metadata),
             rating: extractRatingState(from: watchData),
             watchLater: findPlaylistOption(in: playlistOptions, playlistID: "WL"),
@@ -552,6 +625,82 @@ actor SwiftTubeBackend {
             return try await api.browse(continuation: continuation, authenticated: authenticated)
         }
         return try await api.browse(browseID: "FEwhat_to_watch", authenticated: authenticated)
+    }
+
+    private func mergeStoredProgress(into items: [VideoItem]) async -> [VideoItem] {
+        guard !items.isEmpty else { return items }
+
+        let localProgress = await watchHistoryStore.progressEntries(for: items.map(\.id))
+        return items.map { item in
+            var updated = item
+            let durationSeconds = parseDurationSeconds(from: item.durationText) ?? item.progress?.durationSeconds
+            updated.progress = mergeVideoProgress(
+                remote: item.progress,
+                local: localProgress[item.id],
+                durationSeconds: durationSeconds
+            )
+            return updated
+        }
+    }
+
+    private func mergeStoredProgress(into feed: PlaylistFeed) async -> PlaylistFeed {
+        feed.with(items: await mergeStoredProgress(into: feed.items))
+    }
+
+    private func syncYouTubeWatchProgress(
+        videoID: String,
+        currentTime: Double,
+        duration: Double?,
+        didFinish: Bool
+    ) async {
+        guard let tracking = trackingCache[videoID] else { return }
+
+        var session = activeWatchSyncSessions[videoID] ?? ActiveWatchSyncSession(
+            videoID: videoID,
+            cpn: randomPlaybackNonce(),
+            tracking: tracking,
+            lastWatchtimeSecond: 0
+        )
+
+        let durationSeconds = duration ?? tracking.durationSeconds
+        let normalizedCurrentTime: Double
+        if let durationSeconds, durationSeconds > 0 {
+            normalizedCurrentTime = min(max(currentTime, 0), durationSeconds)
+        } else {
+            normalizedCurrentTime = max(currentTime, 0)
+        }
+
+        if !session.sentInitialPlayback, normalizedCurrentTime >= 1 {
+            if let playbackURL = trackedURL(
+                from: tracking.playbackURL,
+                cpn: session.cpn,
+                currentTime: normalizedCurrentTime,
+                startTime: nil,
+                endTime: nil
+            ) {
+                try? await api.sendTrackingEvent(url: playbackURL, videoID: videoID, authenticated: true)
+                session.sentInitialPlayback = true
+            }
+        }
+
+        let shouldFlush = didFinish || normalizedCurrentTime - session.lastWatchtimeSecond >= 10
+        if shouldFlush,
+           let watchtimeURL = trackedURL(
+                from: tracking.watchtimeURL,
+                cpn: session.cpn,
+                currentTime: normalizedCurrentTime,
+                startTime: session.lastWatchtimeSecond,
+                endTime: normalizedCurrentTime
+           ) {
+            try? await api.sendTrackingEvent(url: watchtimeURL, videoID: videoID, authenticated: true)
+            session.lastWatchtimeSecond = normalizedCurrentTime
+        }
+
+        if didFinish || isEffectivelyFinished(currentTime: normalizedCurrentTime, duration: durationSeconds) {
+            activeWatchSyncSessions.removeValue(forKey: videoID)
+        } else {
+            activeWatchSyncSessions[videoID] = session
+        }
     }
 
     private func playlistBrowseID(for playlistID: String) -> String {
@@ -908,6 +1057,71 @@ private func extractSubtitles(from playerData: JSONDictionary) -> [SubtitleTrack
     }
 }
 
+private func mergeVideoProgress(
+    remote: VideoProgress?,
+    local: VideoProgress?,
+    durationSeconds: Double?
+) -> VideoProgress? {
+    let resolvedDuration = durationSeconds ?? remote?.durationSeconds ?? local?.durationSeconds
+    let merged = VideoProgress(
+        youtubeFraction: remote?.youtubeFraction,
+        localElapsedSeconds: local?.localElapsedSeconds,
+        durationSeconds: resolvedDuration,
+        lastUpdatedAt: local?.lastUpdatedAt,
+        localCompleted: local?.localCompleted ?? false
+    )
+
+    if merged.youtubeFraction == nil,
+       merged.localElapsedSeconds == nil,
+       merged.localCompleted == false {
+        return nil
+    }
+
+    return merged
+}
+
+private func makeRemoteProgress(youtubeFraction: Double?, durationText: String?) -> VideoProgress? {
+    guard let youtubeFraction else { return nil }
+    return VideoProgress(
+        youtubeFraction: youtubeFraction / 100,
+        localElapsedSeconds: nil,
+        durationSeconds: parseDurationSeconds(from: durationText),
+        lastUpdatedAt: nil,
+        localCompleted: false
+    )
+}
+
+private func parseStandardVideoItem(_ renderer: JSONDictionary) -> VideoItem? {
+    guard let videoID = renderer["videoId"] as? String, !videoID.isEmpty else {
+        return nil
+    }
+
+    let metadataParts = splitMetadataText(textValue(from: renderer["metadataText"]))
+    let durationText = textValue(from: renderer["lengthText"])
+
+    return VideoItem(
+        id: videoID,
+        title: textValue(from: renderer["title"]) ?? "Untitled",
+        channel: textValue(from: renderer["longBylineText"])
+            ?? textValue(from: renderer["shortBylineText"])
+            ?? textValue(from: renderer["ownerText"])
+            ?? textValue(from: renderer["bylineText"]),
+        channelId: channelID(from: renderer),
+        channelAvatarUrl: channelAvatarURL(from: renderer),
+        viewCountText: textValue(from: renderer["viewCountText"])
+            ?? textValue(from: renderer["shortViewCountText"])
+            ?? metadataParts.first,
+        publishedTimeText: textValue(from: renderer["publishedTimeText"])
+            ?? (metadataParts.count > 1 ? metadataParts[1] : nil),
+        durationText: durationText,
+        thumbnails: thumbnails(from: renderer["thumbnail"]),
+        progress: makeRemoteProgress(
+            youtubeFraction: extractWatchProgressFraction(from: renderer["thumbnailOverlays"]),
+            durationText: durationText
+        )
+    )
+}
+
 private func extractVideoItems(from data: Any, limit: Int = 120) -> [VideoItem] {
     var items: [VideoItem] = []
     var seen = Set<String>()
@@ -924,34 +1138,40 @@ private func extractVideoItems(from data: Any, limit: Int = 120) -> [VideoItem] 
             ?? (node["gridVideoRenderer"] as? JSONDictionary)
             ?? (node["videoCardRenderer"] as? JSONDictionary)
             ?? (node["compactVideoRenderer"] as? JSONDictionary)
-        guard let renderer else { return .continue }
-
-        guard let videoID = renderer["videoId"] as? String, !videoID.isEmpty else {
+        guard let renderer,
+              let item = parseStandardVideoItem(renderer),
+              seen.insert(item.id).inserted else {
             return .continue
         }
-        guard seen.insert(videoID).inserted else { return .continue }
 
-        let metadataParts = splitMetadataText(textValue(from: renderer["metadataText"]))
-        items.append(
-            VideoItem(
-                id: videoID,
-                title: textValue(from: renderer["title"]) ?? "Untitled",
-                channel: textValue(from: renderer["longBylineText"])
-                    ?? textValue(from: renderer["shortBylineText"])
-                    ?? textValue(from: renderer["ownerText"])
-                    ?? textValue(from: renderer["bylineText"]),
-                channelId: channelID(from: renderer),
-                channelAvatarUrl: channelAvatarURL(from: renderer),
-                viewCountText: textValue(from: renderer["viewCountText"])
-                    ?? textValue(from: renderer["shortViewCountText"])
-                    ?? metadataParts.first,
-                publishedTimeText: textValue(from: renderer["publishedTimeText"])
-                    ?? (metadataParts.count > 1 ? metadataParts[1] : nil),
-                durationText: textValue(from: renderer["lengthText"]),
-                thumbnails: thumbnails(from: renderer["thumbnail"])
-            )
-        )
+        items.append(item)
 
+        return items.count >= limit ? .stop : .continue
+    }
+
+    return items
+}
+
+private func extractHistoryItems(from data: Any, limit: Int = 200) -> [VideoItem] {
+    var items: [VideoItem] = []
+
+    visitJSONObjects(in: data) { node in
+        if let lockup = node["lockupViewModel"] as? JSONDictionary,
+           let item = parseLockupVideoItem(lockup) {
+            items.append(item)
+            return items.count >= limit ? .stop : .continue
+        }
+
+        let renderer = (node["videoRenderer"] as? JSONDictionary)
+            ?? (node["gridVideoRenderer"] as? JSONDictionary)
+            ?? (node["videoCardRenderer"] as? JSONDictionary)
+            ?? (node["compactVideoRenderer"] as? JSONDictionary)
+        guard let renderer,
+              let item = parseStandardVideoItem(renderer) else {
+            return .continue
+        }
+
+        items.append(item)
         return items.count >= limit ? .stop : .continue
     }
 
@@ -1593,6 +1813,7 @@ private func parseLockupVideoItem(_ lockup: JSONDictionary) -> VideoItem? {
     let channelRow = rows.indices.contains(0) ? rowTextParts(rows[0]) : []
     let statsRow = rows.indices.contains(1) ? rowTextParts(rows[1]) : []
     let thumbnailImage = ((lockup["contentImage"] as? JSONDictionary)?["thumbnailViewModel"] as? JSONDictionary)?["image"]
+    let durationText = extractLockupDuration(from: lockup)
 
     return VideoItem(
         id: videoID,
@@ -1602,8 +1823,12 @@ private func parseLockupVideoItem(_ lockup: JSONDictionary) -> VideoItem? {
         channelAvatarUrl: channelAvatarURL(from: lockup),
         viewCountText: statsRow.first,
         publishedTimeText: statsRow.count > 1 ? statsRow[1] : nil,
-        durationText: extractLockupDuration(from: lockup),
-        thumbnails: sourceThumbnails(from: thumbnailImage)
+        durationText: durationText,
+        thumbnails: sourceThumbnails(from: thumbnailImage),
+        progress: makeRemoteProgress(
+            youtubeFraction: extractWatchProgressFraction(from: lockup),
+            durationText: durationText
+        )
     )
 }
 
@@ -1663,6 +1888,150 @@ private func extractLockupDuration(from lockup: JSONDictionary) -> String? {
         }
     }
     return nil
+}
+
+private func extractWatchProgressFraction(from data: Any?) -> Double? {
+    guard let data else { return nil }
+    var fraction: Double?
+
+    visitJSONObjects(in: data) { node in
+        if let renderer = node["thumbnailOverlayResumePlaybackRenderer"] as? JSONDictionary {
+            if let percent = doubleValue(renderer["percentDurationWatched"]) {
+                fraction = percent
+                return .stop
+            }
+        }
+        return .continue
+    }
+
+    return fraction
+}
+
+private func trackedURL(
+    from baseURL: URL?,
+    cpn: String,
+    currentTime: Double,
+    startTime: Double?,
+    endTime: Double?
+) -> URL? {
+    guard let baseURL else { return nil }
+    guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else { return nil }
+
+    var items = components.queryItems ?? []
+
+    func setQueryItem(name: String, value: String?) {
+        items.removeAll { $0.name == name }
+        guard let value else { return }
+        items.append(URLQueryItem(name: name, value: value))
+    }
+
+    setQueryItem(name: "ver", value: "2")
+    setQueryItem(name: "cpn", value: cpn)
+    setQueryItem(name: "cmt", value: String(max(currentTime.rounded(.down), 0)))
+    setQueryItem(name: "el", value: "detailpage")
+
+    if let startTime {
+        setQueryItem(name: "st", value: String(max(startTime.rounded(.down), 0)))
+    }
+    if let endTime {
+        setQueryItem(name: "et", value: String(max(endTime.rounded(.down), 0)))
+    }
+
+    components.queryItems = items
+    return components.url
+}
+
+private func randomPlaybackNonce() -> String {
+    let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+    return String((0..<16).map { _ in alphabet.randomElement() ?? "a" })
+}
+
+private func extractWatchTracking(from watchPageHTML: String?, fallbackDuration: Double?) -> WatchTrackingSnapshot? {
+    guard let watchPageHTML,
+          let playerResponse = extractInitialPlayerResponse(from: watchPageHTML),
+          let tracking = playerResponse["playbackTracking"] as? JSONDictionary else {
+        return nil
+    }
+
+    let playbackURL = urlFromJSONString(tracking["videostatsPlaybackUrl"])
+    let watchtimeURL = urlFromJSONString(tracking["videostatsWatchtimeUrl"])
+    let resolvedDuration = fallbackDuration
+        ?? doubleValue(((playerResponse["videoDetails"] as? JSONDictionary)?["lengthSeconds"]))
+
+    if playbackURL == nil, watchtimeURL == nil {
+        return nil
+    }
+
+    return WatchTrackingSnapshot(
+        playbackURL: playbackURL,
+        watchtimeURL: watchtimeURL,
+        durationSeconds: resolvedDuration
+    )
+}
+
+private func extractInitialPlayerResponse(from html: String) -> JSONDictionary? {
+    let markers = [
+        "var ytInitialPlayerResponse = ",
+        "ytInitialPlayerResponse = ",
+    ]
+
+    for marker in markers {
+        guard let markerRange = html.range(of: marker) else { continue }
+        guard let json = extractBalancedJSONObject(in: html, startingAt: markerRange.upperBound) else { continue }
+        guard let data = json.data(using: .utf8),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? JSONDictionary else {
+            continue
+        }
+        return payload
+    }
+
+    return nil
+}
+
+private func extractBalancedJSONObject(in source: String, startingAt startIndex: String.Index) -> String? {
+    guard let objectStart = source[startIndex...].firstIndex(of: "{") else { return nil }
+
+    var depth = 0
+    var inString = false
+    var isEscaped = false
+    var index = objectStart
+
+    while index < source.endIndex {
+        let character = source[index]
+
+        if inString {
+            if isEscaped {
+                isEscaped = false
+            } else if character == "\\" {
+                isEscaped = true
+            } else if character == "\"" {
+                inString = false
+            }
+        } else {
+            if character == "\"" {
+                inString = true
+            } else if character == "{" {
+                depth += 1
+            } else if character == "}" {
+                depth -= 1
+                if depth == 0 {
+                    return String(source[objectStart...index])
+                }
+            }
+        }
+
+        index = source.index(after: index)
+    }
+
+    return nil
+}
+
+private func urlFromJSONString(_ value: Any?) -> URL? {
+    guard let baseURL = ((value as? JSONDictionary)?["baseUrl"] as? String),
+          !baseURL.isEmpty else {
+        return nil
+    }
+    return URL(string: baseURL)
 }
 
 private func playlistItemMenuFlags(from value: Any?) -> (remove: Bool, moveTop: Bool, moveBottom: Bool) {
@@ -2071,6 +2440,19 @@ private func intValue(_ value: Any?) -> Int? {
     }
     if let value = value as? String {
         return Int(value)
+    }
+    return nil
+}
+
+private func doubleValue(_ value: Any?) -> Double? {
+    if let value = value as? Double {
+        return value
+    }
+    if let value = value as? Int {
+        return Double(value)
+    }
+    if let value = value as? String {
+        return Double(value)
     }
     return nil
 }

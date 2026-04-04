@@ -6,6 +6,55 @@ struct Thumbnail: Codable, Hashable, Sendable {
     let height: Int?
 }
 
+struct VideoProgress: Codable, Hashable, Sendable {
+    let youtubeFraction: Double?
+    let localElapsedSeconds: Double?
+    let durationSeconds: Double?
+    let lastUpdatedAt: Date?
+    let localCompleted: Bool
+
+    var normalizedYouTubeFraction: Double? {
+        guard let youtubeFraction else { return nil }
+        return min(max(youtubeFraction, 0), 1)
+    }
+
+    var normalizedLocalFraction: Double? {
+        guard let localElapsedSeconds,
+              let durationSeconds,
+              durationSeconds > 0 else {
+            return localCompleted ? 1 : nil
+        }
+        return min(max(localElapsedSeconds / durationSeconds, 0), 1)
+    }
+
+    var youtubeResumeSeconds: Double? {
+        guard let fraction = normalizedYouTubeFraction,
+              let durationSeconds,
+              durationSeconds > 0,
+              fraction < 0.98 else {
+            return nil
+        }
+        return durationSeconds * fraction
+    }
+
+    var bestResumeSeconds: Double? {
+        if localCompleted {
+            return nil
+        }
+
+        switch (localElapsedSeconds, youtubeResumeSeconds) {
+        case (.some(let local), .some(let youtube)):
+            return max(local, youtube)
+        case (.some(let local), .none):
+            return local
+        case (.none, .some(let youtube)):
+            return youtube
+        case (.none, .none):
+            return nil
+        }
+    }
+}
+
 struct VideoItem: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let title: String
@@ -22,6 +71,7 @@ struct VideoItem: Codable, Identifiable, Hashable, Sendable {
     var playlistCanRemove: Bool = false
     var playlistCanMoveToTop: Bool = false
     var playlistCanMoveToBottom: Bool = false
+    var progress: VideoProgress? = nil
 
     var thumbnailURL: URL? {
         guard let urlString = thumbnails.last?.url else { return nil }
@@ -54,6 +104,11 @@ struct SearchResponse: Codable, Sendable {
     let items: [VideoItem]
     let continuation: String?
     let query: String
+}
+
+struct WatchHistoryResponse: Codable, Sendable {
+    let items: [VideoItem]
+    let continuation: String?
 }
 
 struct SearchSuggestionsResponse: Codable, Sendable {
@@ -258,6 +313,8 @@ struct VideoPlayback: Codable, Sendable {
     let bestStream: StreamInfo?
     let subtitles: [SubtitleTrack]?
     let storyboard: StoryboardSpec?
+    let progress: VideoProgress?
+    let resumeStartTimeSeconds: Double?
     let subscription: SubscriptionState?
     let rating: RatingState?
     let watchLater: PlaylistOption?
@@ -274,7 +331,9 @@ struct VideoPlayback: Codable, Sendable {
         likeCountText: String? = nil,
         subscription: SubscriptionState? = nil,
         rating: RatingState? = nil,
-        watchLater: PlaylistOption? = nil
+        watchLater: PlaylistOption? = nil,
+        progress: VideoProgress? = nil,
+        resumeStartTimeSeconds: Double? = nil
     ) -> VideoPlayback {
         VideoPlayback(
             id: id,
@@ -302,6 +361,8 @@ struct VideoPlayback: Codable, Sendable {
             bestStream: bestStream,
             subtitles: subtitles,
             storyboard: storyboard,
+            progress: progress ?? self.progress,
+            resumeStartTimeSeconds: resumeStartTimeSeconds ?? self.resumeStartTimeSeconds,
             subscription: subscription ?? self.subscription,
             rating: rating ?? self.rating,
             watchLater: watchLater ?? self.watchLater,
@@ -332,6 +393,10 @@ struct PlaylistOptionsResponse: Codable, Sendable {
 struct PlaylistLibraryResponse: Codable, Sendable {
     let items: [PlaylistSummary]
     let continuation: String?
+}
+
+struct PlaybackProgressMutationResponse: Codable, Sendable {
+    let progress: VideoProgress?
 }
 
 struct SubscriptionResponse: Codable, Sendable {

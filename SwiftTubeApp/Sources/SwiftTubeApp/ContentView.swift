@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var viewModel = HomeViewModel()
+    @StateObject private var historyViewModel = WatchHistoryViewModel()
     @StateObject private var searchViewModel = SearchViewModel()
     @StateObject private var playlistLibraryViewModel = PlaylistLibraryViewModel()
     @ObservedObject private var settings = AppSettings.shared
@@ -90,12 +91,14 @@ struct ContentView: View {
             if backend.isRunning {
                 await authSession.loadStatus()
                 viewModel.reload()
+                historyViewModel.reload()
                 playlistLibraryViewModel.reload()
             }
         }
         .task(id: authSession.contentRefreshID) {
             guard backend.isRunning else { return }
             viewModel.reload()
+            historyViewModel.reload()
             playlistLibraryViewModel.reload()
         }
         .onAppear {
@@ -171,6 +174,8 @@ private extension ContentView {
             switch navigation.currentRoute {
             case .home:
                 homeScreen
+            case .watchHistory:
+                watchHistoryScreen
             case .playlistLibrary:
                 PlaylistLibraryScreen(viewModel: playlistLibraryViewModel)
                     .environmentObject(navigation)
@@ -201,6 +206,21 @@ private extension ContentView {
                 contentView
             }
             .padding(24)
+        }
+    }
+
+    var watchHistoryScreen: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                Text("History")
+                    .font(.system(size: 28, weight: .bold))
+
+                watchHistoryContentView
+            }
+            .padding(24)
+        }
+        .task {
+            historyViewModel.loadInitial()
         }
     }
 
@@ -287,6 +307,46 @@ private extension ContentView {
                 ProgressView("Loading more...")
                     .padding(.top, 16)
                     .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    @ViewBuilder
+    var watchHistoryContentView: some View {
+        if historyViewModel.items.isEmpty {
+            if historyViewModel.isLoading {
+                placeholderGrid
+            } else if let error = historyViewModel.errorMessage {
+                EmptyStateView(
+                    title: "Couldn’t load watch history",
+                    message: error,
+                    actionTitle: "Try Again"
+                ) {
+                    historyViewModel.reload()
+                }
+            } else {
+                EmptyStateView(
+                    title: "No watch history yet",
+                    message: "Once YouTube has history for this account, it will show up here.",
+                    actionTitle: "Refresh"
+                ) {
+                    historyViewModel.reload()
+                }
+            }
+        } else {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                ForEach(Array(historyViewModel.items.enumerated()), id: \.offset) { index, video in
+                    Button {
+                        navigation.showVideo(video)
+                    } label: {
+                        VideoCard(video: video)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onAppear {
+                        historyViewModel.loadMoreIfNeeded(currentIndex: index)
+                    }
+                }
             }
         }
     }
@@ -393,6 +453,8 @@ private extension ContentView {
         switch navigation.currentRoute {
         case .home:
             viewModel.reload()
+        case .watchHistory:
+            historyViewModel.reload()
         case .playlistLibrary:
             playlistLibraryViewModel.reload()
         case .playlistFeed:
@@ -1064,6 +1126,9 @@ private struct PlaylistVideoRow: View {
                 }
                 .frame(width: 232, height: 130.5)
                 .clipShape(RoundedRectangle(cornerRadius: 18))
+                .overlay(alignment: .bottom) {
+                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 18)
+                }
 
                 if let duration = video.durationText {
                     Text(duration)

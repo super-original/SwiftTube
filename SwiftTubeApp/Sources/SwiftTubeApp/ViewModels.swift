@@ -101,6 +101,59 @@ final class HomeViewModel: ObservableObject {
 }
 
 @MainActor
+final class WatchHistoryViewModel: ObservableObject {
+    @Published private(set) var items: [VideoItem] = []
+    @Published var isLoading = false
+    @Published var errorMessage: String? = nil
+
+    private var continuation: String? = nil
+    private var hasLoadedInitial = false
+
+    func loadInitial() {
+        guard !hasLoadedInitial else { return }
+        hasLoadedInitial = true
+        Task { await fetch(reset: true) }
+    }
+
+    func reload() {
+        hasLoadedInitial = false
+        loadInitial()
+    }
+
+    func loadMoreIfNeeded(currentIndex: Int) {
+        guard continuation != nil, !isLoading else { return }
+        let thresholdIndex = max(items.count - 6, 0)
+        guard currentIndex >= thresholdIndex else { return }
+        Task { await fetch(reset: false) }
+    }
+
+    private func fetch(reset: Bool) async {
+        isLoading = true
+        defer { isLoading = false }
+
+        if reset {
+            continuation = nil
+            items = []
+        }
+
+        do {
+            let response = try await BackendClient.shared.fetchWatchHistory(
+                continuation: reset ? nil : continuation
+            )
+            if reset {
+                items = response.items
+            } else {
+                items.append(contentsOf: response.items)
+            }
+            continuation = response.continuation
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+@MainActor
 final class SearchViewModel: ObservableObject {
     struct ParsedVideoLink: Equatable {
         let videoID: String
@@ -744,6 +797,35 @@ final class PlayerViewModel: ObservableObject {
     func stop() {
         loadTask?.cancel()
         commentsTask?.cancel()
+    }
+
+    func reportPlaybackProgress(
+        currentTime: Double,
+        duration: Double,
+        didFinish: Bool
+    ) {
+        guard currentTime > 0 || didFinish else { return }
+
+        Task {
+            do {
+                let response = try await BackendClient.shared.recordPlaybackProgress(
+                    id: video.id,
+                    currentTime: currentTime,
+                    duration: duration > 0 ? duration : nil,
+                    didFinish: didFinish
+                )
+                if let updatedProgress = response.progress {
+                    updatePlayback { current in
+                        current.with(
+                            progress: updatedProgress,
+                            resumeStartTimeSeconds: updatedProgress.bestResumeSeconds
+                        )
+                    }
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+            }
+        }
     }
 
     private func fetchPlayback() async {

@@ -20,6 +20,10 @@ final class BackendClient {
         try await backend.fetchSearch(query: query, continuation: continuation)
     }
 
+    func fetchWatchHistory(continuation: String? = nil) async throws -> WatchHistoryResponse {
+        try await backend.fetchWatchHistory(continuation: continuation)
+    }
+
     func fetchSearchSuggestions(query: String) async throws -> SearchSuggestionsResponse {
         try await backend.fetchSearchSuggestions(query: query)
     }
@@ -90,6 +94,20 @@ final class BackendClient {
 
     func clearAuthSession() async throws -> AuthStatusResponse {
         try await backend.clearAuthSession()
+    }
+
+    func recordPlaybackProgress(
+        id videoID: String,
+        currentTime: Double,
+        duration: Double?,
+        didFinish: Bool
+    ) async throws -> PlaybackProgressMutationResponse {
+        try await backend.recordPlaybackProgress(
+            videoID: videoID,
+            currentTime: currentTime,
+            duration: duration,
+            didFinish: didFinish
+        )
     }
 }
 

@@ -727,7 +727,7 @@ final class AppSettings: ObservableObject {
             switch item {
             case .home:
                 return true
-            case .playlists, .watchLater, .likedVideos:
+            case .history, .playlists, .watchLater, .likedVideos:
                 return isAuthenticated
             }
         }

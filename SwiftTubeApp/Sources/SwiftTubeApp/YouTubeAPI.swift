@@ -174,6 +174,58 @@ final class YouTubeAPI: @unchecked Sendable {
         )
     }
 
+    func watchPage(videoID: String, authenticated: Bool = false) async throws -> String {
+        let context = InnerTubeClients.context(for: .web)
+        var components = URLComponents(string: "https://www.youtube.com/watch")!
+        components.queryItems = [URLQueryItem(name: "v", value: videoID)]
+
+        guard let url = components.url else {
+            throw BackendClientError(message: "Failed to build the YouTube watch page URL.")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+
+        for (header, value) in context.requestHeaders {
+            request.setValue(value, forHTTPHeaderField: header)
+        }
+
+        if authenticated {
+            for (header, value) in try await authManager.authHeaders(origin: "https://www.youtube.com", url: url) {
+                request.setValue(value, forHTTPHeaderField: header)
+            }
+        }
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTPResponse(response, data: data)
+
+        guard let html = String(data: data, encoding: .utf8) else {
+            throw BackendClientError(message: "YouTube returned an unreadable watch page.")
+        }
+
+        return html
+    }
+
+    func sendTrackingEvent(url: URL, videoID: String, authenticated: Bool) async throws {
+        let context = InnerTubeClients.context(for: .web)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+
+        for (header, value) in context.requestHeaders {
+            request.setValue(value, forHTTPHeaderField: header)
+        }
+        request.setValue("https://www.youtube.com/watch?v=\(videoID)", forHTTPHeaderField: "Referer")
+
+        if authenticated {
+            for (header, value) in try await authManager.authHeaders(origin: "https://www.youtube.com", url: url) {
+                request.setValue(value, forHTTPHeaderField: header)
+            }
+        }
+
+        let (_, response) = try await session.data(for: request)
+        try validateHTTPResponse(response, data: Data())
+    }
+
     func dispatch(
         profile: InnerTubeClientProfile = .web,
         command: InnerTubeCommand,

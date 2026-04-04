@@ -20,6 +20,9 @@ struct VideoCard: View {
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(alignment: .bottom) {
+                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12)
+                }
 
                 if let duration = video.durationText {
                     Text(duration)
@@ -69,6 +72,53 @@ struct VideoCard: View {
                 isHovered = hovering
             }
         }
+    }
+}
+
+struct VideoThumbnailProgressBars: View {
+    let progress: VideoProgress?
+    let cornerRadius: CGFloat
+
+    private let localProgressColor = Color(red: 0.44, green: 0.80, blue: 0.98)
+
+    var body: some View {
+        let youtubeFraction = progress?.normalizedYouTubeFraction ?? 0
+        let localFraction = progress?.normalizedLocalFraction ?? 0
+
+        VStack(spacing: 1) {
+            if localFraction > 0 {
+                progressBar(
+                    fraction: localFraction,
+                    fill: localProgressColor
+                )
+            }
+
+            if youtubeFraction > 0 {
+                progressBar(
+                    fraction: youtubeFraction,
+                    fill: Color(red: 0.93, green: 0.13, blue: 0.13)
+                )
+            }
+        }
+        .padding(.horizontal, 2)
+        .padding(.bottom, 2)
+    }
+
+    private func progressBar(fraction: Double, fill: Color) -> some View {
+        GeometryReader { proxy in
+            let width = max(proxy.size.width * fraction, 0)
+
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous)
+                    .fill(Color.black.opacity(0.28))
+
+                Capsule(style: .continuous)
+                    .fill(fill)
+                    .frame(width: width)
+            }
+        }
+        .frame(height: 3)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 }
 

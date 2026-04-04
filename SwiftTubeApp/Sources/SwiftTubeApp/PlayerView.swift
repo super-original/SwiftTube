@@ -200,6 +200,8 @@ struct PlayerScreen: View {
             if let playback = viewModel.playback {
                 if let startTime = navigation.consumePendingStartTime(for: video.id) {
                     playbackCoordinator.setInitialStartTime(startTime)
+                } else if let resumeStartTime = playback.resumeStartTimeSeconds {
+                    playbackCoordinator.setInitialStartTime(resumeStartTime)
                 }
                 playbackCoordinator.configure(with: playback)
                 if authSession.status.authenticated, playback.playlistSaveEnabled {
@@ -209,12 +211,20 @@ struct PlayerScreen: View {
                 playbackCoordinator.reset()
             }
         }
+        .task(id: "\(video.id)-\(viewModel.playbackLoadID.uuidString)-progress") {
+            await monitorPlaybackProgress()
+        }
         .onAppear {
             playbackCoordinator.onPlaybackEnded = handlePlaybackEnded
             playbackCoordinator.onShortcutAction = handleShortcutAction
             navigation.setActivePlaylistCurrentVideo(video.id)
         }
         .onDisappear {
+            viewModel.reportPlaybackProgress(
+                currentTime: playbackCoordinator.currentTime,
+                duration: playbackCoordinator.duration,
+                didFinish: false
+            )
             viewModel.stop()
             playbackCoordinator.stop()
             playbackCoordinator.onShortcutAction = nil
@@ -1000,6 +1010,12 @@ private extension PlayerScreen {
     }
 
     func handlePlaybackEnded() {
+        viewModel.reportPlaybackProgress(
+            currentTime: playbackCoordinator.currentTime,
+            duration: playbackCoordinator.duration,
+            didFinish: true
+        )
+
         if navigation.activePlaylistLoopMode == .one {
             playbackCoordinator.restartPlayback()
             return
@@ -1028,6 +1044,22 @@ private extension PlayerScreen {
                 navigation.replaceActivePlaylistItems(previousItems)
                 viewModel.actionMessage = error.localizedDescription
             }
+        }
+    }
+
+    func monitorPlaybackProgress() async {
+        guard viewModel.playback != nil else { return }
+
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard viewModel.playback != nil else { continue }
+
+            viewModel.reportPlaybackProgress(
+                currentTime: playbackCoordinator.currentTime,
+                duration: playbackCoordinator.duration,
+                didFinish: false
+            )
         }
     }
 
@@ -2344,6 +2376,9 @@ private struct PlaylistQueueRailRow: View {
                 }
                 .frame(width: 120, height: 67.5)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(alignment: .bottom) {
+                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12)
+                }
 
                 if let duration = video.durationText {
                     Text(duration)
@@ -2571,6 +2606,9 @@ private struct RecommendationRow: View {
                 }
                 .frame(width: 160, height: 90)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(alignment: .bottom) {
+                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12)
+                }
 
                 if let duration = video.durationText {
                     Text(duration)
