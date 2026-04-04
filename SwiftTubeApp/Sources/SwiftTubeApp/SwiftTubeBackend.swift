@@ -843,12 +843,13 @@ actor SwiftTubeBackend {
         } else {
             normalizedCurrentTime = max(currentTime, 0)
         }
+        let conservativeCurrentTime = max(floor(normalizedCurrentTime), 0)
 
-        if !session.sentInitialPlayback, normalizedCurrentTime >= 1 {
+        if !session.sentInitialPlayback, conservativeCurrentTime >= 1 {
             if let playbackURL = trackedURL(
                 from: tracking.playbackURL,
                 cpn: session.cpn,
-                currentTime: normalizedCurrentTime,
+                currentTime: conservativeCurrentTime,
                 startTime: nil,
                 endTime: nil
             ) {
@@ -858,21 +859,21 @@ actor SwiftTubeBackend {
         }
 
         let shouldFlush = didFinish
-            || normalizedCurrentTime - session.lastWatchtimeSecond >= 10
-            || (session.lastWatchtimeSecond == 0 && normalizedCurrentTime >= 3)
+            || conservativeCurrentTime - session.lastWatchtimeSecond >= 10
+            || (session.lastWatchtimeSecond == 0 && conservativeCurrentTime >= 3)
         if shouldFlush,
            let watchtimeURL = trackedURL(
                 from: tracking.watchtimeURL,
                 cpn: session.cpn,
-                currentTime: normalizedCurrentTime,
+                currentTime: conservativeCurrentTime,
                 startTime: session.lastWatchtimeSecond,
-                endTime: normalizedCurrentTime
+                endTime: conservativeCurrentTime
            ) {
             try? await api.sendTrackingEvent(url: watchtimeURL, videoID: videoID, authenticated: true)
-            session.lastWatchtimeSecond = normalizedCurrentTime
+            session.lastWatchtimeSecond = conservativeCurrentTime
         }
 
-        if didFinish || isEffectivelyFinished(currentTime: normalizedCurrentTime, duration: durationSeconds) {
+        if didFinish || isEffectivelyFinished(currentTime: conservativeCurrentTime, duration: durationSeconds) {
             activeWatchSyncSessions.removeValue(forKey: videoID)
         } else {
             activeWatchSyncSessions[videoID] = session
@@ -1757,6 +1758,11 @@ private func extractWatchPageSaveCommand(from data: Any) -> InnerTubeCommand? {
     var command: InnerTubeCommand?
 
     visitJSONObjects(in: data) { node in
+        if let normalized = normalizeAddToPlaylistEndpoint(node) {
+            command = normalized
+            return .stop
+        }
+
         let flexibleItems = ((((node["videoActions"] as? JSONDictionary)?["menuRenderer"] as? JSONDictionary)?["flexibleItems"] as? [Any])) ?? []
         guard !flexibleItems.isEmpty else { return .continue }
 

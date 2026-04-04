@@ -18,6 +18,7 @@ struct ContentView: View {
     @StateObject private var searchViewModel = SearchViewModel()
     @StateObject private var playlistLibraryViewModel = PlaylistLibraryViewModel()
     @State private var deletingHistoryVideoIDs = Set<String>()
+    @State private var isSearchFieldFocused = false
     @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var backend: BackendManager
     @EnvironmentObject private var navigation: AppNavigationModel
@@ -27,7 +28,7 @@ struct ContentView: View {
         GridItem(.adaptive(minimum: 240), spacing: 20, alignment: .top)
     ]
     private let searchChromeWidth: CGFloat = 300
-    private let searchAssistWidth: CGFloat = 540
+    private let searchAssistWidth: CGFloat = 680
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -77,9 +78,11 @@ struct ContentView: View {
             ToolbarItem(placement: .principal) {
                 ToolbarSearchField(
                     text: $searchViewModel.query,
+                    isFocused: $isSearchFieldFocused,
                     placeholder: toolbarSearchPlaceholder,
                     onSubmit: handleToolbarSubmit,
-                    onClear: handleToolbarClear
+                    onClear: handleToolbarClear,
+                    onFocusChange: handleSearchFieldFocusChange
                 )
                 .frame(width: searchChromeWidth)
             }
@@ -186,6 +189,9 @@ private extension ContentView {
     }
 
     var searchAssistState: SearchAssistState {
+        guard isSearchFieldFocused else {
+            return .hidden
+        }
         if let linkPreview = searchViewModel.linkPreview {
             return .link(linkPreview)
         }
@@ -387,16 +393,8 @@ private extension ContentView {
 
     @ViewBuilder
     var searchContentView: some View {
-        HStack {
-            Text("Results for \"\(searchViewModel.lastQuery)\"")
-                .font(.title3.weight(.semibold))
-            Spacer()
-            Button("Close Search") {
-                searchViewModel.clear()
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-        }
+        Text("Results for \"\(searchViewModel.lastQuery)\"")
+            .font(.title3.weight(.semibold))
 
         if searchViewModel.results.isEmpty {
             if searchViewModel.isSearching {
@@ -413,16 +411,16 @@ private extension ContentView {
                 EmptyStateView(
                     title: "No results",
                     message: "No videos found for \"\(searchViewModel.lastQuery)\".",
-                    actionTitle: "Close Search"
+                    actionTitle: "Clear Search"
                 ) {
-                    searchViewModel.clear()
+                    handleToolbarClear()
                 }
             }
         } else {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
                 ForEach(searchViewModel.results, id: \.id) { video in
                     Button {
-                        navigation.showVideo(video)
+                        openVideoFromSearch(video)
                     } label: {
                         VideoCard(video: video)
                     }
@@ -432,7 +430,7 @@ private extension ContentView {
                         VideoContextMenuContent(
                             video: video,
                             userPlaylists: userOwnedPlaylists,
-                            onPlay: { navigation.showVideo(video) },
+                            onPlay: { openVideoFromSearch(video) },
                             onPlayFromHere: nil,
                             onAddToWatchLater: authSession.status.authenticated
                                 ? runDetachedAction {
@@ -586,7 +584,7 @@ private extension ContentView {
             },
             onOpenLink: handleToolbarSubmit
         )
-        .frame(width: searchAssistWidth)
+        .frame(width: searchAssistPanelWidth)
         .shadow(color: .black.opacity(0.22), radius: 20, y: 10)
     }
 
@@ -700,8 +698,24 @@ private extension ContentView {
         return "\(historyViewModel.totalItemCount) videos synced from YouTube watch history"
     }
 
+    var searchAssistPanelWidth: CGFloat {
+        switch searchAssistState {
+        case .link:
+            return searchAssistWidth
+        case .loading, .suggestions:
+            return searchChromeWidth
+        case .hidden:
+            return searchChromeWidth
+        }
+    }
+
     func handleToolbarSubmit() {
-        searchViewModel.submit(navigation: navigation, scope: toolbarSearchScope)
+        isSearchFieldFocused = false
+        let outcome = searchViewModel.submit(navigation: navigation, scope: toolbarSearchScope)
+        searchViewModel.dismissAssist()
+        if outcome == .openedVideoLink {
+            searchViewModel.dismissResults()
+        }
     }
 
     func handleToolbarClear() {
@@ -712,6 +726,20 @@ private extension ContentView {
     func handleToolbarQueryChange() {
         searchViewModel.handleQueryChange(scope: toolbarSearchScope)
         syncHistorySearchQuery()
+    }
+
+    func handleSearchFieldFocusChange(_ focused: Bool) {
+        isSearchFieldFocused = focused
+        if !focused {
+            searchViewModel.dismissAssist()
+        }
+    }
+
+    func openVideoFromSearch(_ video: VideoItem) {
+        isSearchFieldFocused = false
+        searchViewModel.dismissAssist()
+        searchViewModel.dismissResults()
+        navigation.showVideo(video)
     }
 
     func syncHistorySearchQuery() {
@@ -1702,9 +1730,11 @@ private struct NoticeBanner: View {
 
 private struct ToolbarSearchField: NSViewRepresentable {
     @Binding var text: String
+    @Binding var isFocused: Bool
     var placeholder: String
     var onSubmit: () -> Void
     var onClear: () -> Void
+    var onFocusChange: (Bool) -> Void
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = ResignableSearchField()
@@ -1728,6 +1758,10 @@ private struct ToolbarSearchField: NSViewRepresentable {
         }
         if nsView.placeholderString != placeholder {
             nsView.placeholderString = placeholder
+        }
+        let isActuallyFocused = nsView.currentEditor() != nil
+        if isFocused == false, isActuallyFocused {
+            nsView.window?.makeFirstResponder(nil)
         }
     }
 
@@ -1797,6 +1831,16 @@ private struct ToolbarSearchField: NSViewRepresentable {
             }
         }
 
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            parent.isFocused = true
+            parent.onFocusChange(true)
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            parent.isFocused = false
+            parent.onFocusChange(false)
+        }
+
         func control(
             _ control: NSControl,
             textView: NSTextView,
@@ -1804,11 +1848,16 @@ private struct ToolbarSearchField: NSViewRepresentable {
         ) -> Bool {
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 parent.onSubmit()
+                parent.isFocused = false
+                parent.onFocusChange(false)
+                control.window?.makeFirstResponder(nil)
                 return true
             }
             if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
                 if control.stringValue.isEmpty {
                     // Empty field: just deselect
+                    parent.isFocused = false
+                    parent.onFocusChange(false)
                     control.window?.makeFirstResponder(nil)
                 } else {
                     // Has text: clear it and the search results
@@ -2022,7 +2071,7 @@ private struct SearchLinkArtwork: View {
             RoundedRectangle(cornerRadius: 20)
                 .fill(Color.white.opacity(0.05))
 
-            CachedAsyncImage(url: linkPreview.thumbnailURL, maxPixelSize: 512) {
+            CachedAsyncImage(url: linkPreview.thumbnailURL, maxPixelSize: 720, contentMode: .fill) {
                 RoundedRectangle(cornerRadius: 20)
                     .fill(
                         LinearGradient(
@@ -2049,7 +2098,7 @@ private struct SearchLinkArtwork: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 20))
         }
-        .frame(width: 176, height: 99)
+        .frame(width: 192, height: 108)
     }
 }
 

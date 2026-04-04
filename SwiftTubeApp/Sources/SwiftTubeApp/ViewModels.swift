@@ -253,11 +253,16 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var lastQuery: String = ""
     private var suggestionTask: Task<Void, Never>? = nil
     private var linkPreviewTask: Task<Void, Never>? = nil
-    private var interactiveSearchTask: Task<Void, Never>? = nil
 
-    func submit(navigation: AppNavigationModel, scope: Scope) {
+    enum SubmitOutcome {
+        case none
+        case search
+        case openedVideoLink
+    }
+
+    func submit(navigation: AppNavigationModel, scope: Scope) -> SubmitOutcome {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return .none }
 
         if let parsedLink = Self.extractVideoLink(from: trimmed) {
             let placeholder = VideoItem(
@@ -272,17 +277,17 @@ final class SearchViewModel: ObservableObject {
                 thumbnails: []
             )
             navigation.showVideo(placeholder, startTime: parsedLink.startTime)
-            return
+            return .openedVideoLink
         }
 
-        guard scope == .global else { return }
+        guard scope == .global else { return .none }
         performSearch(query: trimmed, reset: true)
+        return .search
     }
 
     func clear() {
         suggestionTask?.cancel()
         linkPreviewTask?.cancel()
-        interactiveSearchTask?.cancel()
         query = ""
         results = []
         isActive = false
@@ -297,7 +302,6 @@ final class SearchViewModel: ObservableObject {
     func clearToolbarInput() {
         suggestionTask?.cancel()
         linkPreviewTask?.cancel()
-        interactiveSearchTask?.cancel()
         query = ""
         suggestions = []
         linkPreview = nil
@@ -308,7 +312,6 @@ final class SearchViewModel: ObservableObject {
     func handleQueryChange(scope: Scope) {
         suggestionTask?.cancel()
         linkPreviewTask?.cancel()
-        interactiveSearchTask?.cancel()
 
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -357,14 +360,6 @@ final class SearchViewModel: ObservableObject {
         linkPreview = nil
         isLoadingSuggestions = true
 
-        if isActive, trimmed != lastQuery {
-            interactiveSearchTask = Task {
-                try? await Task.sleep(nanoseconds: 260_000_000)
-                guard !Task.isCancelled else { return }
-                performSearch(query: trimmed, reset: true)
-            }
-        }
-
         suggestionTask = Task {
             try? await Task.sleep(nanoseconds: 180_000_000)
             guard !Task.isCancelled else { return }
@@ -385,6 +380,19 @@ final class SearchViewModel: ObservableObject {
         query = suggestion
         suggestions = []
         linkPreview = nil
+    }
+
+    func dismissAssist() {
+        suggestionTask?.cancel()
+        linkPreviewTask?.cancel()
+        suggestions = []
+        linkPreview = nil
+        isLoadingSuggestions = false
+    }
+
+    func dismissResults() {
+        dismissAssist()
+        isActive = false
     }
 
     func loadMoreIfNeeded(currentVideo: VideoItem) {
@@ -450,7 +458,7 @@ final class SearchViewModel: ObservableObject {
     }
 
     private static func thumbnailURL(for videoID: String) -> URL? {
-        URL(string: "https://i.ytimg.com/vi/\(videoID)/hqdefault.jpg")
+        URL(string: "https://i.ytimg.com/vi/\(videoID)/hq720.jpg")
     }
 
     static func extractVideoLink(from input: String) -> ParsedVideoLink? {
@@ -1120,6 +1128,8 @@ final class PlayerViewModel: ObservableObject {
 
             do {
                 let response = try await BackendClient.shared.fetchPlaylistOptions(id: video.id)
+                let watchLater = response.options.first(where: { $0.playlistId == "WL" })
+                updatePlaybackWatchLater(watchLater)
                 playlistOptions = response.options.filter { $0.playlistId != "WL" }
                 actionMessage = nil
             } catch {

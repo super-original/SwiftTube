@@ -404,13 +404,15 @@ private extension PlayerScreen {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .center, spacing: 16) {
                 channelSubscriptionCluster
-                Spacer(minLength: 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 actionToolbar
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
 
             VStack(alignment: .leading, spacing: 12) {
                 channelSubscriptionCluster
                 actionToolbar
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
     }
