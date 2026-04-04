@@ -56,6 +56,15 @@ final class HomeViewModel: ObservableObject {
         Task { await fetchRecommendations(reset: false) }
     }
 
+    func applyLocalProgress(_ progress: VideoProgress, to videoID: String) {
+        videos = videos.map { item in
+            guard item.id == videoID else { return item }
+            var updated = item
+            updated.progress = (item.progress ?? progress).mergingLocal(progress)
+            return updated
+        }
+    }
+
     private func fetchRecommendations(reset: Bool) async {
         isLoading = true
         defer { isLoading = false }
@@ -161,6 +170,17 @@ final class WatchHistoryViewModel: ObservableObject {
         let idSet = Set(videoIDs)
         items.removeAll { idSet.contains($0.id) }
         filteredItems.removeAll { idSet.contains($0.id) }
+    }
+
+    func applyLocalProgress(_ progress: VideoProgress, to videoID: String) {
+        let patch: (VideoItem) -> VideoItem = { item in
+            guard item.id == videoID else { return item }
+            var updated = item
+            updated.progress = (item.progress ?? progress).mergingLocal(progress)
+            return updated
+        }
+        items = items.map(patch)
+        filteredItems = filteredItems.map(patch)
     }
 
     private func fetch(reset: Bool, queryOverride: String? = nil) async {
@@ -371,6 +391,15 @@ final class SearchViewModel: ObservableObject {
         guard let last = results.last, last == currentVideo else { return }
         guard !isSearching, continuation != nil else { return }
         performSearch(query: lastQuery, reset: false)
+    }
+
+    func applyLocalProgress(_ progress: VideoProgress, to videoID: String) {
+        results = results.map { item in
+            guard item.id == videoID else { return item }
+            var updated = item
+            updated.progress = (item.progress ?? progress).mergingLocal(progress)
+            return updated
+        }
     }
 
     private func performSearch(query: String, reset: Bool) {

@@ -53,6 +53,17 @@ struct VideoProgress: Codable, Hashable, Sendable {
             return nil
         }
     }
+
+    func mergingLocal(_ local: VideoProgress?) -> VideoProgress {
+        guard let local else { return self }
+        return VideoProgress(
+            youtubeFraction: youtubeFraction,
+            localElapsedSeconds: local.localElapsedSeconds,
+            durationSeconds: durationSeconds ?? local.durationSeconds,
+            lastUpdatedAt: local.lastUpdatedAt,
+            localCompleted: local.localCompleted
+        )
+    }
 }
 
 struct VideoItem: Codable, Identifiable, Hashable, Sendable {

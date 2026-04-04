@@ -1,5 +1,9 @@
 import Foundation
 
+extension Notification.Name {
+    static let playbackProgressDidUpdate = Notification.Name("SwiftTubePlaybackProgressDidUpdate")
+}
+
 private struct WatchTrackingSnapshot: Sendable {
     let playbackURL: URL?
     let watchtimeURL: URL?
@@ -165,6 +169,7 @@ actor SwiftTubeBackend {
         }
 
         _ = try await api.dispatch(command: command)
+        try await verifyWatchHistoryRemoval(videoID: videoID)
         return WatchHistoryMutationResponse(
             success: true,
             removedVideoIDs: [videoID],
@@ -205,6 +210,7 @@ actor SwiftTubeBackend {
                 guard let command = record.deleteCommand else { continue }
 
                 _ = try await api.dispatch(command: command)
+                try await verifyWatchHistoryRemoval(videoID: record.item.id)
                 removedVideoIDs.append(record.item.id)
                 pageRemovedAny = true
             }
@@ -272,6 +278,17 @@ actor SwiftTubeBackend {
                 currentTime: currentTime,
                 duration: duration,
                 didFinish: didFinish
+            )
+        }
+
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .playbackProgressDidUpdate,
+                object: nil,
+                userInfo: [
+                    "videoID": videoID,
+                    "progress": progress,
+                ]
             )
         }
 
@@ -769,6 +786,19 @@ actor SwiftTubeBackend {
         case .week:
             return 60 * 60 * 24 * 7
         }
+    }
+
+    private func verifyWatchHistoryRemoval(videoID: String) async throws {
+        for attempt in 0..<3 {
+            if try await findWatchHistoryRecord(videoID: videoID) == nil {
+                return
+            }
+            if attempt < 2 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+
+        throw BackendClientError(message: "YouTube accepted the request, but the video is still present in watch history after refresh.")
     }
 
     private func mergeStoredProgress(into items: [VideoItem]) async -> [VideoItem] {
@@ -2083,11 +2113,38 @@ private func extractHistoryDeleteCommand(from value: Any?) -> InnerTubeCommand? 
 
         return buildCommand(
             apiPath: commandMetadataAPIPath(from: command) ?? "feedback",
-            payload: feedbackEndpoint
+            payload: feedbackRequestPayload(from: feedbackEndpoint)
         )
     }
 
     return nil
+}
+
+private func feedbackRequestPayload(from endpoint: JSONDictionary) -> JSONDictionary {
+    var feedbackTokens: [Any] = []
+
+    if let feedbackToken = endpoint["feedbackToken"] as? String, !feedbackToken.isEmpty {
+        feedbackTokens.append(feedbackToken)
+    }
+
+    if let existingTokens = endpoint["feedbackTokens"] as? [Any] {
+        feedbackTokens.append(contentsOf: existingTokens)
+    }
+
+    var payload: JSONDictionary = [
+        "feedbackTokens": feedbackTokens,
+        "shouldMerge": feedbackTokens.count > 1,
+    ]
+
+    if let cpn = endpoint["cpn"] as? String, !cpn.isEmpty {
+        payload["feedbackContext"] = ["cpn": cpn]
+    }
+
+    if let isUnencrypted = endpoint["isFeedbackTokenUnencrypted"] {
+        payload["isFeedbackTokenUnencrypted"] = isUnencrypted
+    }
+
+    return payload
 }
 
 private func jsonContainsHistoryRemove(_ value: Any) -> Bool {

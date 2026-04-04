@@ -18,7 +18,6 @@ struct ContentView: View {
     @StateObject private var searchViewModel = SearchViewModel()
     @StateObject private var playlistLibraryViewModel = PlaylistLibraryViewModel()
     @State private var deletingHistoryVideoIDs = Set<String>()
-    @State private var activeHistoryBulkDelete: WatchHistoryTrimRange? = nil
     @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var backend: BackendManager
     @EnvironmentObject private var navigation: AppNavigationModel
@@ -135,6 +134,16 @@ struct ContentView: View {
         }
         .onChange(of: searchViewModel.isActive) { _, _ in
             syncHistorySearchQuery()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .playbackProgressDidUpdate)) { notification in
+            guard let videoID = notification.userInfo?["videoID"] as? String,
+                  let progress = notification.userInfo?["progress"] as? VideoProgress else {
+                return
+            }
+
+            viewModel.applyLocalProgress(progress, to: videoID)
+            historyViewModel.applyLocalProgress(progress, to: videoID)
+            searchViewModel.applyLocalProgress(progress, to: videoID)
         }
     }
 }
@@ -357,26 +366,18 @@ private extension ContentView {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 HistoryActionPanel(
-                    searchQuery: historyViewModel.searchQuery,
                     isFiltering: historyViewModel.hasActiveFilter,
-                    visibleCount: historyViewModel.filteredItems.count,
-                    totalCount: historyViewModel.totalItemCount,
-                    activeBulkDelete: activeHistoryBulkDelete,
                     onRefresh: historyViewModel.reload,
-                    onDeleteRecent: performBulkHistoryDelete
+                    onOpenOfficialControls: openOfficialHistoryControls
                 )
                 .frame(width: 310)
             }
 
             VStack(alignment: .leading, spacing: 20) {
                 HistoryActionPanel(
-                    searchQuery: historyViewModel.searchQuery,
                     isFiltering: historyViewModel.hasActiveFilter,
-                    visibleCount: historyViewModel.filteredItems.count,
-                    totalCount: historyViewModel.totalItemCount,
-                    activeBulkDelete: activeHistoryBulkDelete,
                     onRefresh: historyViewModel.reload,
-                    onDeleteRecent: performBulkHistoryDelete
+                    onOpenOfficialControls: openOfficialHistoryControls
                 )
 
                 historyVideoStack
@@ -755,41 +756,11 @@ private extension ContentView {
         }
     }
 
-    func performBulkHistoryDelete(_ range: WatchHistoryTrimRange) {
-        guard activeHistoryBulkDelete == nil else { return }
-        activeHistoryBulkDelete = range
-
-        Task {
-            defer {
-                Task { @MainActor in
-                    activeHistoryBulkDelete = nil
-                }
-            }
-
-            do {
-                let response = try await BackendClient.shared.trimWatchHistory(range: range)
-                await MainActor.run {
-                    historyViewModel.removeItemsLocally(ids: response.removedVideoIDs)
-                    if response.removedCount == 0 {
-                        let alert = NSAlert()
-                        alert.messageText = "Nothing matched"
-                        alert.informativeText = range == .hour
-                            ? "SwiftTube could not find any recent history entries that safely matched the last hour."
-                            : "SwiftTube did not find any recent history entries to remove."
-                        alert.alertStyle = .informational
-                        alert.runModal()
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    let alert = NSAlert()
-                    alert.messageText = "Couldn’t trim history"
-                    alert.informativeText = error.localizedDescription
-                    alert.alertStyle = .warning
-                    alert.runModal()
-                }
-            }
+    func openOfficialHistoryControls() {
+        guard let url = URL(string: "https://myactivity.google.com/product/youtube?hl=en&utm_medium=web&utm_source=youtube") else {
+            return
         }
+        NSWorkspace.shared.open(url)
     }
 }
 
@@ -2083,38 +2054,20 @@ private struct SearchLinkArtwork: View {
 }
 
 private struct HistoryActionPanel: View {
-    let searchQuery: String
     let isFiltering: Bool
-    let visibleCount: Int
-    let totalCount: Int
-    let activeBulkDelete: WatchHistoryTrimRange?
     let onRefresh: () -> Void
-    let onDeleteRecent: (WatchHistoryTrimRange) -> Void
+    let onOpenOfficialControls: () -> Void
 
     var body: some View {
         HistoryPanelCard(title: "History Actions", icon: "clock.arrow.trianglehead.counterclockwise.rotate.90") {
             VStack(alignment: .leading, spacing: 14) {
                 Text(
                     isFiltering
-                        ? "Showing official YouTube history results for \"\(searchQuery)\"."
-                        : "Manage your watch history directly from SwiftTube."
+                        ? "Toolbar search is using YouTube's real history search, so older matches can still surface."
+                        : "Refresh here, then use Google's official delete controls for range-based cleanup."
                 )
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-
-                HStack(spacing: 10) {
-                    if isFiltering {
-                        HistoryStatPill(label: "Matches", value: "\(visibleCount)")
-                    } else {
-                        HistoryStatPill(label: "Visible", value: "\(visibleCount)")
-                        HistoryStatPill(label: "Loaded", value: "\(totalCount)")
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    HistoryLegendRow(color: .red, label: "YouTube resume position")
-                    HistoryLegendRow(color: Color(red: 0.39, green: 0.78, blue: 1.0), label: "SwiftTube exact second-by-second resume")
-                }
 
                 Divider()
                     .overlay(Color.white.opacity(0.08))
@@ -2128,27 +2081,11 @@ private struct HistoryActionPanel: View {
                 )
 
                 HistoryActionButton(
-                    title: "Delete Last Hour",
-                    subtitle: "Best effort: uses exact local timestamps when available, otherwise the newest Today entries.",
-                    systemImage: "clock",
-                    isBusy: activeBulkDelete == .hour,
-                    action: { onDeleteRecent(.hour) }
-                )
-
-                HistoryActionButton(
-                    title: "Delete Last Day",
-                    subtitle: "Removes the most recent day of history by repeating YouTube's per-video delete action.",
-                    systemImage: "calendar.badge.minus",
-                    isBusy: activeBulkDelete == .day,
-                    action: { onDeleteRecent(.day) }
-                )
-
-                HistoryActionButton(
-                    title: "Delete Last Week",
-                    subtitle: "Removes recent history sections by repeating YouTube's per-video delete action.",
-                    systemImage: "calendar",
-                    isBusy: activeBulkDelete == .week,
-                    action: { onDeleteRecent(.week) }
+                    title: "Open Google My Activity",
+                    subtitle: "Use YouTube's official Delete today, custom range, or all time controls in the browser.",
+                    systemImage: "safari",
+                    isBusy: false,
+                    action: onOpenOfficialControls
                 )
             }
         }
@@ -2184,43 +2121,6 @@ private struct HistoryPanelCard<Content: View>: View {
             RoundedRectangle(cornerRadius: 24)
                 .stroke(Color.white.opacity(settings.preferredColorScheme == .dark ? 0.06 : 0.16), lineWidth: 1)
         )
-    }
-}
-
-private struct HistoryStatPill: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.headline.monospacedDigit())
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(0.05))
-        )
-    }
-}
-
-private struct HistoryLegendRow: View {
-    let color: Color
-    let label: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Capsule()
-                .fill(color)
-                .frame(width: 42, height: 5)
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
     }
 }
 
@@ -2308,8 +2208,8 @@ private struct HistoryVideoRow: View {
                     FlexibleChipRow(items: metadataChips)
                 }
 
-                if let progressLine {
-                    Label(progressLine, systemImage: "play.circle.fill")
+                if let localProgressLine {
+                    Label(localProgressLine, systemImage: "sparkles.tv")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color(red: 0.39, green: 0.78, blue: 1.0))
                 }
@@ -2389,13 +2289,13 @@ private struct HistoryVideoRow: View {
             }
     }
 
-    private var progressLine: String? {
+    private var localProgressLine: String? {
         guard let progress = video.progress else { return nil }
         if progress.localCompleted {
-            return "Watched through"
+            return "SwiftTube tracked this as watched through"
         }
-        if let seconds = progress.bestResumeSeconds {
-            return "Resume at \(formatTime(seconds))"
+        if let seconds = progress.localElapsedSeconds {
+            return "SwiftTube exact resume: \(formatTime(seconds))"
         }
         return nil
     }
