@@ -421,8 +421,14 @@ actor SwiftTubeBackend {
         }
 
         let playerStreams = mergeStreams(parseStreams(from: playerData))
+        let playerSubtitles = extractSubtitles(from: playerData)
+        let playerBundle = buildPlaybackBundle(
+            streams: playerStreams,
+            subtitles: playerSubtitles
+        )
+
         let fallbackPlayback: YTDLPPlaybackData?
-        if playerStreams.isEmpty {
+        if shouldUseYTDLPPlayback(for: playerBundle, streams: playerStreams) {
             fallbackPlayback = try await extractYTDLPPlayback(
                 videoID: videoID,
                 cookieFileURL: authenticated ? await authManager.playbackCookieFileURL() : nil
@@ -430,14 +436,15 @@ actor SwiftTubeBackend {
         } else {
             fallbackPlayback = nil
         }
-        let resolvedStreams = !playerStreams.isEmpty ? playerStreams : (fallbackPlayback?.streams ?? [])
+        let resolvedStreams = ((fallbackPlayback?.streams.isEmpty == false) ? fallbackPlayback?.streams : nil)
+            ?? playerStreams
         guard !resolvedStreams.isEmpty else {
             throw BackendClientError(message: "No playable streams found")
         }
 
         let playbackBundle = buildPlaybackBundle(
             streams: resolvedStreams,
-            subtitles: extractSubtitles(from: playerData) + (fallbackPlayback?.subtitles ?? [])
+            subtitles: playerSubtitles + (fallbackPlayback?.subtitles ?? [])
         )
         let bestStream = pickBestStream(in: resolvedStreams)
         let details = playerData["videoDetails"] as? JSONDictionary
@@ -651,6 +658,12 @@ private func buildPlaybackBundle(
         preferredAudioStream: bestAudioStream(in: streams),
         subtitles: subtitles
     )
+}
+
+private func shouldUseYTDLPPlayback(for bundle: PlaybackBundle, streams: [StreamInfo]) -> Bool {
+    guard !streams.isEmpty else { return true }
+    guard bundle.preferredManifestStream == nil else { return false }
+    return bundle.preferredVideoStream == nil || bundle.preferredAudioStream == nil
 }
 
 private func bestManifestStream(in streams: [StreamInfo]) -> StreamInfo? {
