@@ -303,24 +303,31 @@ enum ProcessRunner {
         executableURL: URL,
         arguments: [String]
     ) async throws -> ProcessOutput {
-        try await withCheckedThrowingContinuation { continuation in
-            do {
-                let process = Process()
-                process.executableURL = executableURL
-                process.arguments = arguments
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
 
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = pipe
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
 
-                process.terminationHandler = { process in
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let outputTask = Task.detached(priority: .utility) {
+            pipe.fileHandleForReading.readDataToEndOfFile()
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { process in
+                Task {
+                    let data = await outputTask.value
                     let output = String(data: data, encoding: .utf8) ?? ""
                     continuation.resume(returning: ProcessOutput(exitCode: process.terminationStatus, output: output))
                 }
+            }
 
+            do {
                 try process.run()
             } catch {
+                outputTask.cancel()
                 continuation.resume(throwing: error)
             }
         }
