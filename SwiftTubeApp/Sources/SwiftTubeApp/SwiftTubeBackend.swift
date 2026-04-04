@@ -6,6 +6,7 @@ actor SwiftTubeBackend {
     private let authManager = YouTubeAuthManager()
     private lazy var api = YouTubeAPI(authManager: authManager)
     private var channelAvatarCache: [String: String?] = [:]
+    private var playbackCache: [String: YTDLPPlaybackData] = [:]
 
     func start() async throws {
         // The in-process backend has no bootstrap work; auth validation happens on demand.
@@ -407,22 +408,15 @@ actor SwiftTubeBackend {
         async let watchTask = api.next(videoID: videoID, authenticated: authenticated)
         async let playerTask = api.player(videoID: videoID, profile: .webParentTools, authenticated: authenticated)
         async let webPlayerTask = api.player(videoID: videoID, profile: .web, authenticated: authenticated)
-        async let authenticatedYTDLPTask = extractYTDLPPlayback(
-            videoID: videoID,
-            cookieFileURL: authenticated ? await authManager.playbackCookieFileURL() : nil
-        )
-        async let publicYTDLPTask = extractYTDLPPlayback(
-            videoID: videoID,
-            cookieFileURL: nil
-        )
+        async let mwebPlayerTask = api.player(videoID: videoID, profile: .mweb, authenticated: authenticated)
+        let publicYTDLPTask = Task<YTDLPPlaybackData?, Error> {
+            try await self.cachedYTDLPPlayback(videoID: videoID, cookieFileURL: nil, cacheScope: "public")
+        }
 
         let watchData = try await watchTask
         let playerData = try await playerTask
         let webPlayerData = (try? await webPlayerTask) ?? [:]
-        let authenticatedYTDLPPlayback = try? await authenticatedYTDLPTask
-        let publicYTDLPPlayback = try? await publicYTDLPTask
-        let preferredYTDLPPlayback = ((authenticatedYTDLPPlayback?.streams.isEmpty == false) ? authenticatedYTDLPPlayback : nil)
-            ?? ((publicYTDLPPlayback?.streams.isEmpty == false) ? publicYTDLPPlayback : nil)
+        let mwebPlayerData = (try? await mwebPlayerTask) ?? [:]
 
         let metadata = extractWatchMetadata(from: watchData)
         var playlistOptions: [PlaylistOption] = []
@@ -433,27 +427,58 @@ actor SwiftTubeBackend {
         }
 
         let playerStreams = mergeStreams(
-            parseStreams(from: playerData),
-            parseStreams(from: webPlayerData)
+            parseStreams(from: playerData, defaultHeaders: api.streamRequestHeaders(for: .webParentTools)),
+            parseStreams(from: webPlayerData, defaultHeaders: api.streamRequestHeaders(for: .web)),
+            parseStreams(from: mwebPlayerData, defaultHeaders: api.streamRequestHeaders(for: .mweb))
         )
         let playerSubtitles = deduplicatedSubtitles(
             extractSubtitles(from: playerData)
                 + extractSubtitles(from: webPlayerData)
+                + extractSubtitles(from: mwebPlayerData)
         )
+        let nativePlaybackBundle = buildPlaybackBundle(
+            streams: playerStreams,
+            subtitles: playerSubtitles
+        )
+
+        let preferredYTDLPPlayback: YTDLPPlaybackData?
+        if shouldPreferNativePlayback(bundle: nativePlaybackBundle, streams: playerStreams) {
+            publicYTDLPTask.cancel()
+            preferredYTDLPPlayback = nil
+        } else if authenticated {
+            let publicPlayback = try await publicYTDLPTask.value
+            if let publicPlayback, publicPlayback.streams.isEmpty == false {
+                preferredYTDLPPlayback = publicPlayback
+            } else {
+                preferredYTDLPPlayback = try await cachedYTDLPPlayback(
+                    videoID: videoID,
+                    cookieFileURL: await authManager.playbackCookieFileURL(),
+                    cacheScope: "auth"
+                )
+            }
+        } else {
+            preferredYTDLPPlayback = try await publicYTDLPTask.value
+        }
+
         let resolvedStreams = ((preferredYTDLPPlayback?.streams.isEmpty == false) ? preferredYTDLPPlayback?.streams : nil)
             ?? playerStreams
         guard !resolvedStreams.isEmpty else {
             throw BackendClientError(message: "No playable streams found")
         }
 
-        let playbackBundle = buildPlaybackBundle(
-            streams: resolvedStreams,
-            subtitles: playerSubtitles + (preferredYTDLPPlayback?.subtitles ?? [])
-        )
+        let playbackBundle: PlaybackBundle = {
+            if let preferredYTDLPPlayback, preferredYTDLPPlayback.streams.isEmpty == false {
+                return buildPlaybackBundle(
+                    streams: preferredYTDLPPlayback.streams,
+                    subtitles: playerSubtitles + preferredYTDLPPlayback.subtitles
+                )
+            }
+            return nativePlaybackBundle
+        }()
         let bestStream = pickBestStream(in: resolvedStreams)
         let details = playerData["videoDetails"] as? JSONDictionary
         let title: String? = metadata["title"] ?? preferredYTDLPPlayback?.title ?? (details?["title"] as? String)
-        let duration = preferredYTDLPPlayback?.durationText ?? metadataDurationText(from: details)
+        let duration = metadata["durationText"] ?? preferredYTDLPPlayback?.durationText ?? metadataDurationText(from: details)
 
         return VideoPlayback(
             id: videoID,
@@ -487,6 +512,19 @@ actor SwiftTubeBackend {
             playlistSaveEnabled: extractWatchPageSaveCommand(from: watchData) != nil,
             recommendationsContinuation: extractRelatedContinuationToken(from: watchData)
         )
+    }
+
+    private func cachedYTDLPPlayback(videoID: String, cookieFileURL: URL?, cacheScope: String) async throws -> YTDLPPlaybackData? {
+        let cacheKey = "\(cacheScope):\(videoID)"
+        if let cached = playbackCache[cacheKey] {
+            return cached
+        }
+
+        let playback = try await extractYTDLPPlayback(videoID: videoID, cookieFileURL: cookieFileURL)
+        if let playback, playback.streams.isEmpty == false {
+            playbackCache[cacheKey] = playback
+        }
+        return playback
     }
 
     private func loadPlaylistSheet(from watchData: JSONDictionary) async throws -> JSONDictionary {
@@ -622,19 +660,24 @@ private func formatDuration(seconds: Any?) -> String? {
 }
 
 private func mergeStreams(_ groups: [StreamInfo]...) -> [StreamInfo] {
-    var merged: [StreamInfo] = []
-    var seen = Set<String>()
+    var mergedByKey: [String: StreamInfo] = [:]
+    var order: [String] = []
 
     for group in groups {
         for stream in group {
             let key = "\(stream.url)|\(stream.formatId ?? "")|\(stream.streamKind)"
-            if seen.insert(key).inserted {
-                merged.append(stream)
+            if let existing = mergedByKey[key] {
+                if existing.httpHeaders == nil, stream.httpHeaders != nil {
+                    mergedByKey[key] = stream
+                }
+            } else {
+                mergedByKey[key] = stream
+                order.append(key)
             }
         }
     }
 
-    return merged
+    return order.compactMap { mergedByKey[$0] }
 }
 
 private func deduplicatedSubtitles(_ subtitles: [SubtitleTrack]) -> [SubtitleTrack] {
@@ -663,6 +706,23 @@ private func buildPlaybackBundle(
         preferredAudioStream: bestAudioStream(in: streams),
         subtitles: subtitles
     )
+}
+
+private func shouldPreferNativePlayback(bundle: PlaybackBundle, streams: [StreamInfo]) -> Bool {
+    if bundle.preferredManifestStream != nil {
+        return true
+    }
+
+    if bundle.preferredVideoStream != nil, bundle.preferredAudioStream != nil {
+        return true
+    }
+
+    let muxedCandidates = streams.filter {
+        $0.hasAudio && $0.hasVideo
+            && (($0.container ?? "").hasPrefix("mp4") || ($0.container ?? "").hasPrefix("mov"))
+            && !isManifestURL($0.url)
+    }
+    return muxedCandidates.count > 1 && bundle.preferredMuxedStream != nil
 }
 
 private func bestManifestStream(in streams: [StreamInfo]) -> StreamInfo? {
@@ -709,7 +769,7 @@ private func pickBestStream(in streams: [StreamInfo]) -> StreamInfo? {
     return pool.max(by: { simpleStreamScore($0) < simpleStreamScore($1) })
 }
 
-private func parseStreams(from playerResponse: JSONDictionary) -> [StreamInfo] {
+private func parseStreams(from playerResponse: JSONDictionary, defaultHeaders: [String: String]? = nil) -> [StreamInfo] {
     guard let streaming = playerResponse["streamingData"] as? JSONDictionary else {
         return []
     }
@@ -738,7 +798,7 @@ private func parseStreams(from playerResponse: JSONDictionary) -> [StreamInfo] {
                     formatId: stringify(entry["itag"]),
                     mimeType: mimeType,
                     qualityLabel: entry["qualityLabel"] as? String,
-                    httpHeaders: nil,
+                    httpHeaders: defaultHeaders,
                     bitrate: intValue(entry["bitrate"]),
                     width: intValue(entry["width"]),
                     height: intValue(entry["height"]),

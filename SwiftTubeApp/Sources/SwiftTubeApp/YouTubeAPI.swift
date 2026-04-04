@@ -228,6 +228,25 @@ final class YouTubeAPI: @unchecked Sendable {
         }
     }
 
+    func streamRequestHeaders(for profile: InnerTubeClientProfile) -> [String: String] {
+        let context = InnerTubeClients.context(for: profile)
+        var headers: [String: String] = [
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-us,en;q=0.5",
+            "Sec-Fetch-Mode": "navigate",
+        ]
+
+        if let userAgent = context.userAgent {
+            headers["User-Agent"] = userAgent
+        }
+
+        if let referer = context.referer {
+            headers["Referer"] = referer
+        }
+
+        return headers
+    }
+
     private func request(
         profile: InnerTubeClientProfile,
         endpoint: String,
