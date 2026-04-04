@@ -132,10 +132,12 @@ actor SwiftTubeBackend {
         )
     }
 
-    func fetchWatchHistory(continuation: String? = nil) async throws -> WatchHistoryResponse {
+    func fetchWatchHistory(query: String? = nil, continuation: String? = nil) async throws -> WatchHistoryResponse {
         _ = try await requireAuthenticatedMaterial()
+        let trimmedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines)
         let data = try await api.browse(
             browseID: continuation == nil ? "FEhistory" : nil,
+            params: continuation == nil ? historySearchParams(for: trimmedQuery) : nil,
             continuation: continuation,
             authenticated: true
         )
@@ -501,23 +503,18 @@ actor SwiftTubeBackend {
             subtitles: playerSubtitles
         )
 
+        let publicPlayback = try await publicYTDLPTask.value
         let preferredYTDLPPlayback: YTDLPPlaybackData?
-        if shouldPreferNativePlayback(bundle: nativePlaybackBundle, streams: playerStreams) {
-            publicYTDLPTask.cancel()
-            preferredYTDLPPlayback = nil
+        if let publicPlayback, publicPlayback.streams.isEmpty == false {
+            preferredYTDLPPlayback = publicPlayback
         } else if authenticated {
-            let publicPlayback = try await publicYTDLPTask.value
-            if let publicPlayback, publicPlayback.streams.isEmpty == false {
-                preferredYTDLPPlayback = publicPlayback
-            } else {
-                preferredYTDLPPlayback = try await cachedYTDLPPlayback(
-                    videoID: videoID,
-                    cookieFileURL: await authManager.playbackCookieFileURL(),
-                    cacheScope: "auth"
-                )
-            }
+            preferredYTDLPPlayback = try await cachedYTDLPPlayback(
+                videoID: videoID,
+                cookieFileURL: await authManager.playbackCookieFileURL(),
+                cacheScope: "auth"
+            )
         } else {
-            preferredYTDLPPlayback = try await publicYTDLPTask.value
+            preferredYTDLPPlayback = nil
         }
 
         let resolvedStreams = ((preferredYTDLPPlayback?.streams.isEmpty == false) ? preferredYTDLPPlayback?.streams : nil)
@@ -683,7 +680,9 @@ actor SwiftTubeBackend {
             }
         }
 
-        let shouldFlush = didFinish || normalizedCurrentTime - session.lastWatchtimeSecond >= 10
+        let shouldFlush = didFinish
+            || normalizedCurrentTime - session.lastWatchtimeSecond >= 10
+            || (session.lastWatchtimeSecond == 0 && normalizedCurrentTime >= 3)
         if shouldFlush,
            let watchtimeURL = trackedURL(
                 from: tracking.watchtimeURL,
@@ -1154,10 +1153,12 @@ private func extractVideoItems(from data: Any, limit: Int = 120) -> [VideoItem] 
 
 private func extractHistoryItems(from data: Any, limit: Int = 200) -> [VideoItem] {
     var items: [VideoItem] = []
+    var seen = Set<String>()
 
     visitJSONObjects(in: data) { node in
         if let lockup = node["lockupViewModel"] as? JSONDictionary,
-           let item = parseLockupVideoItem(lockup) {
+           let item = parseLockupVideoItem(lockup),
+           seen.insert(item.id).inserted {
             items.append(item)
             return items.count >= limit ? .stop : .continue
         }
@@ -1167,7 +1168,8 @@ private func extractHistoryItems(from data: Any, limit: Int = 200) -> [VideoItem
             ?? (node["videoCardRenderer"] as? JSONDictionary)
             ?? (node["compactVideoRenderer"] as? JSONDictionary)
         guard let renderer,
-              let item = parseStandardVideoItem(renderer) else {
+              let item = parseStandardVideoItem(renderer),
+              seen.insert(item.id).inserted else {
             return .continue
         }
 
@@ -1905,6 +1907,36 @@ private func extractWatchProgressFraction(from data: Any?) -> Double? {
     }
 
     return fraction
+}
+
+private func historySearchParams(for query: String?) -> String? {
+    guard let query, !query.isEmpty else { return nil }
+
+    var payload = Data([0x2A])
+    payload.append(contentsOf: protobufVarint(query.utf8.count))
+    payload.append(contentsOf: query.utf8)
+
+    return payload
+        .base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+}
+
+private func protobufVarint(_ value: Int) -> [UInt8] {
+    var remaining = UInt64(max(value, 0))
+    var bytes: [UInt8] = []
+
+    repeat {
+        var byte = UInt8(remaining & 0x7F)
+        remaining >>= 7
+        if remaining > 0 {
+            byte |= 0x80
+        }
+        bytes.append(byte)
+    } while remaining > 0
+
+    return bytes
 }
 
 private func trackedURL(

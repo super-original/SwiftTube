@@ -20,8 +20,8 @@ final class BackendClient {
         try await backend.fetchSearch(query: query, continuation: continuation)
     }
 
-    func fetchWatchHistory(continuation: String? = nil) async throws -> WatchHistoryResponse {
-        try await backend.fetchWatchHistory(continuation: continuation)
+    func fetchWatchHistory(query: String? = nil, continuation: String? = nil) async throws -> WatchHistoryResponse {
+        try await backend.fetchWatchHistory(query: query, continuation: continuation)
     }
 
     func fetchSearchSuggestions(query: String) async throws -> SearchSuggestionsResponse {

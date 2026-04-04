@@ -110,7 +110,7 @@ final class WatchHistoryViewModel: ObservableObject {
 
     private var continuation: String? = nil
     private var hasLoadedInitial = false
-    private var searchExpansionTask: Task<Void, Never>? = nil
+    private var searchTask: Task<Void, Never>? = nil
 
     var hasActiveFilter: Bool {
         !trimmedSearchQuery.isEmpty
@@ -127,6 +127,7 @@ final class WatchHistoryViewModel: ObservableObject {
     }
 
     func reload() {
+        searchTask?.cancel()
         hasLoadedInitial = false
         loadInitial()
     }
@@ -135,20 +136,17 @@ final class WatchHistoryViewModel: ObservableObject {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedQuery != searchQuery else { return }
 
-        searchExpansionTask?.cancel()
         searchQuery = normalizedQuery
-        applyFilter()
+        searchTask?.cancel()
 
-        guard !normalizedQuery.isEmpty,
-              continuation != nil,
-              hasLoadedInitial else {
+        guard hasLoadedInitial else {
             return
         }
 
-        searchExpansionTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 150_000_000)
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 220_000_000)
             guard !Task.isCancelled else { return }
-            await self?.expandSearchResultsIfNeeded(query: normalizedQuery)
+            await self?.fetch(reset: true, queryOverride: normalizedQuery)
         }
     }
 
@@ -158,7 +156,8 @@ final class WatchHistoryViewModel: ObservableObject {
         Task { await fetch(reset: false) }
     }
 
-    private func fetch(reset: Bool) async {
+    private func fetch(reset: Bool, queryOverride: String? = nil) async {
+        let requestQuery = (queryOverride ?? trimmedSearchQuery).trimmingCharacters(in: .whitespacesAndNewlines)
         isLoading = true
         defer { isLoading = false }
 
@@ -170,17 +169,20 @@ final class WatchHistoryViewModel: ObservableObject {
 
         do {
             let response = try await BackendClient.shared.fetchWatchHistory(
+                query: requestQuery.isEmpty ? nil : requestQuery,
                 continuation: reset ? nil : continuation
             )
+            guard requestQuery == trimmedSearchQuery else { return }
             if reset {
                 items = response.items
             } else {
-                items.append(contentsOf: response.items)
+                items = appendUniqueItems(existing: items, incoming: response.items, id: \.id).items
             }
             continuation = response.continuation
-            applyFilter()
+            filteredItems = items
             errorMessage = nil
         } catch {
+            guard requestQuery == trimmedSearchQuery else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -189,45 +191,6 @@ final class WatchHistoryViewModel: ObservableObject {
         searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func applyFilter() {
-        guard !trimmedSearchQuery.isEmpty else {
-            filteredItems = items
-            return
-        }
-
-        let tokens = trimmedSearchQuery
-            .lowercased()
-            .split(whereSeparator: \.isWhitespace)
-            .map(String.init)
-
-        filteredItems = items.filter { item in
-            let searchableFields = [
-                item.title,
-                item.channel,
-                item.viewCountText,
-                item.publishedTimeText
-            ]
-                .compactMap { $0?.lowercased() }
-
-            return tokens.allSatisfy { token in
-                searchableFields.contains { $0.contains(token) }
-            }
-        }
-    }
-
-    private func expandSearchResultsIfNeeded(query: String) async {
-        var remainingPages = 4
-
-        while !Task.isCancelled,
-              remainingPages > 0,
-              continuation != nil,
-              filteredItems.count < 12 {
-            await fetch(reset: false)
-            remainingPages -= 1
-
-            guard query == searchQuery else { return }
-        }
-    }
 }
 
 @MainActor
