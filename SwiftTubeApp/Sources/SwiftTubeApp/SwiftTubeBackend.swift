@@ -407,19 +407,22 @@ actor SwiftTubeBackend {
         async let watchTask = api.next(videoID: videoID, authenticated: authenticated)
         async let playerTask = api.player(videoID: videoID, profile: .webParentTools, authenticated: authenticated)
         async let webPlayerTask = api.player(videoID: videoID, profile: .web, authenticated: authenticated)
-        async let mwebPlayerTask: JSONDictionary = authenticated
-            ? ((try? await api.player(videoID: videoID, profile: .mweb, authenticated: true)) ?? [:])
-            : [:]
-        async let ytDLPTask = extractYTDLPPlayback(
+        async let authenticatedYTDLPTask = extractYTDLPPlayback(
             videoID: videoID,
             cookieFileURL: authenticated ? await authManager.playbackCookieFileURL() : nil
+        )
+        async let publicYTDLPTask = extractYTDLPPlayback(
+            videoID: videoID,
+            cookieFileURL: nil
         )
 
         let watchData = try await watchTask
         let playerData = try await playerTask
         let webPlayerData = (try? await webPlayerTask) ?? [:]
-        let mwebPlayerData = await mwebPlayerTask
-        let ytDLPPlayback = try? await ytDLPTask
+        let authenticatedYTDLPPlayback = try? await authenticatedYTDLPTask
+        let publicYTDLPPlayback = try? await publicYTDLPTask
+        let preferredYTDLPPlayback = ((authenticatedYTDLPPlayback?.streams.isEmpty == false) ? authenticatedYTDLPPlayback : nil)
+            ?? ((publicYTDLPPlayback?.streams.isEmpty == false) ? publicYTDLPPlayback : nil)
 
         let metadata = extractWatchMetadata(from: watchData)
         var playlistOptions: [PlaylistOption] = []
@@ -431,15 +434,13 @@ actor SwiftTubeBackend {
 
         let playerStreams = mergeStreams(
             parseStreams(from: playerData),
-            parseStreams(from: webPlayerData),
-            parseStreams(from: mwebPlayerData)
+            parseStreams(from: webPlayerData)
         )
         let playerSubtitles = deduplicatedSubtitles(
             extractSubtitles(from: playerData)
                 + extractSubtitles(from: webPlayerData)
-                + extractSubtitles(from: mwebPlayerData)
         )
-        let resolvedStreams = ((ytDLPPlayback?.streams.isEmpty == false) ? ytDLPPlayback?.streams : nil)
+        let resolvedStreams = ((preferredYTDLPPlayback?.streams.isEmpty == false) ? preferredYTDLPPlayback?.streams : nil)
             ?? playerStreams
         guard !resolvedStreams.isEmpty else {
             throw BackendClientError(message: "No playable streams found")
@@ -447,12 +448,12 @@ actor SwiftTubeBackend {
 
         let playbackBundle = buildPlaybackBundle(
             streams: resolvedStreams,
-            subtitles: playerSubtitles + (ytDLPPlayback?.subtitles ?? [])
+            subtitles: playerSubtitles + (preferredYTDLPPlayback?.subtitles ?? [])
         )
         let bestStream = pickBestStream(in: resolvedStreams)
         let details = playerData["videoDetails"] as? JSONDictionary
-        let title: String? = metadata["title"] ?? ytDLPPlayback?.title ?? (details?["title"] as? String)
-        let duration = ytDLPPlayback?.durationText ?? metadataDurationText(from: details)
+        let title: String? = metadata["title"] ?? preferredYTDLPPlayback?.title ?? (details?["title"] as? String)
+        let duration = preferredYTDLPPlayback?.durationText ?? metadataDurationText(from: details)
 
         return VideoPlayback(
             id: videoID,
@@ -567,6 +568,7 @@ private func extractYTDLPPlayback(videoID: String, cookieFileURL: URL?) async th
         "--skip-download",
         "--quiet",
         "--no-warnings",
+        "--ignore-no-formats-error",
         "https://www.youtube.com/watch?v=\(videoID)",
     ]
 
