@@ -18,7 +18,7 @@ struct AuthMaterial: Sendable {
     let config: AuthSessionConfig
     let cookieFileURL: URL
     let sapisid: String
-    let cookieHeader: String
+    let cookies: [NetscapeCookie]
 
     var browser: String { config.browser }
     var browserLabel: String { config.browserLabel }
@@ -94,20 +94,21 @@ actor YouTubeAuthManager {
         return .signedOut
     }
 
-    func authHeaders() throws -> [String: String] {
+    func authHeaders(origin: String, url: URL) throws -> [String: String] {
         guard let material else {
             throw BackendClientError(message: "Sign in to YouTube to use this action.")
         }
 
         let timestamp = String(Int(Date().timeIntervalSince1970))
-        let source = "\(timestamp) \(material.sapisid) \(AuthConstants.youtubeOrigin)"
+        let source = "\(timestamp) \(material.sapisid) \(origin)"
         let digest = Insecure.SHA1.hash(data: Data(source.utf8)).map { String(format: "%02x", $0) }.joined()
+        let cookieHeader = try cookieHeader(for: material.cookies, url: url)
 
         return [
             "Authorization": "SAPISIDHASH \(timestamp)_\(digest)",
-            "Cookie": material.cookieHeader,
-            "Origin": AuthConstants.youtubeOrigin,
-            "X-Origin": AuthConstants.youtubeOrigin,
+            "Cookie": cookieHeader,
+            "Origin": origin,
+            "X-Origin": origin,
             "X-Youtube-Bootstrap-Logged-In": "true",
         ]
     }
@@ -146,11 +147,7 @@ actor YouTubeAuthManager {
         let relevantCookies = cookies.filter {
             $0.domain.contains("youtube") || $0.domain.contains("google")
         }
-        let cookieHeader = relevantCookies
-            .map { "\($0.name)=\($0.value)" }
-            .joined(separator: "; ")
-
-        guard !cookieHeader.isEmpty else {
+        guard !relevantCookies.isEmpty else {
             throw BackendClientError(message: "No usable YouTube cookies were found in the exported browser session.")
         }
 
@@ -158,15 +155,46 @@ actor YouTubeAuthManager {
             config: config,
             cookieFileURL: cookieFileURL,
             sapisid: sapisid,
-            cookieHeader: cookieHeader
+            cookies: relevantCookies
         )
+    }
+
+    private func cookieHeader(for cookies: [NetscapeCookie], url: URL) throws -> String {
+        let matchedCookies = cookies
+            .filter { $0.matches(url: url) }
+            .map { "\($0.name)=\($0.value)" }
+
+        guard !matchedCookies.isEmpty else {
+            throw BackendClientError(message: "The imported browser session does not include any cookies that apply to YouTube.")
+        }
+
+        return matchedCookies.joined(separator: "; ")
     }
 }
 
-private struct NetscapeCookie: Sendable {
+struct NetscapeCookie: Sendable {
     let domain: String
+    let path: String
+    let isSecure: Bool
     let name: String
     let value: String
+
+    func matches(url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+
+        let normalizedDomain = domain
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !normalizedDomain.isEmpty else { return false }
+
+        let path = self.path.isEmpty ? "/" : self.path
+        let requestPath = url.path.isEmpty ? "/" : url.path
+        let domainMatches = host == normalizedDomain || host.hasSuffix(".\(normalizedDomain)")
+        let pathMatches = requestPath.hasPrefix(path)
+        let secureMatches = !isSecure || url.scheme?.lowercased() == "https"
+
+        return domainMatches && pathMatches && secureMatches
+    }
 }
 
 private func parseCookieLine(_ line: Substring) -> NetscapeCookie? {
@@ -178,6 +206,8 @@ private func parseCookieLine(_ line: Substring) -> NetscapeCookie? {
 
     return NetscapeCookie(
         domain: components[0],
+        path: components[2],
+        isSecure: components[3].lowercased() == "true",
         name: components[5],
         value: components[6]
     )
@@ -197,11 +227,13 @@ enum YTDLPTool {
                 "--simulate",
                 "--quiet",
                 "--no-warnings",
+                "--ignore-no-formats-error",
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             ]
         )
 
-        guard result.exitCode == 0 else {
+        let exportedCookies = FileManager.default.fileExists(atPath: destinationURL.path)
+        guard result.exitCode == 0 || exportedCookies else {
             let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             throw BackendClientError(message: message.isEmpty ? "Failed to import browser cookies with yt-dlp." : message)
         }

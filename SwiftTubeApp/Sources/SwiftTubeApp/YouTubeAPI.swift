@@ -94,6 +94,7 @@ private struct VisitorKey: Hashable {
 
 final class YouTubeAPI: @unchecked Sendable {
     private let baseURL = URL(string: "https://youtubei.googleapis.com/youtubei/v1/")!
+    private let defaultAuthenticatedBaseURL = URL(string: "https://www.youtube.com/youtubei/v1/")!
     private let session: URLSession
     private let authManager: YouTubeAuthManager
     private var visitorData: [VisitorKey: String] = [:]
@@ -221,8 +222,8 @@ final class YouTubeAPI: @unchecked Sendable {
 
     func validateAuthentication() async throws {
         let payload = try await browse(browseID: "FEwhat_to_watch", authenticated: true)
-        let loggedIn = responseLoggedIn(payload)
-        guard loggedIn == true else {
+        let authenticated = responseAuthenticated(payload)
+        guard authenticated == true else {
             throw BackendClientError(message: "SwiftTube could read the browser cookies, but YouTube did not accept them as a signed-in session.")
         }
     }
@@ -235,8 +236,10 @@ final class YouTubeAPI: @unchecked Sendable {
     ) async throws -> JSONDictionary {
         let context = InnerTubeClients.context(for: profile)
         let visitorKey = VisitorKey(profile: profile, authenticated: authenticated)
+        let requestBaseURL = authenticated ? authenticatedBaseURL(for: context) : baseURL
+        let requestOrigin = authenticated ? authenticatedOrigin(for: context) : nil
 
-        var components = URLComponents(url: baseURL.appendingPathComponent(endpoint), resolvingAgainstBaseURL: false)!
+        var components = URLComponents(url: requestBaseURL.appendingPathComponent(endpoint), resolvingAgainstBaseURL: false)!
         components.queryItems = context.queryItems
 
         guard let url = components.url else {
@@ -256,7 +259,10 @@ final class YouTubeAPI: @unchecked Sendable {
         }
 
         if authenticated {
-            for (header, value) in try await authManager.authHeaders() {
+            for (header, value) in try await authManager.authHeaders(
+                origin: requestOrigin ?? "https://www.youtube.com",
+                url: url
+            ) {
                 request.setValue(value, forHTTPHeaderField: header)
             }
         }
@@ -284,6 +290,26 @@ final class YouTubeAPI: @unchecked Sendable {
 
         return dictionary
     }
+
+    private func authenticatedBaseURL(for context: InnerTubeClientContext) -> URL {
+        guard let referer = context.referer,
+              let refererURL = URL(string: referer) else {
+            return defaultAuthenticatedBaseURL
+        }
+
+        return refererURL.appending(path: "youtubei/v1/")
+    }
+
+    private func authenticatedOrigin(for context: InnerTubeClientContext) -> String {
+        guard let referer = context.referer,
+              let refererURL = URL(string: referer),
+              let scheme = refererURL.scheme,
+              let host = refererURL.host else {
+            return "https://www.youtube.com"
+        }
+
+        return "\(scheme)://\(host)"
+    }
 }
 
 private func validateHTTPResponse(_ response: URLResponse, data: Data) throws {
@@ -304,6 +330,19 @@ private func validateHTTPResponse(_ response: URLResponse, data: Data) throws {
 
 private func responseVisitorData(_ payload: JSONDictionary) -> String? {
     ((payload["responseContext"] as? JSONDictionary)?["visitorData"] as? String)
+}
+
+private func responseAuthenticated(_ payload: JSONDictionary) -> Bool? {
+    if let loggedOut = responseLoggedOut(payload) {
+        return !loggedOut
+    }
+
+    return responseLoggedIn(payload)
+}
+
+private func responseLoggedOut(_ payload: JSONDictionary) -> Bool? {
+    guard let responseContext = payload["responseContext"] as? JSONDictionary else { return nil }
+    return ((responseContext["mainAppWebResponseContext"] as? JSONDictionary)?["loggedOut"] as? Bool)
 }
 
 private func responseLoggedIn(_ payload: JSONDictionary) -> Bool? {
