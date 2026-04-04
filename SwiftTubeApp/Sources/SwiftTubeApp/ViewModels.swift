@@ -103,11 +103,22 @@ final class HomeViewModel: ObservableObject {
 @MainActor
 final class WatchHistoryViewModel: ObservableObject {
     @Published private(set) var items: [VideoItem] = []
+    @Published private(set) var filteredItems: [VideoItem] = []
+    @Published private(set) var searchQuery: String = ""
     @Published var isLoading = false
     @Published var errorMessage: String? = nil
 
     private var continuation: String? = nil
     private var hasLoadedInitial = false
+    private var searchExpansionTask: Task<Void, Never>? = nil
+
+    var hasActiveFilter: Bool {
+        !trimmedSearchQuery.isEmpty
+    }
+
+    var totalItemCount: Int {
+        items.count
+    }
 
     func loadInitial() {
         guard !hasLoadedInitial else { return }
@@ -120,10 +131,30 @@ final class WatchHistoryViewModel: ObservableObject {
         loadInitial()
     }
 
-    func loadMoreIfNeeded(currentIndex: Int) {
+    func updateSearchQuery(_ query: String) {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedQuery != searchQuery else { return }
+
+        searchExpansionTask?.cancel()
+        searchQuery = normalizedQuery
+        applyFilter()
+
+        guard !normalizedQuery.isEmpty,
+              continuation != nil,
+              hasLoadedInitial else {
+            return
+        }
+
+        searchExpansionTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.expandSearchResultsIfNeeded(query: normalizedQuery)
+        }
+    }
+
+    func loadMoreIfNeeded(currentVideo: VideoItem) {
         guard continuation != nil, !isLoading else { return }
-        let thresholdIndex = max(items.count - 6, 0)
-        guard currentIndex >= thresholdIndex else { return }
+        guard filteredItems.last == currentVideo else { return }
         Task { await fetch(reset: false) }
     }
 
@@ -134,6 +165,7 @@ final class WatchHistoryViewModel: ObservableObject {
         if reset {
             continuation = nil
             items = []
+            filteredItems = []
         }
 
         do {
@@ -146,15 +178,65 @@ final class WatchHistoryViewModel: ObservableObject {
                 items.append(contentsOf: response.items)
             }
             continuation = response.continuation
+            applyFilter()
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private var trimmedSearchQuery: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func applyFilter() {
+        guard !trimmedSearchQuery.isEmpty else {
+            filteredItems = items
+            return
+        }
+
+        let tokens = trimmedSearchQuery
+            .lowercased()
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+
+        filteredItems = items.filter { item in
+            let searchableFields = [
+                item.title,
+                item.channel,
+                item.viewCountText,
+                item.publishedTimeText
+            ]
+                .compactMap { $0?.lowercased() }
+
+            return tokens.allSatisfy { token in
+                searchableFields.contains { $0.contains(token) }
+            }
+        }
+    }
+
+    private func expandSearchResultsIfNeeded(query: String) async {
+        var remainingPages = 4
+
+        while !Task.isCancelled,
+              remainingPages > 0,
+              continuation != nil,
+              filteredItems.count < 12 {
+            await fetch(reset: false)
+            remainingPages -= 1
+
+            guard query == searchQuery else { return }
         }
     }
 }
 
 @MainActor
 final class SearchViewModel: ObservableObject {
+    enum Scope: Equatable {
+        case global
+        case history
+    }
+
     struct ParsedVideoLink: Equatable {
         let videoID: String
         let startTime: Double
@@ -165,6 +247,7 @@ final class SearchViewModel: ObservableObject {
         let title: String
         let channel: String?
         let startTime: Double
+        let thumbnailURL: URL?
     }
 
     @Published var query: String = ""
@@ -180,8 +263,9 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var lastQuery: String = ""
     private var suggestionTask: Task<Void, Never>? = nil
     private var linkPreviewTask: Task<Void, Never>? = nil
+    private var interactiveSearchTask: Task<Void, Never>? = nil
 
-    func submit(navigation: AppNavigationModel) {
+    func submit(navigation: AppNavigationModel, scope: Scope) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -201,12 +285,14 @@ final class SearchViewModel: ObservableObject {
             return
         }
 
+        guard scope == .global else { return }
         performSearch(query: trimmed, reset: true)
     }
 
     func clear() {
         suggestionTask?.cancel()
         linkPreviewTask?.cancel()
+        interactiveSearchTask?.cancel()
         query = ""
         results = []
         isActive = false
@@ -218,9 +304,21 @@ final class SearchViewModel: ObservableObject {
         isLoadingSuggestions = false
     }
 
-    func handleQueryChange() {
+    func clearToolbarInput() {
         suggestionTask?.cancel()
         linkPreviewTask?.cancel()
+        interactiveSearchTask?.cancel()
+        query = ""
+        suggestions = []
+        linkPreview = nil
+        isLoadingSuggestions = false
+        errorMessage = nil
+    }
+
+    func handleQueryChange(scope: Scope) {
+        suggestionTask?.cancel()
+        linkPreviewTask?.cancel()
+        interactiveSearchTask?.cancel()
 
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -237,7 +335,8 @@ final class SearchViewModel: ObservableObject {
                 videoID: parsedLink.videoID,
                 title: "YouTube link detected",
                 channel: nil,
-                startTime: parsedLink.startTime
+                startTime: parsedLink.startTime,
+                thumbnailURL: nil
             )
 
             linkPreviewTask = Task {
@@ -248,7 +347,8 @@ final class SearchViewModel: ObservableObject {
                         videoID: parsedLink.videoID,
                         title: playback.title ?? "YouTube link detected",
                         channel: playback.channel,
-                        startTime: parsedLink.startTime
+                        startTime: parsedLink.startTime,
+                        thumbnailURL: Self.thumbnailURL(for: parsedLink.videoID)
                     )
                 } catch {
                     guard !Task.isCancelled else { return }
@@ -257,8 +357,24 @@ final class SearchViewModel: ObservableObject {
             return
         }
 
+        guard scope == .global else {
+            suggestions = []
+            linkPreview = nil
+            isLoadingSuggestions = false
+            return
+        }
+
         linkPreview = nil
         isLoadingSuggestions = true
+
+        if isActive, trimmed != lastQuery {
+            interactiveSearchTask = Task {
+                try? await Task.sleep(nanoseconds: 260_000_000)
+                guard !Task.isCancelled else { return }
+                performSearch(query: trimmed, reset: true)
+            }
+        }
+
         suggestionTask = Task {
             try? await Task.sleep(nanoseconds: 180_000_000)
             guard !Task.isCancelled else { return }
@@ -332,6 +448,10 @@ final class SearchViewModel: ObservableObject {
                 errorMessage = "Search failed. Please try again."
             }
         }
+    }
+
+    private static func thumbnailURL(for videoID: String) -> URL? {
+        URL(string: "https://i.ytimg.com/vi/\(videoID)/hqdefault.jpg")
     }
 
     static func extractVideoLink(from input: String) -> ParsedVideoLink? {

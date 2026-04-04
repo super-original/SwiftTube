@@ -1,6 +1,17 @@
 import AppKit
 import SwiftUI
 
+private enum SearchAssistState: Equatable {
+    case hidden
+    case loading
+    case suggestions([String])
+    case link(SearchViewModel.LinkPreview)
+
+    var isVisible: Bool {
+        self != .hidden
+    }
+}
+
 struct ContentView: View {
     @StateObject private var viewModel = HomeViewModel()
     @StateObject private var historyViewModel = WatchHistoryViewModel()
@@ -15,6 +26,7 @@ struct ContentView: View {
         GridItem(.adaptive(minimum: 240), spacing: 20, alignment: .top)
     ]
     private let searchChromeWidth: CGFloat = 300
+    private let searchAssistWidth: CGFloat = 540
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -65,8 +77,8 @@ struct ContentView: View {
                 ToolbarSearchField(
                     text: $searchViewModel.query,
                     placeholder: "Search or paste YouTube URL",
-                    onSubmit: { searchViewModel.submit(navigation: navigation) },
-                    onClear: { searchViewModel.clear() }
+                    onSubmit: handleToolbarSubmit,
+                    onClear: handleToolbarClear
                 )
                 .frame(width: searchChromeWidth)
             }
@@ -114,7 +126,13 @@ struct ContentView: View {
             navigation.ensureValidSidebarSelection(visibleItems: visibleSidebarItems)
         }
         .onChange(of: searchViewModel.query) { _, _ in
-            searchViewModel.handleQueryChange()
+            handleToolbarQueryChange()
+        }
+        .onChange(of: navigation.currentRoute) { _, _ in
+            syncHistorySearchQuery()
+        }
+        .onChange(of: searchViewModel.isActive) { _, _ in
+            syncHistorySearchQuery()
         }
     }
 }
@@ -125,12 +143,13 @@ private extension ContentView {
         ZStack(alignment: .top) {
             currentScreen
 
-            if shouldShowSearchAssist {
+            if searchAssistState.isVisible {
                 searchAssistOverlay
                     .padding(.top, 12)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .animation(.snappy(duration: 0.2, extraBounce: 0), value: searchAssistState)
     }
 
     var visibleSidebarItems: [SidebarItemKind] {
@@ -147,13 +166,24 @@ private extension ContentView {
         visibleSidebarItems.count > 1
     }
 
-    var shouldShowSearchAssist: Bool {
-        !searchViewModel.isActive
-            && (
-                searchViewModel.linkPreview != nil
-                || searchViewModel.isLoadingSuggestions
-                || !searchViewModel.suggestions.isEmpty
-            )
+    var toolbarSearchScope: SearchViewModel.Scope {
+        if searchViewModel.isActive {
+            return .global
+        }
+        return navigation.currentRoute == .watchHistory ? .history : .global
+    }
+
+    var searchAssistState: SearchAssistState {
+        if let linkPreview = searchViewModel.linkPreview {
+            return .link(linkPreview)
+        }
+        if searchViewModel.isLoadingSuggestions {
+            return .loading
+        }
+        if !searchViewModel.suggestions.isEmpty {
+            return .suggestions(searchViewModel.suggestions)
+        }
+        return .hidden
     }
 
     var backgroundView: some View {
@@ -214,6 +244,10 @@ private extension ContentView {
             VStack(alignment: .leading, spacing: 24) {
                 Text("History")
                     .font(.system(size: 28, weight: .bold))
+
+                Text("A cleaner stack of everything you watched, with both YouTube sync and SwiftTube's exact resume progress.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
 
                 watchHistoryContentView
             }
@@ -313,40 +347,33 @@ private extension ContentView {
 
     @ViewBuilder
     var watchHistoryContentView: some View {
-        if historyViewModel.items.isEmpty {
-            if historyViewModel.isLoading {
-                placeholderGrid
-            } else if let error = historyViewModel.errorMessage {
-                EmptyStateView(
-                    title: "Couldn’t load watch history",
-                    message: error,
-                    actionTitle: "Try Again"
-                ) {
-                    historyViewModel.reload()
-                }
-            } else {
-                EmptyStateView(
-                    title: "No watch history yet",
-                    message: "Once YouTube has history for this account, it will show up here.",
-                    actionTitle: "Refresh"
-                ) {
-                    historyViewModel.reload()
-                }
-            }
-        } else {
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                ForEach(Array(historyViewModel.items.enumerated()), id: \.offset) { index, video in
-                    Button {
-                        navigation.showVideo(video)
-                    } label: {
-                        VideoCard(video: video)
-                    }
-                    .buttonStyle(.plain)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 28) {
+                historyVideoStack
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .onAppear {
-                        historyViewModel.loadMoreIfNeeded(currentIndex: index)
-                    }
-                }
+
+                HistoryCompanionPanel(
+                    searchQuery: historyViewModel.searchQuery,
+                    isFiltering: historyViewModel.hasActiveFilter,
+                    visibleCount: historyViewModel.filteredItems.count,
+                    totalCount: historyViewModel.totalItemCount,
+                    onClearFilter: handleToolbarClear,
+                    onRefresh: historyViewModel.reload
+                )
+                .frame(width: 310)
+            }
+
+            VStack(alignment: .leading, spacing: 20) {
+                HistoryCompanionPanel(
+                    searchQuery: historyViewModel.searchQuery,
+                    isFiltering: historyViewModel.hasActiveFilter,
+                    visibleCount: historyViewModel.filteredItems.count,
+                    totalCount: historyViewModel.totalItemCount,
+                    onClearFilter: handleToolbarClear,
+                    onRefresh: historyViewModel.reload
+                )
+
+                historyVideoStack
             }
         }
     }
@@ -357,7 +384,7 @@ private extension ContentView {
             Text("Results for \"\(searchViewModel.lastQuery)\"")
                 .font(.title3.weight(.semibold))
             Spacer()
-            Button("Clear") {
+            Button("Close Search") {
                 searchViewModel.clear()
             }
             .buttonStyle(.plain)
@@ -373,13 +400,13 @@ private extension ContentView {
                     message: error,
                     actionTitle: "Try Again"
                 ) {
-                    searchViewModel.submit(navigation: navigation)
+                    handleToolbarSubmit()
                 }
             } else {
                 EmptyStateView(
                     title: "No results",
-                    message: "No videos found for \"\(searchViewModel.query)\".",
-                    actionTitle: "Clear Search"
+                    message: "No videos found for \"\(searchViewModel.lastQuery)\".",
+                    actionTitle: "Close Search"
                 ) {
                     searchViewModel.clear()
                 }
@@ -446,7 +473,7 @@ private extension ContentView {
 
     func refreshCurrentRoute() {
         if searchViewModel.isActive {
-            searchViewModel.submit(navigation: navigation)
+            handleToolbarSubmit()
             return
         }
 
@@ -544,19 +571,147 @@ private extension ContentView {
 
     var searchAssistOverlay: some View {
         SearchAssistPanel(
-            suggestions: searchViewModel.suggestions,
-            linkPreview: searchViewModel.linkPreview,
-            isLoading: searchViewModel.isLoadingSuggestions,
+            state: searchAssistState,
             onSelectSuggestion: { suggestion in
                 searchViewModel.applySuggestion(suggestion)
-                searchViewModel.submit(navigation: navigation)
+                handleToolbarSubmit()
             },
-            onOpenLink: {
-                searchViewModel.submit(navigation: navigation)
-            }
+            onOpenLink: handleToolbarSubmit
         )
-        .frame(width: searchChromeWidth)
+        .frame(width: searchAssistWidth)
         .shadow(color: .black.opacity(0.22), radius: 20, y: 10)
+    }
+
+    @ViewBuilder
+    var historyVideoStack: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(historyViewModel.hasActiveFilter ? "Matching in History" : "Recently Watched")
+                        .font(.title2.weight(.bold))
+
+                    Text(historySummaryLine)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if historyViewModel.hasActiveFilter {
+                    Button("Clear Filter") {
+                        handleToolbarClear()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
+            }
+
+            if historyViewModel.filteredItems.isEmpty {
+                if historyViewModel.isLoading && historyViewModel.items.isEmpty {
+                    LazyVStack(spacing: 14) {
+                        ForEach(0..<6, id: \.self) { _ in
+                            PlaylistFeedPlaceholderRow()
+                        }
+                    }
+                } else if let error = historyViewModel.errorMessage {
+                    EmptyStateView(
+                        title: "Couldn’t load watch history",
+                        message: error,
+                        actionTitle: "Try Again"
+                    ) {
+                        historyViewModel.reload()
+                    }
+                } else if historyViewModel.hasActiveFilter {
+                    EmptyStateView(
+                        title: "No matches yet",
+                        message: "Nothing in the loaded watch history matched \"\(historyViewModel.searchQuery)\".",
+                        actionTitle: "Clear Filter"
+                    ) {
+                        handleToolbarClear()
+                    }
+                } else {
+                    EmptyStateView(
+                        title: "No watch history yet",
+                        message: "Once YouTube has history for this account, it will show up here.",
+                        actionTitle: "Refresh"
+                    ) {
+                        historyViewModel.reload()
+                    }
+                }
+            } else {
+                LazyVStack(spacing: 14) {
+                    ForEach(historyViewModel.filteredItems, id: \.id) { video in
+                        Button {
+                            navigation.showVideo(video)
+                        } label: {
+                            HistoryVideoRow(video: video)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            VideoContextMenuContent(
+                                video: video,
+                                userPlaylists: userOwnedPlaylists,
+                                onPlay: { navigation.showVideo(video) },
+                                onPlayFromHere: nil,
+                                onAddToWatchLater: authSession.status.authenticated
+                                    ? runDetachedAction {
+                                        _ = try await BackendClient.shared.updateWatchLater(id: video.id, saved: true)
+                                    }
+                                    : nil,
+                                onSaveToPlaylist: authSession.status.authenticated ? { playlistID in
+                                    runDetachedAction {
+                                        _ = try await BackendClient.shared.updatePlaylist(
+                                            id: video.id,
+                                            playlistId: playlistID,
+                                            saved: true
+                                        )
+                                    }()
+                                } : nil,
+                                onMoveToPlaylist: nil,
+                                onMoveToWatchLater: nil,
+                                onRemoveFromCurrentPlaylist: nil,
+                                onMoveToTop: nil,
+                                onMoveToBottom: nil
+                            )
+                        }
+                        .onAppear {
+                            historyViewModel.loadMoreIfNeeded(currentVideo: video)
+                        }
+                    }
+                }
+
+                if historyViewModel.isLoading {
+                    ProgressView("Loading more history...")
+                        .padding(.top, 8)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    var historySummaryLine: String {
+        if historyViewModel.hasActiveFilter {
+            return "\(historyViewModel.filteredItems.count) matches in \(historyViewModel.totalItemCount) loaded videos"
+        }
+        return "\(historyViewModel.totalItemCount) videos synced from YouTube watch history"
+    }
+
+    func handleToolbarSubmit() {
+        searchViewModel.submit(navigation: navigation, scope: toolbarSearchScope)
+    }
+
+    func handleToolbarClear() {
+        searchViewModel.clearToolbarInput()
+        syncHistorySearchQuery()
+    }
+
+    func handleToolbarQueryChange() {
+        searchViewModel.handleQueryChange(scope: toolbarSearchScope)
+        syncHistorySearchQuery()
+    }
+
+    func syncHistorySearchQuery() {
+        historyViewModel.updateSearchQuery(toolbarSearchScope == .history ? searchViewModel.query : "")
     }
 }
 
@@ -1644,18 +1799,19 @@ private struct PlaceholderCard: View {
 
 private struct SearchAssistPanel: View {
     @ObservedObject private var settings = AppSettings.shared
-    let suggestions: [String]
-    let linkPreview: SearchViewModel.LinkPreview?
-    let isLoading: Bool
+    let state: SearchAssistState
     let onSelectSuggestion: (String) -> Void
     let onOpenLink: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let linkPreview {
+            switch state {
+            case .hidden:
+                EmptyView()
+            case .link(let linkPreview):
                 SearchLinkDetectedCard(linkPreview: linkPreview, onOpen: onOpenLink)
                     .transition(.scale(scale: 0.98).combined(with: .opacity))
-            } else if isLoading {
+            case .loading:
                 HStack(spacing: 10) {
                     ProgressView()
                         .controlSize(.small)
@@ -1664,13 +1820,15 @@ private struct SearchAssistPanel: View {
                 }
                 .font(.subheadline)
                 .padding(14)
-            } else if !suggestions.isEmpty {
+                .transition(.move(edge: .top).combined(with: .opacity))
+            case .suggestions(let suggestions):
                 ForEach(suggestions, id: \.self) { suggestion in
                     SearchSuggestionRow(
                         suggestion: suggestion,
                         onSelect: { onSelectSuggestion(suggestion) }
                     )
                 }
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .padding(.vertical, 8)
@@ -1682,8 +1840,7 @@ private struct SearchAssistPanel: View {
             RoundedRectangle(cornerRadius: 24)
                 .stroke(Color.white.opacity(settings.preferredColorScheme == .dark ? 0.06 : 0.18), lineWidth: 1)
         )
-        .animation(.snappy(duration: 0.18, extraBounce: 0), value: suggestions)
-        .animation(.snappy(duration: 0.18, extraBounce: 0), value: linkPreview)
+        .animation(.snappy(duration: 0.2, extraBounce: 0), value: state)
     }
 }
 
@@ -1735,51 +1892,44 @@ private struct SearchLinkDetectedCard: View {
 
     var body: some View {
         Button(action: onOpen) {
-            HStack(spacing: 14) {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.red.opacity(0.95), Color.orange.opacity(0.75)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 68, height: 56)
-                    .overlay(
-                        Image(systemName: "play.fill")
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(.white)
-                    )
+            HStack(spacing: 18) {
+                SearchLinkArtwork(linkPreview: linkPreview)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("YouTube Link Detected")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Text(linkPreview.title)
-                        .font(.headline)
+                        .font(.title3.weight(.bold))
                         .foregroundStyle(.primary)
-                        .lineLimit(2)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
                     Text(linkDetailLine)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer()
-
-                Image(systemName: "arrow.right.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(Color.accentColor)
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor)
+                    Image(systemName: "arrow.right")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white)
+                }
+                .frame(width: 40, height: 40)
             }
-            .padding(16)
+            .padding(18)
             .background(
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(isHovered ? Color.white.opacity(0.06) : .clear)
+                RoundedRectangle(cornerRadius: 22)
+                    .fill(isHovered ? Color.white.opacity(0.07) : Color.white.opacity(0.025))
             )
             .scaleEffect(isHovered ? 1.008 : 1)
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
+        .animation(.snappy(duration: 0.2, extraBounce: 0), value: linkPreview.thumbnailURL)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.14)) {
                 isHovered = hovering
@@ -1808,5 +1958,285 @@ private struct SearchLinkDetectedCard: View {
             return "\(hours):\(String(format: "%02d", minutes)):\(String(format: "%02d", remainder))"
         }
         return "\(minutes):\(String(format: "%02d", remainder))"
+    }
+}
+
+private struct SearchLinkArtwork: View {
+    let linkPreview: SearchViewModel.LinkPreview
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.white.opacity(0.05))
+
+            CachedAsyncImage(url: linkPreview.thumbnailURL, maxPixelSize: 512) {
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.12, green: 0.12, blue: 0.14),
+                                Color(red: 0.07, green: 0.07, blue: 0.08)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay {
+                        if let youtubeMark = BrandAssets.youtubeMark {
+                            Image(nsImage: youtubeMark)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 62, height: 44)
+                        } else {
+                            Image(systemName: "play.rectangle.fill")
+                                .font(.system(size: 30, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+        }
+        .frame(width: 176, height: 99)
+    }
+}
+
+private struct HistoryCompanionPanel: View {
+    let searchQuery: String
+    let isFiltering: Bool
+    let visibleCount: Int
+    let totalCount: Int
+    let onClearFilter: () -> Void
+    let onRefresh: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HistoryPanelCard(title: "History Search", icon: "magnifyingglass") {
+                Text(isFiltering ? "Filtering the loaded watch history for \"\(searchQuery)\"." : "Use the toolbar search to instantly filter your history by title, channel, and metadata.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    HistoryStatPill(label: "Visible", value: "\(visibleCount)")
+                    HistoryStatPill(label: "Loaded", value: "\(totalCount)")
+                }
+
+                if isFiltering {
+                    Button("Clear Filter", action: onClearFilter)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HistoryPanelCard(title: "Resume Legend", icon: "timeline.selection") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HistoryLegendRow(color: .red, label: "YouTube resume position")
+                    HistoryLegendRow(color: Color(red: 0.39, green: 0.78, blue: 1.0), label: "SwiftTube exact second-by-second resume")
+                }
+            }
+
+            HistoryPanelCard(title: "Library", icon: "clock.arrow.trianglehead.counterclockwise.rotate.90") {
+                Text("Your history stack stays compact like YouTube, but keeps SwiftTube’s cleaner card language and exact resume data.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                Button("Refresh History", action: onRefresh)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct HistoryPanelCard<Content: View>: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let title: String
+    let icon: String
+    let content: Content
+
+    init(title: String, icon: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.icon = icon
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: icon)
+                .font(.headline.weight(.semibold))
+
+            content
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(settings.cardBackgroundColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .stroke(Color.white.opacity(settings.preferredColorScheme == .dark ? 0.06 : 0.16), lineWidth: 1)
+        )
+    }
+}
+
+private struct HistoryStatPill: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.headline.monospacedDigit())
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white.opacity(0.05))
+        )
+    }
+}
+
+private struct HistoryLegendRow: View {
+    let color: Color
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Capsule()
+                .fill(color)
+                .frame(width: 42, height: 5)
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct HistoryVideoRow: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let video: VideoItem
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 18) {
+            HistoryVideoThumbnail(video: video)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(video.title)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                if !metadataLine.isEmpty {
+                    Text(metadataLine)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let resumeBadgeText {
+                    Label(resumeBadgeText, systemImage: "play.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color(red: 0.39, green: 0.78, blue: 1.0))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.top, 8)
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 26)
+                .fill(settings.cardBackgroundColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 26)
+                .stroke(Color.white.opacity(settings.preferredColorScheme == .dark ? 0.06 : 0.16), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(isHovered ? 0.16 : 0.08), radius: isHovered ? 18 : 10, y: isHovered ? 10 : 4)
+        .scaleEffect(isHovered ? 1.006 : 1)
+        .animation(.easeOut(duration: 0.16), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+
+    private var metadataLine: String {
+        [video.channel, video.viewCountText, video.publishedTimeText]
+            .compactMap { $0 }
+            .joined(separator: " • ")
+    }
+
+    private var resumeBadgeText: String? {
+        guard let progress = video.progress else { return nil }
+        if progress.localCompleted {
+            return "Watched through"
+        }
+        if let seconds = progress.bestResumeSeconds {
+            return "Resume at \(formatTime(seconds))"
+        }
+        if progress.normalizedYouTubeFraction != nil {
+            return "Synced with YouTube"
+        }
+        return nil
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        let totalSeconds = Int(seconds.rounded(.down))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let remainder = totalSeconds % 60
+
+        if hours > 0 {
+            return "\(hours):\(String(format: "%02d", minutes)):\(String(format: "%02d", remainder))"
+        }
+        return "\(minutes):\(String(format: "%02d", remainder))"
+    }
+}
+
+private struct HistoryVideoThumbnail: View {
+    let video: VideoItem
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 22)
+                .fill(Color.white.opacity(0.04))
+                .frame(width: 252, height: 142)
+                .offset(x: -10, y: 10)
+
+            CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 640) {
+                RoundedRectangle(cornerRadius: 22)
+                    .fill(Color.gray.opacity(0.18))
+                    .overlay(
+                        Image(systemName: "play.rectangle.fill")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.secondary)
+                    )
+            }
+            .frame(width: 252, height: 142)
+            .clipShape(RoundedRectangle(cornerRadius: 22))
+            .overlay(alignment: .bottom) {
+                VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 22)
+            }
+
+            if let duration = video.durationText {
+                Text(duration)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.black.opacity(0.74)))
+                    .foregroundStyle(.white)
+                    .padding(10)
+            }
+        }
+        .padding(.trailing, 12)
+        .padding(.bottom, 10)
     }
 }
