@@ -109,6 +109,14 @@ final class BackendClient {
             didFinish: didFinish
         )
     }
+
+    func removeWatchHistoryVideo(id videoID: String) async throws -> WatchHistoryMutationResponse {
+        try await backend.removeWatchHistoryVideo(id: videoID)
+    }
+
+    func trimWatchHistory(range: WatchHistoryTrimRange) async throws -> WatchHistoryMutationResponse {
+        try await backend.trimWatchHistory(range: range)
+    }
 }
 
 struct BackendClientError: LocalizedError {

@@ -156,6 +156,13 @@ final class WatchHistoryViewModel: ObservableObject {
         Task { await fetch(reset: false) }
     }
 
+    func removeItemsLocally(ids videoIDs: [String]) {
+        guard videoIDs.isEmpty == false else { return }
+        let idSet = Set(videoIDs)
+        items.removeAll { idSet.contains($0.id) }
+        filteredItems.removeAll { idSet.contains($0.id) }
+    }
+
     private func fetch(reset: Bool, queryOverride: String? = nil) async {
         let requestQuery = (queryOverride ?? trimmedSearchQuery).trimmingCharacters(in: .whitespacesAndNewlines)
         isLoading = true

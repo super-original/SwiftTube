@@ -13,6 +13,7 @@ struct VideoContextMenuContent: View {
     let onRemoveFromCurrentPlaylist: (() -> Void)?
     let onMoveToTop: (() -> Void)?
     let onMoveToBottom: (() -> Void)?
+    let onRemoveFromWatchHistory: (() -> Void)?
 
     var body: some View {
         Button(action: onPlay) {
@@ -100,6 +101,12 @@ struct VideoContextMenuContent: View {
 
         if onRemoveFromCurrentPlaylist != nil || onMoveToTop != nil || onMoveToBottom != nil {
             Divider()
+        }
+
+        if let onRemoveFromWatchHistory {
+            Button(role: .destructive, action: onRemoveFromWatchHistory) {
+                Label("Remove from Watch History", systemImage: "trash")
+            }
         }
 
         if let onRemoveFromCurrentPlaylist {

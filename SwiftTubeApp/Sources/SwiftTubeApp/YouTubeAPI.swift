@@ -115,6 +115,7 @@ final class YouTubeAPI: @unchecked Sendable {
     func browse(
         profile: InnerTubeClientProfile = .web,
         browseID: String? = nil,
+        query: String? = nil,
         params: String? = nil,
         continuation: String? = nil,
         authenticated: Bool = false
@@ -122,6 +123,9 @@ final class YouTubeAPI: @unchecked Sendable {
         var body: JSONDictionary = [:]
         if let browseID {
             body["browseId"] = browseID
+        }
+        if let query {
+            body["query"] = query
         }
         if let params {
             body["params"] = params

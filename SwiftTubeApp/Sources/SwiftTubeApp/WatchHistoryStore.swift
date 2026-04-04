@@ -33,6 +33,15 @@ actor WatchHistoryStore {
         return result
     }
 
+    func allProgressEntries() async -> [String: VideoProgress] {
+        await loadIfNeeded()
+        var result: [String: VideoProgress] = [:]
+        for (videoID, entry) in entries {
+            result[videoID] = progress(from: entry)
+        }
+        return result
+    }
+
     func recordProgress(
         videoID: String,
         currentTime: Double,

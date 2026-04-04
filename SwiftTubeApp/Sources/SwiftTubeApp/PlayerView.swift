@@ -947,7 +947,8 @@ private extension PlayerScreen {
                                 },
                                 onRemoveFromCurrentPlaylist: queueVideo.playlistCanRemove ? { removeQueueVideo(queueVideo) } : nil,
                                 onMoveToTop: queueVideo.playlistCanMoveToTop ? { moveQueueVideo(queueVideo, position: "top") } : nil,
-                                onMoveToBottom: queueVideo.playlistCanMoveToBottom ? { moveQueueVideo(queueVideo, position: "bottom") } : nil
+                                onMoveToBottom: queueVideo.playlistCanMoveToBottom ? { moveQueueVideo(queueVideo, position: "bottom") } : nil,
+                                onRemoveFromWatchHistory: nil
                             )
                         }
                         .padding(.bottom, 6)
@@ -1262,7 +1263,8 @@ private extension PlayerScreen {
                                 onMoveToWatchLater: nil,
                                 onRemoveFromCurrentPlaylist: nil,
                                 onMoveToTop: nil,
-                                onMoveToBottom: nil
+                                onMoveToBottom: nil,
+                                onRemoveFromWatchHistory: nil
                             )
                         }
                         .onAppear {

@@ -17,6 +17,8 @@ struct ContentView: View {
     @StateObject private var historyViewModel = WatchHistoryViewModel()
     @StateObject private var searchViewModel = SearchViewModel()
     @StateObject private var playlistLibraryViewModel = PlaylistLibraryViewModel()
+    @State private var deletingHistoryVideoIDs = Set<String>()
+    @State private var activeHistoryBulkDelete: WatchHistoryTrimRange? = nil
     @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var backend: BackendManager
     @EnvironmentObject private var navigation: AppNavigationModel
@@ -167,9 +169,6 @@ private extension ContentView {
     }
 
     var toolbarSearchScope: SearchViewModel.Scope {
-        if searchViewModel.isActive {
-            return .global
-        }
         return navigation.currentRoute == .watchHistory ? .history : .global
     }
 
@@ -332,7 +331,8 @@ private extension ContentView {
                             onMoveToWatchLater: nil,
                             onRemoveFromCurrentPlaylist: nil,
                             onMoveToTop: nil,
-                            onMoveToBottom: nil
+                            onMoveToBottom: nil,
+                            onRemoveFromWatchHistory: nil
                         )
                     }
                     .onAppear {
@@ -361,8 +361,9 @@ private extension ContentView {
                     isFiltering: historyViewModel.hasActiveFilter,
                     visibleCount: historyViewModel.filteredItems.count,
                     totalCount: historyViewModel.totalItemCount,
-                    onClearFilter: handleToolbarClear,
-                    onRefresh: historyViewModel.reload
+                    activeBulkDelete: activeHistoryBulkDelete,
+                    onRefresh: historyViewModel.reload,
+                    onDeleteRecent: performBulkHistoryDelete
                 )
                 .frame(width: 310)
             }
@@ -373,8 +374,9 @@ private extension ContentView {
                     isFiltering: historyViewModel.hasActiveFilter,
                     visibleCount: historyViewModel.filteredItems.count,
                     totalCount: historyViewModel.totalItemCount,
-                    onClearFilter: handleToolbarClear,
-                    onRefresh: historyViewModel.reload
+                    activeBulkDelete: activeHistoryBulkDelete,
+                    onRefresh: historyViewModel.reload,
+                    onDeleteRecent: performBulkHistoryDelete
                 )
 
                 historyVideoStack
@@ -449,7 +451,8 @@ private extension ContentView {
                             onMoveToWatchLater: nil,
                             onRemoveFromCurrentPlaylist: nil,
                             onMoveToTop: nil,
-                            onMoveToBottom: nil
+                            onMoveToBottom: nil,
+                            onRemoveFromWatchHistory: nil
                         )
                     }
                     .onAppear {
@@ -600,14 +603,6 @@ private extension ContentView {
                 }
 
                 Spacer()
-
-                if historyViewModel.hasActiveFilter {
-                    Button("Clear Search") {
-                        handleToolbarClear()
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
             }
 
             if historyViewModel.filteredItems.isEmpty {
@@ -645,12 +640,13 @@ private extension ContentView {
             } else {
                 LazyVStack(spacing: 4) {
                     ForEach(historyViewModel.filteredItems, id: \.id) { video in
-                        Button {
-                            navigation.showVideo(video)
-                        } label: {
-                            HistoryVideoRow(video: video)
-                        }
-                        .buttonStyle(.plain)
+                        HistoryVideoRow(
+                            video: video,
+                            isDeleting: deletingHistoryVideoIDs.contains(video.id),
+                            onOpen: { navigation.showVideo(video) },
+                            onDelete: { removeVideoFromHistory(video) }
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .contextMenu {
                             VideoContextMenuContent(
                                 video: video,
@@ -675,7 +671,10 @@ private extension ContentView {
                                 onMoveToWatchLater: nil,
                                 onRemoveFromCurrentPlaylist: nil,
                                 onMoveToTop: nil,
-                                onMoveToBottom: nil
+                                onMoveToBottom: nil,
+                                onRemoveFromWatchHistory: {
+                                    removeVideoFromHistory(video)
+                                }
                             )
                         }
                         .onAppear {
@@ -695,7 +694,7 @@ private extension ContentView {
 
     var historySummaryLine: String {
         if historyViewModel.hasActiveFilter {
-            return "\(historyViewModel.filteredItems.count) matches loaded from YouTube history for \"\(historyViewModel.searchQuery)\""
+            return "\(historyViewModel.filteredItems.count) official YouTube history matches for \"\(historyViewModel.searchQuery)\""
         }
         return "\(historyViewModel.totalItemCount) videos synced from YouTube watch history"
     }
@@ -725,6 +724,71 @@ private extension ContentView {
             historyViewModel.updateSearchQuery("")
         } else {
             historyViewModel.updateSearchQuery(query)
+        }
+    }
+
+    func removeVideoFromHistory(_ video: VideoItem) {
+        guard deletingHistoryVideoIDs.contains(video.id) == false else { return }
+        deletingHistoryVideoIDs.insert(video.id)
+
+        Task {
+            defer {
+                Task { @MainActor in
+                    deletingHistoryVideoIDs.remove(video.id)
+                }
+            }
+
+            do {
+                let response = try await BackendClient.shared.removeWatchHistoryVideo(id: video.id)
+                await MainActor.run {
+                    historyViewModel.removeItemsLocally(ids: response.removedVideoIDs)
+                }
+            } catch {
+                await MainActor.run {
+                    let alert = NSAlert()
+                    alert.messageText = "Couldn’t remove video"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
+    func performBulkHistoryDelete(_ range: WatchHistoryTrimRange) {
+        guard activeHistoryBulkDelete == nil else { return }
+        activeHistoryBulkDelete = range
+
+        Task {
+            defer {
+                Task { @MainActor in
+                    activeHistoryBulkDelete = nil
+                }
+            }
+
+            do {
+                let response = try await BackendClient.shared.trimWatchHistory(range: range)
+                await MainActor.run {
+                    historyViewModel.removeItemsLocally(ids: response.removedVideoIDs)
+                    if response.removedCount == 0 {
+                        let alert = NSAlert()
+                        alert.messageText = "Nothing matched"
+                        alert.informativeText = range == .hour
+                            ? "SwiftTube could not find any recent history entries that safely matched the last hour."
+                            : "SwiftTube did not find any recent history entries to remove."
+                        alert.alertStyle = .informational
+                        alert.runModal()
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    let alert = NSAlert()
+                    alert.messageText = "Couldn’t trim history"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                    alert.runModal()
+                }
+            }
         }
     }
 }
@@ -1051,7 +1115,8 @@ private struct PlaylistFeedScreen: View {
                                 },
                                 onRemoveFromCurrentPlaylist: video.playlistCanRemove ? { viewModel.removeItem(video) } : nil,
                                 onMoveToTop: video.playlistCanMoveToTop ? { viewModel.moveItemToTop(video) } : nil,
-                                onMoveToBottom: video.playlistCanMoveToBottom ? { viewModel.moveItemToBottom(video) } : nil
+                                onMoveToBottom: video.playlistCanMoveToBottom ? { viewModel.moveItemToBottom(video) } : nil,
+                                onRemoveFromWatchHistory: nil
                             )
                         }
                         .onAppear {
@@ -1690,6 +1755,9 @@ private struct ToolbarSearchField: NSViewRepresentable {
         if nsView.stringValue != text {
             nsView.stringValue = text
         }
+        if nsView.placeholderString != placeholder {
+            nsView.placeholderString = placeholder
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -2019,112 +2087,71 @@ private struct HistoryActionPanel: View {
     let isFiltering: Bool
     let visibleCount: Int
     let totalCount: Int
-    let onClearFilter: () -> Void
+    let activeBulkDelete: WatchHistoryTrimRange?
     let onRefresh: () -> Void
+    let onDeleteRecent: (WatchHistoryTrimRange) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HistoryPanelCard(title: "History Search", icon: "magnifyingglass") {
+        HistoryPanelCard(title: "History Actions", icon: "clock.arrow.trianglehead.counterclockwise.rotate.90") {
+            VStack(alignment: .leading, spacing: 14) {
                 Text(
                     isFiltering
-                        ? "Toolbar search is using YouTube's own history search for \"\(searchQuery)\", so older matches can still show up."
-                        : "Use the toolbar to search your full YouTube watch history instead of only the videos already on screen."
+                        ? "Showing official YouTube history results for \"\(searchQuery)\"."
+                        : "Manage your watch history directly from SwiftTube."
                 )
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
                 HStack(spacing: 10) {
-                    HistoryStatPill(label: "Visible", value: "\(visibleCount)")
-                    HistoryStatPill(label: "Loaded", value: "\(totalCount)")
+                    if isFiltering {
+                        HistoryStatPill(label: "Matches", value: "\(visibleCount)")
+                    } else {
+                        HistoryStatPill(label: "Visible", value: "\(visibleCount)")
+                        HistoryStatPill(label: "Loaded", value: "\(totalCount)")
+                    }
                 }
 
-                if isFiltering {
-                    Button("Clear Search", action: onClearFilter)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            HistoryPanelCard(title: "Resume Legend", icon: "timeline.selection") {
                 VStack(alignment: .leading, spacing: 10) {
                     HistoryLegendRow(color: .red, label: "YouTube resume position")
                     HistoryLegendRow(color: Color(red: 0.39, green: 0.78, blue: 1.0), label: "SwiftTube exact second-by-second resume")
                 }
-            }
 
-            HistoryPanelCard(title: "History Actions", icon: "clock.arrow.trianglehead.counterclockwise.rotate.90") {
-                VStack(alignment: .leading, spacing: 10) {
-                    HistoryActionButton(
-                        title: "Refresh History",
-                        subtitle: "Pull the newest watch activity from YouTube.",
-                        systemImage: "arrow.clockwise",
-                        action: onRefresh
-                    )
+                Divider()
+                    .overlay(Color.white.opacity(0.08))
 
-                    if isFiltering {
-                        HistoryActionButton(
-                            title: "Clear Search",
-                            subtitle: "Return to your full watch stack.",
-                            systemImage: "xmark.circle",
-                            action: onClearFilter
-                        )
-                    }
+                HistoryActionButton(
+                    title: "Refresh History",
+                    subtitle: "Pull the newest watch activity from YouTube.",
+                    systemImage: "arrow.clockwise",
+                    isBusy: false,
+                    action: onRefresh
+                )
 
-                    HistoryActionButton(
-                        title: "Open Watch History",
-                        subtitle: "Jump to YouTube's watch history page.",
-                        systemImage: "safari",
-                        action: {
-                            open("https://www.youtube.com/feed/history")
-                        }
-                    )
+                HistoryActionButton(
+                    title: "Delete Last Hour",
+                    subtitle: "Best effort: uses exact local timestamps when available, otherwise the newest Today entries.",
+                    systemImage: "clock",
+                    isBusy: activeBulkDelete == .hour,
+                    action: { onDeleteRecent(.hour) }
+                )
 
-                    HistoryActionButton(
-                        title: "Manage All History",
-                        subtitle: "Open Google's YouTube history controls.",
-                        systemImage: "slider.horizontal.3",
-                        action: {
-                            open("https://myactivity.google.com/product/youtube")
-                        }
-                    )
+                HistoryActionButton(
+                    title: "Delete Last Day",
+                    subtitle: "Removes the most recent day of history by repeating YouTube's per-video delete action.",
+                    systemImage: "calendar.badge.minus",
+                    isBusy: activeBulkDelete == .day,
+                    action: { onDeleteRecent(.day) }
+                )
 
-                    Divider()
-                        .overlay(Color.white.opacity(0.08))
-
-                    HistoryActionButton(
-                        title: "Delete Last Hour",
-                        subtitle: "Opens YouTube's history controls for recent cleanup.",
-                        systemImage: "clock.badge.minus",
-                        action: {
-                            open("https://myactivity.google.com/product/youtube")
-                        }
-                    )
-
-                    HistoryActionButton(
-                        title: "Delete Last Day",
-                        subtitle: "Open the same controls to remove today's watches.",
-                        systemImage: "calendar.badge.minus",
-                        action: {
-                            open("https://myactivity.google.com/product/youtube")
-                        }
-                    )
-
-                    HistoryActionButton(
-                        title: "Delete Last Week",
-                        subtitle: "Hand off larger cleanup to YouTube's history tools.",
-                        systemImage: "calendar",
-                        action: {
-                            open("https://myactivity.google.com/product/youtube")
-                        }
-                    )
-                }
+                HistoryActionButton(
+                    title: "Delete Last Week",
+                    subtitle: "Removes recent history sections by repeating YouTube's per-video delete action.",
+                    systemImage: "calendar",
+                    isBusy: activeBulkDelete == .week,
+                    action: { onDeleteRecent(.week) }
+                )
             }
         }
-    }
-
-    private func open(_ urlString: String) {
-        guard let url = URL(string: urlString) else { return }
-        NSWorkspace.shared.open(url)
     }
 }
 
@@ -2201,6 +2228,7 @@ private struct HistoryActionButton: View {
     let title: String
     let subtitle: String
     let systemImage: String
+    let isBusy: Bool
     let action: () -> Void
 
     @State private var isHovered = false
@@ -2208,10 +2236,17 @@ private struct HistoryActionButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18)
+                Group {
+                    if isBusy {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: systemImage)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 18)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
@@ -2233,6 +2268,7 @@ private struct HistoryActionButton: View {
             )
         }
         .buttonStyle(.plain)
+        .disabled(isBusy)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.14)) {
                 isHovered = hovering
@@ -2244,11 +2280,14 @@ private struct HistoryActionButton: View {
 private struct HistoryVideoRow: View {
     @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
+    let isDeleting: Bool
+    let onOpen: () -> Void
+    let onDelete: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .center, spacing: 16) {
             HistoryVideoThumbnail(video: video)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -2284,13 +2323,46 @@ private struct HistoryVideoRow: View {
             .padding(.vertical, 3)
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Image(systemName: "chevron.right")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.top, 6)
+            ZStack {
+                HStack {
+                    if isHovered || isDeleting {
+                        Button(action: onDelete) {
+                            Group {
+                                if isDeleting {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                            }
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(Color.white.opacity(0.08))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isDeleting)
+                        .help("Delete from history")
+                    }
+
+                    Spacer(minLength: 0)
+                }
+
+                HStack {
+                    Spacer(minLength: 0)
+
+                    Image(systemName: "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 56, height: 28)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 22)
                 .fill(isHovered ? settings.hoverCardBackgroundColor : .clear)
@@ -2301,7 +2373,9 @@ private struct HistoryVideoRow: View {
         )
         .shadow(color: .black.opacity(isHovered ? 0.10 : 0), radius: isHovered ? 14 : 0, y: isHovered ? 8 : 0)
         .scaleEffect(isHovered ? 1.004 : 1)
+        .contentShape(Rectangle())
         .animation(.easeOut(duration: 0.16), value: isHovered)
+        .onTapGesture(perform: onOpen)
         .onHover { hovering in
             isHovered = hovering
         }

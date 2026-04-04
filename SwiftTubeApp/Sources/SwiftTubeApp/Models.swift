@@ -111,6 +111,12 @@ struct WatchHistoryResponse: Codable, Sendable {
     let continuation: String?
 }
 
+enum WatchHistoryTrimRange: String, Codable, CaseIterable, Sendable {
+    case hour
+    case day
+    case week
+}
+
 struct SearchSuggestionsResponse: Codable, Sendable {
     let query: String
     let suggestions: [String]
@@ -417,4 +423,10 @@ struct PlaylistMutationResponse: Codable, Sendable {
 
 struct PlaylistItemMutationResponse: Codable, Sendable {
     let success: Bool
+}
+
+struct WatchHistoryMutationResponse: Codable, Sendable {
+    let success: Bool
+    let removedVideoIDs: [String]
+    let removedCount: Int
 }

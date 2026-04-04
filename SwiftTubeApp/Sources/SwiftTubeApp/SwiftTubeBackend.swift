@@ -14,6 +14,13 @@ private struct ActiveWatchSyncSession: Sendable {
     var sentInitialPlayback = false
 }
 
+private struct HistoryVideoRecord: Sendable {
+    let item: VideoItem
+    let sectionTitle: String?
+    let indexInSection: Int
+    let deleteCommand: InnerTubeCommand?
+}
+
 actor SwiftTubeBackend {
     static let shared = SwiftTubeBackend()
 
@@ -137,7 +144,7 @@ actor SwiftTubeBackend {
         let trimmedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines)
         let data = try await api.browse(
             browseID: continuation == nil ? "FEhistory" : nil,
-            params: continuation == nil ? historySearchParams(for: trimmedQuery) : nil,
+            query: continuation == nil ? trimmedQuery : nil,
             continuation: continuation,
             authenticated: true
         )
@@ -145,6 +152,75 @@ actor SwiftTubeBackend {
         return WatchHistoryResponse(
             items: await mergeStoredProgress(into: extractHistoryItems(from: data)),
             continuation: extractContinuationToken(from: data)
+        )
+    }
+
+    func removeWatchHistoryVideo(id videoID: String) async throws -> WatchHistoryMutationResponse {
+        _ = try await requireAuthenticatedMaterial()
+        guard let record = try await findWatchHistoryRecord(videoID: videoID) else {
+            throw BackendClientError(message: "Couldn’t find that video in your YouTube watch history.")
+        }
+        guard let command = record.deleteCommand else {
+            throw BackendClientError(message: "YouTube did not expose a remove-history action for that video.")
+        }
+
+        _ = try await api.dispatch(command: command)
+        return WatchHistoryMutationResponse(
+            success: true,
+            removedVideoIDs: [videoID],
+            removedCount: 1
+        )
+    }
+
+    func trimWatchHistory(range: WatchHistoryTrimRange) async throws -> WatchHistoryMutationResponse {
+        _ = try await requireAuthenticatedMaterial()
+
+        var removedVideoIDs: [String] = []
+        var continuation: String?
+        var remainingPages = 8
+        let cutoff = Date().addingTimeInterval(-timeInterval(for: range))
+        let localProgressByID = await watchHistoryStore.allProgressEntries()
+
+        while remainingPages > 0 {
+            let data = try await api.browse(
+                browseID: continuation == nil ? "FEhistory" : nil,
+                continuation: continuation,
+                authenticated: true
+            )
+            let records = extractHistoryVideoRecords(from: data)
+            if records.isEmpty {
+                break
+            }
+
+            var pageRemovedAny = false
+            for record in records {
+                guard shouldTrimHistoryRecord(
+                    record,
+                    range: range,
+                    cutoff: cutoff,
+                    localProgressByID: localProgressByID
+                ) else {
+                    continue
+                }
+                guard let command = record.deleteCommand else { continue }
+
+                _ = try await api.dispatch(command: command)
+                removedVideoIDs.append(record.item.id)
+                pageRemovedAny = true
+            }
+
+            continuation = extractContinuationToken(from: data)
+            remainingPages -= 1
+
+            if continuation == nil || pageRemovedAny == false {
+                break
+            }
+        }
+
+        return WatchHistoryMutationResponse(
+            success: true,
+            removedVideoIDs: removedVideoIDs,
+            removedCount: removedVideoIDs.count
         )
     }
 
@@ -622,6 +698,77 @@ actor SwiftTubeBackend {
             return try await api.browse(continuation: continuation, authenticated: authenticated)
         }
         return try await api.browse(browseID: "FEwhat_to_watch", authenticated: authenticated)
+    }
+
+    private func findWatchHistoryRecord(videoID: String) async throws -> HistoryVideoRecord? {
+        var continuation: String?
+        var remainingPages = 8
+
+        while remainingPages > 0 {
+            let data = try await api.browse(
+                browseID: continuation == nil ? "FEhistory" : nil,
+                continuation: continuation,
+                authenticated: true
+            )
+            if let record = extractHistoryVideoRecords(from: data).first(where: { $0.item.id == videoID }) {
+                return record
+            }
+
+            continuation = extractContinuationToken(from: data)
+            guard continuation != nil else { return nil }
+            remainingPages -= 1
+        }
+
+        return nil
+    }
+
+    private func shouldTrimHistoryRecord(
+        _ record: HistoryVideoRecord,
+        range: WatchHistoryTrimRange,
+        cutoff: Date,
+        localProgressByID: [String: VideoProgress]
+    ) -> Bool {
+        if let lastUpdatedAt = localProgressByID[record.item.id]?.lastUpdatedAt {
+            return lastUpdatedAt >= cutoff
+        }
+
+        let sectionTitle = (record.sectionTitle ?? "").lowercased()
+        switch range {
+        case .hour:
+            // YouTube history does not expose an exact watched-at timestamp per row.
+            // For non-local items we fall back to the newest part of the Today bucket.
+            return sectionTitle == "today" && record.indexInSection < 12
+        case .day:
+            return sectionTitle == "today" || sectionTitle == "yesterday"
+        case .week:
+            return recentHistorySectionTitles().contains(sectionTitle)
+        }
+    }
+
+    private func recentHistorySectionTitles() -> Set<String> {
+        var labels: Set<String> = ["today", "yesterday"]
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+
+        let calendar = Calendar.current
+        for offset in 2...6 {
+            if let date = calendar.date(byAdding: .day, value: -offset, to: Date()) {
+                labels.insert(formatter.weekdaySymbols[calendar.component(.weekday, from: date) - 1].lowercased())
+            }
+        }
+
+        return labels
+    }
+
+    private func timeInterval(for range: WatchHistoryTrimRange) -> TimeInterval {
+        switch range {
+        case .hour:
+            return 60 * 60
+        case .day:
+            return 60 * 60 * 24
+        case .week:
+            return 60 * 60 * 24 * 7
+        }
     }
 
     private func mergeStoredProgress(into items: [VideoItem]) async -> [VideoItem] {
@@ -1152,32 +1299,100 @@ private func extractVideoItems(from data: Any, limit: Int = 120) -> [VideoItem] 
 }
 
 private func extractHistoryItems(from data: Any, limit: Int = 200) -> [VideoItem] {
-    var items: [VideoItem] = []
+    Array(extractHistoryVideoRecords(from: data, limit: limit).map(\.item).prefix(limit))
+}
+
+private func extractHistoryVideoRecords(from data: Any, limit: Int = 200) -> [HistoryVideoRecord] {
+    var records: [HistoryVideoRecord] = []
     var seen = Set<String>()
 
-    visitJSONObjects(in: data) { node in
-        if let lockup = node["lockupViewModel"] as? JSONDictionary,
-           let item = parseLockupVideoItem(lockup),
-           seen.insert(item.id).inserted {
-            items.append(item)
-            return items.count >= limit ? .stop : .continue
-        }
+    for section in historyItemSectionRenderers(from: data) {
+        let headerTitle = historySectionTitle(from: section["header"])
+        for (indexInSection, content) in ((section["contents"] as? [Any]) ?? []).enumerated() {
+            guard let content = content as? JSONDictionary else { continue }
 
-        let renderer = (node["videoRenderer"] as? JSONDictionary)
-            ?? (node["gridVideoRenderer"] as? JSONDictionary)
-            ?? (node["videoCardRenderer"] as? JSONDictionary)
-            ?? (node["compactVideoRenderer"] as? JSONDictionary)
-        guard let renderer,
-              let item = parseStandardVideoItem(renderer),
-              seen.insert(item.id).inserted else {
-            return .continue
-        }
+            if let lockup = content["lockupViewModel"] as? JSONDictionary,
+               let item = parseLockupVideoItem(lockup),
+               seen.insert(item.id).inserted {
+                records.append(
+                    HistoryVideoRecord(
+                        item: item,
+                        sectionTitle: headerTitle,
+                        indexInSection: indexInSection,
+                        deleteCommand: extractHistoryDeleteCommand(from: lockup)
+                    )
+                )
+                if records.count >= limit {
+                    return records
+                }
+                continue
+            }
 
-        items.append(item)
-        return items.count >= limit ? .stop : .continue
+            let renderer = (content["videoRenderer"] as? JSONDictionary)
+                ?? (content["gridVideoRenderer"] as? JSONDictionary)
+                ?? (content["videoCardRenderer"] as? JSONDictionary)
+                ?? (content["compactVideoRenderer"] as? JSONDictionary)
+            guard let renderer,
+                  let item = parseStandardVideoItem(renderer),
+                  seen.insert(item.id).inserted else {
+                continue
+            }
+
+            records.append(
+                HistoryVideoRecord(
+                    item: item,
+                    sectionTitle: headerTitle,
+                    indexInSection: indexInSection,
+                    deleteCommand: extractHistoryDeleteCommand(from: renderer)
+                )
+            )
+            if records.count >= limit {
+                return records
+            }
+        }
     }
 
-    return items
+    if records.isEmpty {
+        visitJSONObjects(in: data) { node in
+            if let lockup = node["lockupViewModel"] as? JSONDictionary,
+               let item = parseLockupVideoItem(lockup),
+               seen.insert(item.id).inserted {
+                records.append(
+                    HistoryVideoRecord(
+                        item: item,
+                        sectionTitle: nil,
+                        indexInSection: records.count,
+                        deleteCommand: extractHistoryDeleteCommand(from: lockup)
+                    )
+                )
+                return records.count >= limit ? .stop : .continue
+            }
+            return .continue
+        }
+    }
+
+    return records
+}
+
+private func historyItemSectionRenderers(from data: Any) -> [JSONDictionary] {
+    var sections: [JSONDictionary] = []
+
+    visitJSONObjects(in: data) { node in
+        guard let renderer = node["itemSectionRenderer"] as? JSONDictionary else { return .continue }
+        guard let contents = renderer["contents"] as? [Any], contents.isEmpty == false else { return .continue }
+        sections.append(renderer)
+        return .continue
+    }
+
+    return sections
+}
+
+private func historySectionTitle(from value: Any?) -> String? {
+    guard let header = value as? JSONDictionary else { return nil }
+    if let renderer = header["itemSectionHeaderRenderer"] as? JSONDictionary {
+        return textValue(from: renderer["title"]) ?? contentTextValue(from: renderer["title"])
+    }
+    return nil
 }
 
 private func extractPlaylistSummaries(from data: Any, limit: Int = 120) -> [PlaylistSummary] {
@@ -1834,6 +2049,59 @@ private func parseLockupVideoItem(_ lockup: JSONDictionary) -> VideoItem? {
     )
 }
 
+private func extractHistoryDeleteCommand(from value: Any?) -> InnerTubeCommand? {
+    let listItems: [Any] = {
+        guard let lockup = value as? JSONDictionary else { return [] }
+        let metadata = (lockup["metadata"] as? JSONDictionary)?["lockupMetadataViewModel"] as? JSONDictionary
+        let menuButton = metadata?["menuButton"] as? JSONDictionary
+        let buttonViewModel = menuButton?["buttonViewModel"] as? JSONDictionary
+        let onTap = buttonViewModel?["onTap"] as? JSONDictionary
+        let innertubeCommand = onTap?["innertubeCommand"] as? JSONDictionary
+        let showSheetCommand = innertubeCommand?["showSheetCommand"] as? JSONDictionary
+        let panelLoadingStrategy = showSheetCommand?["panelLoadingStrategy"] as? JSONDictionary
+        let inlineContent = panelLoadingStrategy?["inlineContent"] as? JSONDictionary
+        let sheetViewModel = inlineContent?["sheetViewModel"] as? JSONDictionary
+        let content = sheetViewModel?["content"] as? JSONDictionary
+        let listViewModel = content?["listViewModel"] as? JSONDictionary
+        return listViewModel?["listItems"] as? [Any] ?? []
+    }()
+
+    for item in listItems {
+        guard let item = item as? JSONDictionary else { continue }
+        guard let viewModel = item["listItemViewModel"] as? JSONDictionary else { continue }
+        let title = contentTextValue(from: viewModel["title"])?.lowercased()
+        let command = ((((viewModel["rendererContext"] as? JSONDictionary)?["commandContext"] as? JSONDictionary)?["onTap"] as? JSONDictionary)?["innertubeCommand"] as? JSONDictionary)
+        guard let command,
+              let feedbackEndpoint = command["feedbackEndpoint"] as? JSONDictionary else {
+            continue
+        }
+
+        let hasRemoveAction = title?.contains("watch history") == true
+            || feedbackEndpoint["contentId"] != nil
+            || jsonContainsHistoryRemove(feedbackEndpoint)
+        guard hasRemoveAction else { continue }
+
+        return buildCommand(
+            apiPath: commandMetadataAPIPath(from: command) ?? "feedback",
+            payload: feedbackEndpoint
+        )
+    }
+
+    return nil
+}
+
+private func jsonContainsHistoryRemove(_ value: Any) -> Bool {
+    guard JSONSerialization.isValidJSONObject(value),
+          let data = try? JSONSerialization.data(withJSONObject: value),
+          let text = String(data: data, encoding: .utf8)?.lowercased() else {
+        return false
+    }
+
+    return text.contains("local_watch_history_command_type_remove")
+        || text.contains("remove from watch history")
+        || text.contains("all views of this video removed from history")
+}
+
 private func parseLockupPlaylistItem(_ lockup: JSONDictionary) -> PlaylistSummary? {
     guard (lockup["contentType"] as? String) == "LOCKUP_CONTENT_TYPE_PLAYLIST" else { return nil }
 
@@ -1903,40 +2171,17 @@ private func extractWatchProgressFraction(from data: Any?) -> Double? {
                 return .stop
             }
         }
+
+        if let renderer = node["thumbnailOverlayProgressBarViewModel"] as? JSONDictionary {
+            if let percent = doubleValue(renderer["startPercent"]) {
+                fraction = percent
+                return .stop
+            }
+        }
         return .continue
     }
 
     return fraction
-}
-
-private func historySearchParams(for query: String?) -> String? {
-    guard let query, !query.isEmpty else { return nil }
-
-    var payload = Data([0x2A])
-    payload.append(contentsOf: protobufVarint(query.utf8.count))
-    payload.append(contentsOf: query.utf8)
-
-    return payload
-        .base64EncodedString()
-        .replacingOccurrences(of: "+", with: "-")
-        .replacingOccurrences(of: "/", with: "_")
-        .replacingOccurrences(of: "=", with: "")
-}
-
-private func protobufVarint(_ value: Int) -> [UInt8] {
-    var remaining = UInt64(max(value, 0))
-    var bytes: [UInt8] = []
-
-    repeat {
-        var byte = UInt8(remaining & 0x7F)
-        remaining >>= 7
-        if remaining > 0 {
-            byte |= 0x80
-        }
-        bytes.append(byte)
-    } while remaining > 0
-
-    return bytes
 }
 
 private func trackedURL(
