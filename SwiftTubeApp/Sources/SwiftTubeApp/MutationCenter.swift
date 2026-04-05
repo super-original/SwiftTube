@@ -296,11 +296,12 @@ private struct NotificationToast: View {
     let item: AppNotificationItem
 
     @ObservedObject private var settings = AppSettings.shared
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var isHovered = false
     @State private var dragOffset: CGFloat = 0
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .center, spacing: 14) {
             Circle()
                 .fill(item.accent.color.opacity(0.18))
                 .frame(width: 34, height: 34)
@@ -322,7 +323,7 @@ private struct NotificationToast: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .frame(maxWidth: 280, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if isHovered {
                 Button {
@@ -332,24 +333,16 @@ private struct NotificationToast: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.secondary)
                         .frame(width: 20, height: 20)
-                        .background(
-                            Circle()
-                                .fill(Color.primary.opacity(0.08))
-                        )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.glass(.regular.interactive()))
+                .buttonBorderShape(.circle)
+                .controlSize(.mini)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(settings.elevatedBackgroundColor.opacity(0.97))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
+        .frame(minWidth: 320, maxWidth: 420, alignment: .leading)
+        .notificationGlassSurface(reduceTransparency: reduceTransparency)
         .shadow(color: .black.opacity(0.16), radius: 16, y: 8)
         .offset(x: dragOffset)
         .opacity(opacity)
@@ -378,5 +371,24 @@ private struct NotificationToast: View {
     private var opacity: Double {
         let fade = min(abs(dragOffset) / 180, 0.55)
         return 1 - fade
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func notificationGlassSurface(reduceTransparency: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        if reduceTransparency {
+            self
+                .background(
+                    shape
+                        .fill(AppSettings.shared.elevatedBackgroundColor.opacity(0.97))
+                        .overlay(
+                            shape.stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                        )
+                )
+        } else {
+            self.glassEffect(.regular, in: shape)
+        }
     }
 }

@@ -402,20 +402,16 @@ private extension PlayerScreen {
     }
 
     var channelAndActionsSection: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 16) {
-                channelSubscriptionCluster
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                actionToolbar
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
+        HStack(alignment: .center, spacing: 18) {
+            channelSubscriptionCluster
+                .layoutPriority(1)
 
-            VStack(alignment: .leading, spacing: 12) {
-                channelSubscriptionCluster
-                actionToolbar
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
+            Spacer(minLength: 16)
+
+            actionToolbar
+                .fixedSize(horizontal: true, vertical: false)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     var channelSubscriptionCluster: some View {
@@ -428,16 +424,16 @@ private extension PlayerScreen {
 
             subscribeButton
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     var actionToolbar: some View {
-        WrappingHStack(alignment: .trailing, horizontalSpacing: 8, verticalSpacing: 8) {
+        HStack(spacing: 8) {
             likeDislikeControl
             shareButton
             watchLaterButton
             playlistButton
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.vertical, 2)
     }
 
@@ -2587,12 +2583,15 @@ private struct ChannelSummary: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(channel ?? "Unknown channel")
                     .font(.headline.weight(.bold))
+                    .lineLimit(1)
                 if let subscriberCount, !subscriberCount.isEmpty {
                     Text(subscriberCount)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
