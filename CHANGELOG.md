@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.16
+
+- Fixed the player chrome resizing while scrubbing videos with SponsorBlock segments so the timeline and right-side controls stay locked in place.
+
 ## 0.12.15
 
 - Fixed SponsorBlock scrubber jumps so dragging into or across marked segments no longer fights the final seek position.

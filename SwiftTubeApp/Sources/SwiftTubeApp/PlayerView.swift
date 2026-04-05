@@ -1646,6 +1646,7 @@ private struct SponsorBlockTimelineOverlay: View {
             }
         }
         .frame(height: trackHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1847,7 +1848,11 @@ private struct PlayerChromeOverlay: View {
                     .padding(.bottom, edgeToEdge ? 20 : 18)
             }
 
-            // Scrub-preview thumbnail (hover/drag over timeline).
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay {
+            // Keep the scrub-preview bubble out of layout so it cannot widen
+            // the player chrome while dragging.
             if coordinator.scrubPreviewFraction != nil, coordinator.storyboard != nil {
                 GeometryReader { geo in
                     ScrubPreviewPositioned(
@@ -1998,6 +2003,7 @@ private struct PlayerControlBar: View {
                     .allowsHitTesting(false)
                 }
             }
+            .frame(maxWidth: .infinity)
             // Measure the ZStack width (= Slider width) without affecting layout.
             .background(
                 GeometryReader { geo in
