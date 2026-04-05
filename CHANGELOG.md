@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.23
+
+- Rebuilt the scrubber row so the time labels are anchored independently of the slider track, preventing scrubbing-only layout negotiation from stretching the control bar on affected videos.
+- Clipped the scrubber track container itself so timeline overlays cannot draw or measure outside the row bounds.
+
 ## 0.12.22
 
 - Pinned the player stage to its measured window size during scrubbing so storyboard overlays can no longer enlarge the stage and push the chrome off to the right on affected videos.

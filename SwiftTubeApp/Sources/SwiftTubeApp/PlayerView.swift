@@ -1975,76 +1975,90 @@ private struct PlayerControlBar: View {
     }
 
     var scrubberControl: some View {
-        HStack(spacing: 12) {
-            Text(coordinator.currentTimeText)
-                .frame(width: timeLabelWidth, alignment: .leading)
+        ZStack {
+            scrubberTrack
+                .padding(.leading, timeLabelWidth + 12)
+                .padding(.trailing, timeLabelWidth + 12)
 
-            // Wrap in ZStack so onContinuousHover sits on the *container*, not the
-            // Slider itself — AppKit's NSSlider modal drag loop suppresses mouseMoved
-            // events when applied directly, so the container approach is reliable
-            // for both passive hover and active drag.
-            ZStack {
-                Slider(
-                    value: Binding(
-                        get: { coordinator.scrubPosition },
-                        set: { coordinator.updateScrubPosition($0) }
-                    ),
-                    in: 0...coordinator.scrubberUpperBound,
-                    onEditingChanged: { isEditing in
-                        coordinator.setScrubbing(isEditing)
-                        // Always clear the hover fraction so scrubPreviewFraction falls
-                        // through to the isScrubbing path, which tracks scrubPosition
-                        // in real-time rather than the frozen initial hover position.
-                        coordinator.scrubHoverFraction = nil
-                    }
-                )
-                .disabled(coordinator.duration <= 0)
-                .accessibilityLabel("Playback position")
-            }
-            .frame(maxWidth: .infinity)
-            .overlay(alignment: .center) {
-                SponsorBlockTimelineOverlay(
-                    segments: coordinator.visibleSponsorSegments,
-                    duration: coordinator.duration
-                )
-                .padding(.horizontal, 10)
-                .allowsHitTesting(false)
-            }
-            // Measure the ZStack width (= Slider width) without affecting layout.
-            .background(
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear { updateMeasuredSliderWidth(geo.size.width) }
-                        .onChange(of: geo.size.width) { _, width in
-                            updateMeasuredSliderWidth(width)
-                        }
-                }
-            )
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let loc):
-                    guard coordinator.duration > 0, sliderWidth > 0 else { return }
-                    let trackInset: CGFloat = 10
-                    let trackW = max(1, sliderWidth - trackInset * 2)
-                    coordinator.scrubHoverFraction = max(0, min(1, (loc.x - trackInset) / trackW))
-                case .ended:
-                    coordinator.scrubHoverFraction = nil
-                }
-            }
+            HStack(spacing: 0) {
+                Text(coordinator.currentTimeText)
+                    .frame(width: timeLabelWidth, alignment: .leading)
+                    .lineLimit(1)
 
-            Text(coordinator.remainingTimeText)
-                .frame(width: timeLabelWidth, alignment: .trailing)
+                Spacer(minLength: 0)
+
+                Text(coordinator.remainingTimeText)
+                    .frame(width: timeLabelWidth, alignment: .trailing)
+                    .lineLimit(1)
+            }
         }
         .font(.caption.weight(.medium))
         .monospacedDigit()
         .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
         .frame(maxWidth: .infinity, minHeight: compactControlHeight)
+        .clipShape(Capsule())
         .playerControlSurface(
             reduceTransparency: reduceTransparency,
             glass: .regular,
             shape: Capsule()
         )
+    }
+
+    var scrubberTrack: some View {
+        // Wrap in ZStack so onContinuousHover sits on the *container*, not the
+        // Slider itself — AppKit's NSSlider modal drag loop suppresses mouseMoved
+        // events when applied directly, so the container approach is reliable
+        // for both passive hover and active drag.
+        ZStack {
+            Slider(
+                value: Binding(
+                    get: { coordinator.scrubPosition },
+                    set: { coordinator.updateScrubPosition($0) }
+                ),
+                in: 0...coordinator.scrubberUpperBound,
+                onEditingChanged: { isEditing in
+                    coordinator.setScrubbing(isEditing)
+                    // Always clear the hover fraction so scrubPreviewFraction falls
+                    // through to the isScrubbing path, which tracks scrubPosition
+                    // in real-time rather than the frozen initial hover position.
+                    coordinator.scrubHoverFraction = nil
+                }
+            )
+            .disabled(coordinator.duration <= 0)
+            .accessibilityLabel("Playback position")
+        }
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .center) {
+            SponsorBlockTimelineOverlay(
+                segments: coordinator.visibleSponsorSegments,
+                duration: coordinator.duration
+            )
+            .padding(.horizontal, 10)
+            .allowsHitTesting(false)
+        }
+        .clipped()
+        // Measure the ZStack width (= Slider width) without affecting layout.
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { updateMeasuredSliderWidth(geo.size.width) }
+                    .onChange(of: geo.size.width) { _, width in
+                        updateMeasuredSliderWidth(width)
+                    }
+            }
+        )
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let loc):
+                guard coordinator.duration > 0, sliderWidth > 0 else { return }
+                let trackInset: CGFloat = 10
+                let trackW = max(1, sliderWidth - trackInset * 2)
+                coordinator.scrubHoverFraction = max(0, min(1, (loc.x - trackInset) / trackW))
+            case .ended:
+                coordinator.scrubHoverFraction = nil
+            }
+        }
     }
 
     private func updateMeasuredSliderWidth(_ width: CGFloat) {
