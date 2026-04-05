@@ -1499,6 +1499,16 @@ private struct PlayerStageSurface: View {
                     )
                 }
 
+                if let segment = coordinator.manualSkipSponsorSegment {
+                    SponsorBlockManualSkipOverlay(
+                        segment: segment,
+                        skip: coordinator.skipManualSponsorSegment
+                    )
+                    .padding(.trailing, (immersive ? 22 : 18) + pad)
+                    .padding(.leading, (immersive ? 22 : 18) + pad)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+
                 if coordinator.keyboardLocked {
                     Color.clear
                         .contentShape(Rectangle())
@@ -1627,7 +1637,7 @@ private struct SponsorBlockTimelineOverlay: View {
                         let width = max((endFraction - startFraction) * proxy.size.width, 3)
 
                         Capsule(style: .continuous)
-                            .fill(Color(red: 0.26, green: 0.84, blue: 0.53).opacity(0.95))
+                            .fill(segment.categoryTint.opacity(0.96))
                             .frame(width: width, height: trackHeight)
                             .offset(x: startFraction * proxy.size.width)
                     }
@@ -1636,6 +1646,64 @@ private struct SponsorBlockTimelineOverlay: View {
             }
         }
         .frame(height: trackHeight)
+    }
+}
+
+private struct SponsorBlockManualSkipOverlay: View {
+    let segment: SponsorBlockSegment
+    let skip: () -> Void
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 0)
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Image(systemName: "forward.end.alt.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(segment.categoryTint)
+
+                    Text("Skip \(segment.categoryShortTitle)")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.white)
+                }
+
+                Text("Press Return or click to jump ahead.")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.72))
+
+                Button(action: skip) {
+                    HStack(spacing: 8) {
+                        Text("Skip now")
+                        Text("Return")
+                            .font(.caption.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.white.opacity(0.12), in: Capsule())
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(segment.categoryTint.opacity(0.88), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(maxWidth: 270, alignment: .leading)
+            .playerControlSurface(
+                reduceTransparency: reduceTransparency,
+                glass: .regular,
+                shape: RoundedRectangle(cornerRadius: 22, style: .continuous)
+            )
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        .padding(.vertical, 24)
+        .allowsHitTesting(true)
+        .animation(.snappy(duration: 0.2, extraBounce: 0), value: segment.id)
     }
 }
 

@@ -542,6 +542,7 @@ final class AppSettings: ObservableObject {
     private let browseVideoCardWidthKey = "browseVideoCardWidth"
     private let sponsorBlockEnabledKey = "sponsorBlockEnabled"
     private let sponsorBlockAutoSkipKey = "sponsorBlockAutoSkipEnabled"
+    private let sponsorBlockCategoryBehaviorsKey = "sponsorBlockCategoryBehaviors"
 
     @Published var appearanceMode: AppAppearanceMode {
         didSet { defaults.set(appearanceMode.rawValue, forKey: "appearanceMode") }
@@ -615,8 +616,8 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(sponsorBlockEnabled, forKey: sponsorBlockEnabledKey) }
     }
 
-    @Published var sponsorBlockAutoSkipEnabled: Bool {
-        didSet { defaults.set(sponsorBlockAutoSkipEnabled, forKey: sponsorBlockAutoSkipKey) }
+    @Published var sponsorBlockCategoryBehaviors: [SponsorBlockCategory: SponsorBlockBehavior] {
+        didSet { persistSponsorBlockCategoryBehaviors() }
     }
 
     init() {
@@ -677,11 +678,17 @@ final class AppSettings: ObservableObject {
         } else {
             self.sponsorBlockEnabled = defaults.bool(forKey: sponsorBlockEnabledKey)
         }
+
+        let legacyAutoSkipEnabled: Bool
         if defaults.object(forKey: sponsorBlockAutoSkipKey) == nil {
-            self.sponsorBlockAutoSkipEnabled = true
+            legacyAutoSkipEnabled = true
         } else {
-            self.sponsorBlockAutoSkipEnabled = defaults.bool(forKey: sponsorBlockAutoSkipKey)
+            legacyAutoSkipEnabled = defaults.bool(forKey: sponsorBlockAutoSkipKey)
         }
+        self.sponsorBlockCategoryBehaviors = Self.loadSponsorBlockCategoryBehaviors(
+            from: defaults,
+            legacyAutoSkipEnabled: legacyAutoSkipEnabled
+        )
     }
 
     static let seekSecondsOptions = [3, 5, 10, 15, 30, 45, 60, 90]
@@ -757,6 +764,21 @@ final class AppSettings: ObservableObject {
         case .medium: return Double(mediumSeekSeconds)
         case .long: return Double(longSeekSeconds)
         }
+    }
+
+    func sponsorBlockBehavior(for category: SponsorBlockCategory) -> SponsorBlockBehavior {
+        sponsorBlockCategoryBehaviors[category] ?? category.defaultBehavior
+    }
+
+    func sponsorBlockBehavior(forRawCategory rawCategory: String) -> SponsorBlockBehavior {
+        guard let category = SponsorBlockCategory(rawValue: rawCategory) else {
+            return .disabled
+        }
+        return sponsorBlockBehavior(for: category)
+    }
+
+    func setSponsorBlockBehavior(_ behavior: SponsorBlockBehavior, for category: SponsorBlockCategory) {
+        sponsorBlockCategoryBehaviors[category] = behavior
     }
 
     func setSeekSeconds(_ seconds: Int, for category: SeekCategory) {
@@ -983,5 +1005,36 @@ private extension AppSettings {
         let payload = Dictionary(uniqueKeysWithValues: keyBindings.map { ($0.key.rawValue, $0.value) })
         guard let data = try? JSONEncoder().encode(payload) else { return }
         defaults.set(data, forKey: keyBindingsKey)
+    }
+
+    static func loadSponsorBlockCategoryBehaviors(
+        from defaults: UserDefaults,
+        legacyAutoSkipEnabled: Bool
+    ) -> [SponsorBlockCategory: SponsorBlockBehavior] {
+        if let payload = defaults.data(forKey: "sponsorBlockCategoryBehaviors"),
+           let decoded = try? JSONDecoder().decode([String: SponsorBlockBehavior].self, from: payload) {
+            var resolved = Dictionary(uniqueKeysWithValues: SponsorBlockCategory.allCases.map { ($0, $0.defaultBehavior) })
+            for (rawCategory, behavior) in decoded {
+                guard let category = SponsorBlockCategory(rawValue: rawCategory) else { continue }
+                resolved[category] = behavior
+            }
+            return resolved
+        }
+
+        return Dictionary(uniqueKeysWithValues: SponsorBlockCategory.allCases.map { category in
+            let behavior: SponsorBlockBehavior
+            if category == .sponsor {
+                behavior = legacyAutoSkipEnabled ? .auto : .manual
+            } else {
+                behavior = category.defaultBehavior
+            }
+            return (category, behavior)
+        })
+    }
+
+    func persistSponsorBlockCategoryBehaviors() {
+        let payload = Dictionary(uniqueKeysWithValues: sponsorBlockCategoryBehaviors.map { ($0.key.rawValue, $0.value) })
+        guard let data = try? JSONEncoder().encode(payload) else { return }
+        defaults.set(data, forKey: sponsorBlockCategoryBehaviorsKey)
     }
 }

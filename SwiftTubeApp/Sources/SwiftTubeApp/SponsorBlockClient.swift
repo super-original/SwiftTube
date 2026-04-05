@@ -29,12 +29,15 @@ actor SponsorBlockClient {
         }
 
         var components = URLComponents(string: "https://sponsor.ajay.app/api/skipSegments")!
-        components.queryItems = [
+        var queryItems: [URLQueryItem] = [
             URLQueryItem(name: "videoID", value: videoID),
-            URLQueryItem(name: "category", value: "sponsor"),
             URLQueryItem(name: "actionType", value: "skip"),
             URLQueryItem(name: "service", value: "YouTube")
         ]
+        queryItems.append(contentsOf: SponsorBlockCategory.allCases.map {
+            URLQueryItem(name: "category", value: $0.rawValue)
+        })
+        components.queryItems = queryItems
 
         guard let url = components.url else {
             cache[videoID] = []
@@ -64,7 +67,8 @@ actor SponsorBlockClient {
                 let start = max(item.segment[0], 0)
                 let end = max(item.segment[1], 0)
                 guard end - start >= 0.35 else { return nil }
-                guard item.category == "sponsor", item.actionType == "skip" else { return nil }
+                guard item.actionType == "skip" else { return nil }
+                guard SponsorBlockCategory(rawValue: item.category) != nil else { return nil }
 
                 if let duration,
                    duration > 0,

@@ -357,6 +357,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var videoAspect: Double = 16.0 / 9.0
     @Published private(set) var storyboard: StoryboardSpec? = nil
     @Published private(set) var sponsorSegments: [SponsorBlockSegment] = []
+    @Published private(set) var manualSkipSponsorSegment: SponsorBlockSegment? = nil
     /// Non-nil while the cursor hovers over the scrubber track (0…1 fraction of track width).
     @Published var scrubHoverFraction: Double? = nil
     @Published var volume: Double = 0.9 {
@@ -506,7 +507,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     var visibleSponsorSegments: [SponsorBlockSegment] {
         guard AppSettings.shared.sponsorBlockEnabled, duration > 0 else { return [] }
         return sponsorSegments.filter { segment in
-            segment.endTime > 0 && segment.startTime < duration
+            segment.endTime > 0
+                && segment.startTime < duration
+                && sponsorBehavior(for: segment).showsInSeekBar
         }
     }
 
@@ -555,6 +558,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
            sponsorSegments.contains(where: { $0.id == suppressedSponsorSegmentID }) == false {
             suppressedSponsorSegmentID = nil
         }
+        if let manualSkipSponsorSegment,
+           sponsorSegments.contains(where: { $0.id == manualSkipSponsorSegment.id }) == false {
+            self.manualSkipSponsorSegment = nil
+        }
     }
 
     func reset() {
@@ -585,6 +592,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         videoAspect = 16.0 / 9.0
         storyboard = nil
         sponsorSegments = []
+        manualSkipSponsorSegment = nil
         scrubHoverFraction = nil
         wasPlayingBeforeScrub = false
         lastInteractionAt = Date()
@@ -1301,6 +1309,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         Task { [weak self] in
             guard let self, let mpvEngine else { return }
             let target = min(scrubPosition, scrubberUpperBound)
+            suppressSponsorSegmentIfUserSeekedIntoOne(at: target)
+            currentTime = target
+            scrubPosition = target
             await mpvEngine.seek(to: target)
             // Restore play state that was saved when scrubbing began.
             if shouldResume {
@@ -1308,8 +1319,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 isPlaying = true
             }
             syncMPVState(using: mpvEngine)
-            currentTime = target
-            scrubPosition = target
             if isHoveringStage {
                 startHideMonitorIfNeeded()
             } else {
@@ -1345,31 +1354,97 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
     }
 
-    private func maybeAutoSkipSponsorSegment(using engine: MPVPlaybackEngine, previousTime: Double) {
-        guard AppSettings.shared.sponsorBlockEnabled else { return }
-        guard AppSettings.shared.sponsorBlockAutoSkipEnabled else { return }
-        guard sponsorSkipTask == nil else { return }
-        guard !isScrubbing, !didReachPlaybackEnd, duration > 0 else { return }
+    func skipManualSponsorSegment() {
+        guard let segment = manualSkipSponsorSegment else { return }
+        skipSponsorSegment(segment)
+    }
 
+    private func sponsorBehavior(for segment: SponsorBlockSegment) -> SponsorBlockBehavior {
+        guard let category = segment.resolvedCategory else {
+            return .disabled
+        }
+        return AppSettings.shared.sponsorBlockBehavior(for: category)
+    }
+
+    private func suppressSponsorSegmentIfUserSeekedIntoOne(at time: Double) {
+        guard AppSettings.shared.sponsorBlockEnabled else { return }
         guard let segment = sponsorSegments.first(where: { segment in
-            segment.id != suppressedSponsorSegmentID
-                && currentTime >= segment.startTime
-                && currentTime < max(segment.endTime - 0.15, segment.startTime)
+            sponsorBehavior(for: segment) != .disabled && segment.contains(time, trailOut: 0.2)
         }) else {
             return
         }
+        suppressedSponsorSegmentID = segment.id
+        manualSkipSponsorSegment = nil
+    }
+
+    private func currentlyRelevantSponsorSegment() -> SponsorBlockSegment? {
+        sponsorSegments.first(where: { segment in
+            segment.id != suppressedSponsorSegmentID
+                && sponsorBehavior(for: segment) != .disabled
+                && segment.contains(currentTime, trailOut: 0.05)
+        })
+    }
+
+    private func updateSponsorBlockState(using engine: MPVPlaybackEngine, previousTime: Double) {
+        guard AppSettings.shared.sponsorBlockEnabled, !isScrubbing, !didReachPlaybackEnd, duration > 0 else {
+            manualSkipSponsorSegment = nil
+            return
+        }
+
+        guard let segment = currentlyRelevantSponsorSegment() else {
+            manualSkipSponsorSegment = nil
+            return
+        }
+
+        let behavior = sponsorBehavior(for: segment)
+        if behavior.showsManualPrompt {
+            manualSkipSponsorSegment = segment
+        } else if manualSkipSponsorSegment?.id == segment.id {
+            manualSkipSponsorSegment = nil
+        }
+
+        guard behavior.autoSkips else { return }
+        maybeAutoSkipSponsorSegment(segment, using: engine, previousTime: previousTime)
+    }
+
+    private func maybeAutoSkipSponsorSegment(
+        _ segment: SponsorBlockSegment,
+        using engine: MPVPlaybackEngine,
+        previousTime: Double
+    ) {
+        guard sponsorSkipTask == nil else { return }
 
         let enteredFromBefore = previousTime < segment.startTime + 0.1 || abs(previousTime - currentTime) > 1.0
         guard enteredFromBefore else { return }
 
-        let skipTarget = min(max(segment.endTime + 0.05, 0), duration)
+        let skipTarget = segment.skipTarget(within: duration)
         guard skipTarget > currentTime else { return }
 
         suppressedSponsorSegmentID = segment.id
+        manualSkipSponsorSegment = nil
         sponsorSkipTask = Task { @MainActor [weak self, weak engine] in
             defer { self?.sponsorSkipTask = nil }
             guard let self, let engine else { return }
             await engine.seek(to: skipTarget)
+            self.currentTime = skipTarget
+            if !self.isScrubbing {
+                self.scrubPosition = skipTarget
+            }
+        }
+    }
+
+    private func skipSponsorSegment(_ segment: SponsorBlockSegment) {
+        guard let mpvEngine, duration > 0 else { return }
+        let skipTarget = segment.skipTarget(within: duration)
+        guard skipTarget > currentTime else { return }
+
+        suppressedSponsorSegmentID = segment.id
+        manualSkipSponsorSegment = nil
+        sponsorSkipTask?.cancel()
+        sponsorSkipTask = Task { @MainActor [weak self, weak mpvEngine] in
+            defer { self?.sponsorSkipTask = nil }
+            guard let self, let mpvEngine else { return }
+            await mpvEngine.seek(to: skipTarget)
             self.currentTime = skipTarget
             if !self.isScrubbing {
                 self.scrubPosition = skipTarget
@@ -1405,7 +1480,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             didReachPlaybackEnd = false
         }
         maybeClearSuppressedSponsorSegment()
-        maybeAutoSkipSponsorSegment(using: engine, previousTime: previousTime)
+        updateSponsorBlockState(using: engine, previousTime: previousTime)
     }
 
     private func mpvRequest(for selection: ManualPlaybackSelection) throws -> MPVPlaybackRequest {
@@ -1643,6 +1718,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             } else {
                 handleSpacebarKeyUp()
             }
+            return nil
+        }
+
+        if event.type == .keyDown,
+           !event.isARepeat,
+           (event.keyCode == 36 || event.keyCode == 76),
+           manualSkipSponsorSegment != nil {
+            skipManualSponsorSegment()
             return nil
         }
 

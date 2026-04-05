@@ -7,6 +7,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case sidebar
     case notifications
     case playback
+    case sponsorBlock
     case updates
     case seeking
     case shortcuts
@@ -20,6 +21,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .sidebar: return "Sidebar"
         case .notifications: return "Notifications"
         case .playback: return "Playback"
+        case .sponsorBlock: return "SponsorBlock"
         case .updates: return "Updates"
         case .seeking: return "Seeking"
         case .shortcuts: return "Keybinds"
@@ -33,6 +35,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .sidebar: return "Navigation layout"
         case .notifications: return "Queue and toasts"
         case .playback: return "Quality and speed"
+        case .sponsorBlock: return "Skips and segments"
         case .updates: return "Release notes"
         case .seeking: return "Seek timings"
         case .shortcuts: return "Keyboard controls"
@@ -46,6 +49,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .sidebar: return "sidebar.left"
         case .notifications: return "bell.badge"
         case .playback: return "play.circle"
+        case .sponsorBlock: return "scissors"
         case .updates: return "sparkles.rectangle.stack"
         case .seeking: return "gobackward.10"
         case .shortcuts: return "keyboard"
@@ -121,6 +125,8 @@ struct SettingsView: View {
                         NotificationsPane()
                     case .playback:
                         PlaybackPane()
+                    case .sponsorBlock:
+                        SponsorBlockPane()
                     case .updates:
                         UpdatesPane()
                     case .seeking:
@@ -647,7 +653,7 @@ private struct PlaybackPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Playback",
-                subtitle: "Startup quality and default speed behavior."
+                subtitle: "Startup quality and playback speed defaults."
             )
 
             SettingsCard(title: "Quality", icon: "sparkles.tv") {
@@ -689,41 +695,6 @@ private struct PlaybackPane: View {
                 }
 
             }
-
-            SettingsCard(title: "SponsorBlock", icon: "scissors") {
-                VStack(alignment: .leading, spacing: 14) {
-                    Toggle(isOn: $settings.sponsorBlockEnabled) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Show sponsor markers")
-                                .font(.headline)
-                            Text("Display SponsorBlock segments on the player timeline.")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .toggleStyle(.switch)
-
-                    Rectangle()
-                        .fill(settings.separatorColor)
-                        .frame(height: 1)
-
-                    Toggle(isOn: $settings.sponsorBlockAutoSkipEnabled) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Auto-skip sponsor segments")
-                                .font(.headline)
-                            Text("Jump past sponsor sections automatically when playback enters them.")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .toggleStyle(.switch)
-                    .disabled(!settings.sponsorBlockEnabled)
-
-                    Text("SwiftTube currently uses SponsorBlock only for viewing and skipping sponsor sections. Submission and voting tools stay out of the app.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
     }
 
@@ -731,6 +702,93 @@ private struct PlaybackPane: View {
         Rectangle()
             .fill(settings.separatorColor)
             .frame(height: 1)
+    }
+}
+
+private struct SponsorBlockPane: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsHeader(
+                title: "SponsorBlock",
+                subtitle: "Choose which segments stay visible, prompt manually, or skip automatically."
+            )
+
+            SettingsCard(title: "Global", icon: "switch.2") {
+                Toggle(isOn: $settings.sponsorBlockEnabled) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Enable SponsorBlock")
+                            .font(.headline)
+                        Text("Show community-submitted segments in the player and apply the behaviors below.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+
+                Text("Disable hides all SponsorBlock markers and prompts. Manual skip shows a side prompt and also works with Return.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            SettingsCard(title: "Categories", icon: "slider.horizontal.3") {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(SponsorBlockCategory.allCases) { category in
+                        SponsorBlockCategoryRow(category: category)
+                            .disabled(!settings.sponsorBlockEnabled)
+
+                        if category != SponsorBlockCategory.allCases.last {
+                            Rectangle()
+                                .fill(settings.separatorColor)
+                                .frame(height: 1)
+                                .padding(.vertical, 18)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct SponsorBlockCategoryRow: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let category: SponsorBlockCategory
+
+    private var selection: Binding<SponsorBlockBehavior> {
+        Binding(
+            get: { settings.sponsorBlockBehavior(for: category) },
+            set: { settings.setSponsorBlockBehavior($0, for: category) }
+        )
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 18) {
+            RoundedRectangle(cornerRadius: 999)
+                .fill(category.tint)
+                .frame(width: 8, height: 40)
+                .padding(.top, 3)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(category.title)
+                    .font(.headline)
+
+                Text(category.description)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 16)
+
+            Picker(category.title, selection: selection) {
+                ForEach(SponsorBlockBehavior.allCases) { behavior in
+                    Text(behavior.title).tag(behavior)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 150)
+        }
     }
 }
 
