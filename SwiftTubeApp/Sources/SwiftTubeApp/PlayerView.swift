@@ -2033,7 +2033,7 @@ private struct PlayerControlBar: View {
             .accessibilityLabel("Playback position")
         }
         .frame(maxWidth: .infinity)
-        .overlay(alignment: .center) {
+        .background(alignment: .center) {
             SponsorBlockTimelineOverlay(
                 segments: coordinator.visibleSponsorSegments,
                 duration: coordinator.duration

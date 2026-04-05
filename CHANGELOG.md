@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.25
+
+- Restored sponsor markers to render behind the scrubber thumb and track fill instead of above them, fixing the visual stacking regression introduced during the scrubber layout fixes.
+
 ## 0.12.24
 
 - Fixed scrubbing on non-16:9 videos by constraining the full-frame storyboard overlay to the measured player stage, so ultrawide storyboard tiles can no longer widen the chrome layout during drag.
