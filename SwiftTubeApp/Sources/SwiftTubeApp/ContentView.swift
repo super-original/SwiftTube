@@ -2305,7 +2305,7 @@ private struct HistoryVideoRow: View {
                 if let youtubeLine {
                     Label(youtubeLine, systemImage: "rectangle.bottomthird.inset.filled")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color(red: 0.93, green: 0.13, blue: 0.13))
                 }
             }
             .padding(.vertical, 3)
@@ -2370,7 +2370,7 @@ private struct HistoryVideoRow: View {
     }
 
     private var metadataChips: [String] {
-        [video.viewCountText, video.publishedTimeText, video.durationText]
+        [video.viewCountText, video.publishedTimeText]
             .compactMap { value in
                 guard let value, !value.isEmpty else { return nil }
                 return value

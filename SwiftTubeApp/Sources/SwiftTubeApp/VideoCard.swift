@@ -80,45 +80,39 @@ struct VideoThumbnailProgressBars: View {
     let cornerRadius: CGFloat
 
     private let localProgressColor = Color(red: 0.44, green: 0.80, blue: 0.98)
+    private let youtubeProgressColor = Color(red: 0.93, green: 0.13, blue: 0.13)
 
     var body: some View {
-        let youtubeFraction = progress?.normalizedYouTubeFraction ?? 0
-        let localFraction = progress?.normalizedLocalFraction ?? 0
+        GeometryReader { proxy in
+            if let bar = activeBar {
+                ZStack(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.black.opacity(0.34))
 
-        VStack(spacing: 1) {
-            if localFraction > 0 {
-                progressBar(
-                    fraction: localFraction,
-                    fill: localProgressColor
-                )
-            }
-
-            if youtubeFraction > 0 {
-                progressBar(
-                    fraction: youtubeFraction,
-                    fill: Color(red: 0.93, green: 0.13, blue: 0.13)
-                )
+                    Rectangle()
+                        .fill(bar.fill)
+                        .frame(width: max(proxy.size.width * bar.fraction, 0))
+                }
+                .frame(height: 5)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             }
         }
-        .padding(.horizontal, 2)
-        .padding(.bottom, 2)
+        .allowsHitTesting(false)
     }
 
-    private func progressBar(fraction: Double, fill: Color) -> some View {
-        GeometryReader { proxy in
-            let width = max(proxy.size.width * fraction, 0)
-
-            ZStack(alignment: .leading) {
-                Capsule(style: .continuous)
-                    .fill(Color.black.opacity(0.28))
-
-                Capsule(style: .continuous)
-                    .fill(fill)
-                    .frame(width: width)
-            }
+    private var activeBar: (fraction: Double, fill: Color)? {
+        let localFraction = progress?.normalizedLocalFraction ?? 0
+        if localFraction > 0 {
+            return (localFraction, localProgressColor)
         }
-        .frame(height: 3)
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+
+        let youtubeFraction = progress?.normalizedYouTubeFraction ?? 0
+        if youtubeFraction > 0 {
+            return (youtubeFraction, youtubeProgressColor)
+        }
+
+        return nil
     }
 }
 
