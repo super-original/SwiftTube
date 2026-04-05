@@ -183,6 +183,11 @@ final class WatchHistoryViewModel: ObservableObject {
         filteredItems = filteredItems.map(patch)
     }
 
+    func restore(items: [VideoItem], filteredItems: [VideoItem]) {
+        self.items = items
+        self.filteredItems = filteredItems
+    }
+
     private func fetch(reset: Bool, queryOverride: String? = nil) async {
         let requestQuery = (queryOverride ?? trimmedSearchQuery).trimmingCharacters(in: .whitespacesAndNewlines)
         isLoading = true
@@ -649,6 +654,7 @@ final class PlaylistFeedViewModel: ObservableObject {
     private var continuation: String? = nil
     private var hasLoadedInitial = false
     private var isReordering = false
+    private let mutationCenter = AppMutationCenter.shared
 
     init(playlist: PlaylistReference) {
         self.playlist = playlist
@@ -727,61 +733,101 @@ final class PlaylistFeedViewModel: ObservableObject {
 
     func moveItemToTop(_ video: VideoItem) {
         guard let setVideoId = video.playlistSetVideoId,
-              video.playlistCanMoveToTop,
-              !mutationIDs.contains(setVideoId) else { return }
+              video.playlistCanMoveToTop else { return }
 
+        let playlistID = playlist.playlistId
         let previousItems = items
         items = move(video, in: items, toTop: true)
+        mutationIDs.insert(setVideoId)
 
-        Task {
-            mutationIDs.insert(setVideoId)
-            defer { mutationIDs.remove(setVideoId) }
-
-            do {
+        mutationCenter.submit(
+            key: MutationQueueKey.playlistPosition(playlistID: playlist.playlistId, setVideoID: setVideoId),
+            successNotice: MutationNotice(
+                title: "Moved to top",
+                message: nil,
+                symbol: "arrow.up.to.line",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t reorder playlist",
+                    message: error.localizedDescription,
+                    symbol: "arrow.up.arrow.down",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            rollback: { [weak self] error in
+                guard let self else { return }
+                self.items = previousItems
+                self.mutationIDs.remove(setVideoId)
+                self.errorMessage = error.localizedDescription
+            },
+            execute: {
                 _ = try await BackendClient.shared.reorderPlaylistItem(
-                    playlistId: playlist.playlistId,
+                    playlistId: playlistID,
                     setVideoId: setVideoId,
                     position: "top"
                 )
-                errorMessage = nil
-            } catch {
-                items = previousItems
-                errorMessage = error.localizedDescription
+            },
+            applySuccess: { [weak self] (_: Void) in
+                self?.mutationIDs.remove(setVideoId)
+                self?.errorMessage = nil
             }
-        }
+        )
     }
 
     func moveItemToBottom(_ video: VideoItem) {
         guard let setVideoId = video.playlistSetVideoId,
-              video.playlistCanMoveToBottom,
-              !mutationIDs.contains(setVideoId) else { return }
+              video.playlistCanMoveToBottom else { return }
 
+        let playlistID = playlist.playlistId
         let previousItems = items
         items = move(video, in: items, toTop: false)
+        mutationIDs.insert(setVideoId)
 
-        Task {
-            mutationIDs.insert(setVideoId)
-            defer { mutationIDs.remove(setVideoId) }
-
-            do {
+        mutationCenter.submit(
+            key: MutationQueueKey.playlistPosition(playlistID: playlist.playlistId, setVideoID: setVideoId),
+            successNotice: MutationNotice(
+                title: "Moved to bottom",
+                message: nil,
+                symbol: "arrow.down.to.line",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t reorder playlist",
+                    message: error.localizedDescription,
+                    symbol: "arrow.up.arrow.down",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            rollback: { [weak self] error in
+                guard let self else { return }
+                self.items = previousItems
+                self.mutationIDs.remove(setVideoId)
+                self.errorMessage = error.localizedDescription
+            },
+            execute: {
                 _ = try await BackendClient.shared.reorderPlaylistItem(
-                    playlistId: playlist.playlistId,
+                    playlistId: playlistID,
                     setVideoId: setVideoId,
                     position: "bottom"
                 )
-                errorMessage = nil
-            } catch {
-                items = previousItems
-                errorMessage = error.localizedDescription
+            },
+            applySuccess: { [weak self] (_: Void) in
+                self?.mutationIDs.remove(setVideoId)
+                self?.errorMessage = nil
             }
-        }
+        )
     }
 
     func removeItem(_ video: VideoItem) {
         guard let setVideoId = video.playlistSetVideoId,
-              video.playlistCanRemove,
-              !mutationIDs.contains(setVideoId) else { return }
+              video.playlistCanRemove else { return }
 
+        let playlistID = playlist.playlistId
         let previousItems = items
         items.removeAll { $0.playlistSetVideoId == setVideoId }
         if let feed {
@@ -791,25 +837,151 @@ final class PlaylistFeedViewModel: ObservableObject {
                 items: items
             )
         }
+        mutationIDs.insert(setVideoId)
 
-        Task {
-            mutationIDs.insert(setVideoId)
-            defer { mutationIDs.remove(setVideoId) }
-
-            do {
-                _ = try await BackendClient.shared.removePlaylistItem(
-                    playlistId: playlist.playlistId,
-                    setVideoId: setVideoId
+        mutationCenter.submit(
+            key: MutationQueueKey.playlistMembership(playlistID: playlist.playlistId, setVideoID: setVideoId),
+            successNotice: MutationNotice(
+                title: "Removed from \(playlist.title)",
+                message: nil,
+                symbol: "trash",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t update playlist",
+                    message: error.localizedDescription,
+                    symbol: "trash",
+                    accent: .red
                 )
-                errorMessage = nil
-            } catch {
-                items = previousItems
+            },
+            optimistic: {},
+            rollback: { [weak self] error in
+                guard let self else { return }
+                self.items = previousItems
+                self.mutationIDs.remove(setVideoId)
                 if let feed {
                     self.feed = feed.with(items: previousItems)
                 }
-                errorMessage = error.localizedDescription
+                self.errorMessage = error.localizedDescription
+            },
+            execute: {
+                _ = try await BackendClient.shared.removePlaylistItem(
+                    playlistId: playlistID,
+                    setVideoId: setVideoId
+                )
+            },
+            applySuccess: { [weak self] (_: Void) in
+                self?.mutationIDs.remove(setVideoId)
+                self?.errorMessage = nil
             }
+        )
+    }
+
+    func moveItem(_ video: VideoItem, to playlistID: String, destinationTitle: String) {
+        guard let setVideoId = video.playlistSetVideoId,
+              video.playlistCanRemove else { return }
+
+        let previousItems = items
+        items.removeAll { $0.playlistSetVideoId == setVideoId }
+        if let feed {
+            self.feed = feed.with(items: items)
         }
+        mutationIDs.insert(setVideoId)
+
+        mutationCenter.submit(
+            key: MutationQueueKey.playlistMembership(playlistID: playlist.playlistId, setVideoID: setVideoId),
+            successNotice: MutationNotice(
+                title: "Moved to \(destinationTitle)",
+                message: nil,
+                symbol: "folder",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t move video",
+                    message: error.localizedDescription,
+                    symbol: "folder",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            rollback: { [weak self] error in
+                guard let self else { return }
+                self.items = previousItems
+                self.mutationIDs.remove(setVideoId)
+                if let feed {
+                    self.feed = feed.with(items: previousItems)
+                }
+                self.errorMessage = error.localizedDescription
+            },
+            execute: {
+                _ = try await BackendClient.shared.updatePlaylist(
+                    id: video.id,
+                    playlistId: playlistID,
+                    saved: true
+                )
+                _ = try await BackendClient.shared.removePlaylistItem(
+                    playlistId: self.playlist.playlistId,
+                    setVideoId: setVideoId
+                )
+            },
+            applySuccess: { [weak self] (_: Void) in
+                self?.mutationIDs.remove(setVideoId)
+                self?.errorMessage = nil
+            }
+        )
+    }
+
+    func moveItemToWatchLater(_ video: VideoItem) {
+        guard let setVideoId = video.playlistSetVideoId,
+              video.playlistCanRemove else { return }
+
+        let previousItems = items
+        items.removeAll { $0.playlistSetVideoId == setVideoId }
+        if let feed {
+            self.feed = feed.with(items: items)
+        }
+        mutationIDs.insert(setVideoId)
+
+        mutationCenter.submit(
+            key: MutationQueueKey.playlistMembership(playlistID: playlist.playlistId, setVideoID: setVideoId),
+            successNotice: MutationNotice(
+                title: "Moved to Watch Later",
+                message: nil,
+                symbol: "clock.badge.checkmark",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t move video",
+                    message: error.localizedDescription,
+                    symbol: "clock",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            rollback: { [weak self] error in
+                guard let self else { return }
+                self.items = previousItems
+                self.mutationIDs.remove(setVideoId)
+                if let feed {
+                    self.feed = feed.with(items: previousItems)
+                }
+                self.errorMessage = error.localizedDescription
+            },
+            execute: {
+                _ = try await BackendClient.shared.updateWatchLater(id: video.id, saved: true)
+                _ = try await BackendClient.shared.removePlaylistItem(
+                    playlistId: self.playlist.playlistId,
+                    setVideoId: setVideoId
+                )
+            },
+            applySuccess: { [weak self] (_: Void) in
+                self?.mutationIDs.remove(setVideoId)
+                self?.errorMessage = nil
+            }
+        )
     }
 
     func reorderItem(withID draggedID: String, toInsertionIndex insertionIndex: Int) -> Bool {
@@ -828,21 +1000,41 @@ final class PlaylistFeedViewModel: ObservableObject {
             self.feed = feed.with(items: updated)
         }
 
-        Task {
-            isReordering = true
-            defer { isReordering = false }
-
-            do {
-                try await syncPlaylistOrder(updated)
-                errorMessage = nil
-            } catch {
-                items = previousItems
+        isReordering = true
+        mutationCenter.submit(
+            key: MutationQueueKey.playlistOrder(playlistID: playlist.playlistId),
+            successNotice: MutationNotice(
+                title: "Playlist order updated",
+                message: nil,
+                symbol: "arrow.up.arrow.down",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t save playlist order",
+                    message: error.localizedDescription,
+                    symbol: "arrow.up.arrow.down",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            rollback: { [weak self] error in
+                guard let self else { return }
+                self.items = previousItems
                 if let feed {
                     self.feed = feed.with(items: previousItems)
                 }
-                errorMessage = error.localizedDescription
+                self.isReordering = false
+                self.errorMessage = error.localizedDescription
+            },
+            execute: {
+                try await self.syncPlaylistOrder(updated)
+            },
+            applySuccess: { [weak self] (_: Void) in
+                self?.isReordering = false
+                self?.errorMessage = nil
             }
-        }
+        )
 
         return true
     }
@@ -889,7 +1081,6 @@ final class PlayerViewModel: ObservableObject {
     @Published var playback: VideoPlayback? = nil
     @Published var isLoading = true
     @Published var errorMessage: String? = nil
-    @Published var actionMessage: String? = nil
     @Published private(set) var recommendations: [VideoItem] = []
     @Published private(set) var comments: [CommentItem] = []
     @Published private(set) var commentCountText: String? = nil
@@ -898,16 +1089,13 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var playbackLoadID = UUID()
     @Published private(set) var playlistOptions: [PlaylistOption] = []
     @Published private(set) var isLoadingPlaylistOptions = false
-    @Published private(set) var isMutatingSubscription = false
-    @Published private(set) var isMutatingRating = false
-    @Published private(set) var isMutatingWatchLater = false
-    @Published private(set) var playlistMutationIDs: Set<String> = []
 
     let video: VideoItem
     private var loadTask: Task<Void, Never>? = nil
     private var commentsTask: Task<Void, Never>? = nil
     private var commentsContinuation: String? = nil
     private var recommendationsContinuation: String? = nil
+    private let mutationCenter = AppMutationCenter.shared
 
     init(video: VideoItem) {
         self.video = video
@@ -960,7 +1148,6 @@ final class PlayerViewModel: ObservableObject {
         errorMessage = nil
         playback = nil
         playbackLoadID = UUID()
-        actionMessage = nil
         comments = []
         recommendations = []
         commentCountText = nil
@@ -1131,15 +1318,14 @@ final class PlayerViewModel: ObservableObject {
                 let watchLater = response.options.first(where: { $0.playlistId == "WL" })
                 updatePlaybackWatchLater(watchLater)
                 playlistOptions = response.options.filter { $0.playlistId != "WL" }
-                actionMessage = nil
             } catch {
-                actionMessage = error.localizedDescription
+                errorMessage = error.localizedDescription
             }
         }
     }
 
     func toggleSubscription() {
-        guard let subscription = playback?.subscription, !isMutatingSubscription else { return }
+        guard let subscription = playback?.subscription else { return }
         let previousPlayback = playback
         let optimisticSubscription = SubscriptionState(
             channelId: subscription.channelId,
@@ -1155,33 +1341,48 @@ final class PlayerViewModel: ObservableObject {
                 subscription: optimisticSubscription
             )
         }
-        actionMessage = nil
+        let videoID = video.id
 
-        Task {
-            isMutatingSubscription = true
-            defer { isMutatingSubscription = false }
-
-            do {
-                let response = try await BackendClient.shared.updateSubscription(
-                    id: video.id,
+        mutationCenter.submit(
+            key: MutationQueueKey.subscription(videoID: videoID),
+            successNotice: MutationNotice(
+                title: optimisticSubscription.subscribed ? "Subscribed" : "Unsubscribed",
+                message: nil,
+                symbol: optimisticSubscription.subscribed ? "person.badge.plus" : "person.badge.minus",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t update subscription",
+                    message: error.localizedDescription,
+                    symbol: "person.badge.plus",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            rollback: { [weak self] _ in
+                self?.playback = previousPlayback
+            },
+            execute: {
+                try await BackendClient.shared.updateSubscription(
+                    id: videoID,
                     subscribed: !subscription.subscribed
                 )
-                updatePlayback { current in
+            },
+            applySuccess: { [weak self] response in
+                guard let self else { return }
+                self.updatePlayback { current in
                     current.with(
                         subscriberCountText: response.subscription?.subscriberCountText,
                         subscription: optimisticSubscription
                     )
                 }
-                actionMessage = nil
-            } catch {
-                playback = previousPlayback
-                actionMessage = error.localizedDescription
             }
-        }
+        )
     }
 
     func toggleRating(_ target: String) {
-        guard let rating = playback?.rating, !isMutatingRating else { return }
+        guard let rating = playback?.rating else { return }
         let previousPlayback = playback
         let backendAction: String = {
             switch target {
@@ -1214,30 +1415,45 @@ final class PlayerViewModel: ObservableObject {
                 rating: optimisticRating
             )
         }
-        actionMessage = nil
+        let videoID = video.id
 
-        Task {
-            isMutatingRating = true
-            defer { isMutatingRating = false }
-
-            do {
-                let response = try await BackendClient.shared.updateRating(id: video.id, action: backendAction)
-                updatePlayback { current in
+        mutationCenter.submit(
+            key: MutationQueueKey.rating(videoID: videoID),
+            successNotice: MutationNotice(
+                title: ratingNoticeTitle(for: optimisticStatus),
+                message: nil,
+                symbol: ratingNoticeSymbol(for: optimisticStatus),
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t update rating",
+                    message: error.localizedDescription,
+                    symbol: "hand.thumbsup",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            rollback: { [weak self] _ in
+                self?.playback = previousPlayback
+            },
+            execute: {
+                try await BackendClient.shared.updateRating(id: videoID, action: backendAction)
+            },
+            applySuccess: { [weak self] response in
+                guard let self else { return }
+                self.updatePlayback { current in
                     current.with(
                         likeCountText: response.rating?.likeCountText,
                         rating: optimisticRating
                     )
                 }
-                actionMessage = nil
-            } catch {
-                playback = previousPlayback
-                actionMessage = error.localizedDescription
             }
-        }
+        )
     }
 
     func toggleWatchLater() {
-        guard let watchLater = playback?.watchLater, !isMutatingWatchLater else { return }
+        guard let watchLater = playback?.watchLater else { return }
         let previousPlayback = playback
         let optimisticWatchLater = PlaylistOption(
             playlistId: watchLater.playlistId,
@@ -1250,19 +1466,38 @@ final class PlayerViewModel: ObservableObject {
         updatePlayback { current in
             current.with(watchLater: optimisticWatchLater)
         }
-        actionMessage = nil
+        let videoID = video.id
 
-        Task {
-            isMutatingWatchLater = true
-            defer { isMutatingWatchLater = false }
-
-            do {
-                let response = try await BackendClient.shared.updateWatchLater(
-                    id: video.id,
+        mutationCenter.submit(
+            key: MutationQueueKey.watchLater(videoID: videoID),
+            successNotice: MutationNotice(
+                title: optimisticWatchLater.saved ? "Added to Watch Later" : "Removed from Watch Later",
+                message: nil,
+                symbol: optimisticWatchLater.saved ? "clock.badge.checkmark" : "clock.badge.minus",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t update Watch Later",
+                    message: error.localizedDescription,
+                    symbol: "clock",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            rollback: { [weak self] _ in
+                self?.playback = previousPlayback
+            },
+            execute: {
+                try await BackendClient.shared.updateWatchLater(
+                    id: videoID,
                     saved: !watchLater.saved
                 )
+            },
+            applySuccess: { [weak self] response in
+                guard let self else { return }
                 if let updated = response.watchLater {
-                    playlistOptions = playlistOptions.map { item in
+                    self.playlistOptions = self.playlistOptions.map { item in
                         item.playlistId == updated.playlistId
                             ? PlaylistOption(
                                 playlistId: updated.playlistId,
@@ -1274,17 +1509,12 @@ final class PlayerViewModel: ObservableObject {
                             : item
                     }
                 }
-                updatePlaybackWatchLater(optimisticWatchLater)
-                actionMessage = nil
-            } catch {
-                playback = previousPlayback
-                actionMessage = error.localizedDescription
+                self.updatePlaybackWatchLater(optimisticWatchLater)
             }
-        }
+        )
     }
 
     func togglePlaylist(_ option: PlaylistOption) {
-        guard !playlistMutationIDs.contains(option.playlistId) else { return }
         let previousOptions = playlistOptions
         let optimisticOption = PlaylistOption(
             playlistId: option.playlistId,
@@ -1297,20 +1527,38 @@ final class PlayerViewModel: ObservableObject {
         playlistOptions = playlistOptions.map { item in
             item.playlistId == option.playlistId ? optimisticOption : item
         }
-        actionMessage = nil
-
-        Task {
-            playlistMutationIDs.insert(option.playlistId)
-            defer { playlistMutationIDs.remove(option.playlistId) }
-
-            do {
-                let response = try await BackendClient.shared.updatePlaylist(
-                    id: video.id,
+        let videoID = video.id
+        mutationCenter.submit(
+            key: MutationQueueKey.playlist(videoID: videoID, playlistID: option.playlistId),
+            successNotice: MutationNotice(
+                title: optimisticOption.saved ? "Saved to \(option.title)" : "Removed from \(option.title)",
+                message: nil,
+                symbol: optimisticOption.saved ? "text.badge.plus" : "minus.circle",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t update \(option.title)",
+                    message: error.localizedDescription,
+                    symbol: "text.badge.plus",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            rollback: { [weak self] _ in
+                self?.playlistOptions = previousOptions
+            },
+            execute: {
+                try await BackendClient.shared.updatePlaylist(
+                    id: videoID,
                     playlistId: option.playlistId,
                     saved: !option.saved
                 )
+            },
+            applySuccess: { [weak self] response in
+                guard let self else { return }
                 if let updated = response.playlist {
-                    playlistOptions = playlistOptions.map { item in
+                    self.playlistOptions = self.playlistOptions.map { item in
                         item.playlistId == updated.playlistId
                             ? PlaylistOption(
                                 playlistId: updated.playlistId,
@@ -1322,12 +1570,8 @@ final class PlayerViewModel: ObservableObject {
                             : item
                     }
                 }
-                actionMessage = nil
-            } catch {
-                playlistOptions = previousOptions
-                actionMessage = error.localizedDescription
             }
-        }
+        )
     }
 
     private func updatePlayback(_ transform: (VideoPlayback) -> VideoPlayback) {
@@ -1338,6 +1582,28 @@ final class PlayerViewModel: ObservableObject {
     private func updatePlaybackWatchLater(_ watchLater: PlaylistOption?) {
         updatePlayback { current in
             current.with(watchLater: watchLater)
+        }
+    }
+
+    private func ratingNoticeTitle(for status: String) -> String {
+        switch status {
+        case "LIKE":
+            return "Liked video"
+        case "DISLIKE":
+            return "Disliked video"
+        default:
+            return "Removed rating"
+        }
+    }
+
+    private func ratingNoticeSymbol(for status: String) -> String {
+        switch status {
+        case "LIKE":
+            return "hand.thumbsup.fill"
+        case "DISLIKE":
+            return "hand.thumbsdown.fill"
+        default:
+            return "hand.thumbsup"
         }
     }
 }

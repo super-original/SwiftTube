@@ -481,6 +481,52 @@ enum PlayerKeyAction: String, CaseIterable, Identifiable {
     }
 }
 
+enum NotificationDisplayMode: String, CaseIterable, Identifiable {
+    case errorsOnly
+    case all
+    case none
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .errorsOnly:
+            return "Errors Only"
+        case .all:
+            return "Success + Errors"
+        case .none:
+            return "None"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .errorsOnly:
+            return "Only failed background actions show notifications."
+        case .all:
+            return "Show both successful and failed background actions."
+        case .none:
+            return "Hide all background action notifications."
+        }
+    }
+}
+
+enum NotificationPlacement: String, CaseIterable, Identifiable {
+    case bottomLeft
+    case bottomRight
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .bottomLeft:
+            return "Bottom Left"
+        case .bottomRight:
+            return "Bottom Right"
+        }
+    }
+}
+
 final class AppSettings: ObservableObject {
     nonisolated(unsafe) static let shared = AppSettings()
 
@@ -490,6 +536,9 @@ final class AppSettings: ObservableObject {
     private let sidebarPlaylistOrderKey = "sidebarPlaylistOrder"
     private let hiddenSidebarPlaylistIDsKey = "hiddenSidebarPlaylistIDs"
     private let keyBindingsKey = "playerKeyBindings"
+    private let notificationDisplayModeKey = "notificationDisplayMode"
+    private let notificationPlacementKey = "notificationPlacement"
+    private let notificationAutoHideDelayKey = "notificationAutoHideDelay"
 
     @Published var appearanceMode: AppAppearanceMode {
         didSet { defaults.set(appearanceMode.rawValue, forKey: "appearanceMode") }
@@ -543,6 +592,18 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(Array(hiddenSidebarPlaylistIDs), forKey: hiddenSidebarPlaylistIDsKey) }
     }
 
+    @Published var notificationDisplayMode: NotificationDisplayMode {
+        didSet { defaults.set(notificationDisplayMode.rawValue, forKey: notificationDisplayModeKey) }
+    }
+
+    @Published var notificationPlacement: NotificationPlacement {
+        didSet { defaults.set(notificationPlacement.rawValue, forKey: notificationPlacementKey) }
+    }
+
+    @Published var notificationAutoHideDelay: Double {
+        didSet { defaults.set(notificationAutoHideDelay, forKey: notificationAutoHideDelayKey) }
+    }
+
     init() {
         let storedAppearance = defaults.string(forKey: "appearanceMode") ?? ""
         self.appearanceMode = AppAppearanceMode(rawValue: storedAppearance)
@@ -580,11 +641,23 @@ final class AppSettings: ObservableObject {
         self.hiddenSidebarItems = Set((defaults.array(forKey: sidebarHiddenKey) as? [String]) ?? [])
         self.sidebarPlaylistOrder = (defaults.array(forKey: sidebarPlaylistOrderKey) as? [String]) ?? []
         self.hiddenSidebarPlaylistIDs = Set((defaults.array(forKey: hiddenSidebarPlaylistIDsKey) as? [String]) ?? [])
+        self.notificationDisplayMode = NotificationDisplayMode(
+            rawValue: defaults.string(forKey: notificationDisplayModeKey) ?? ""
+        ) ?? .errorsOnly
+        self.notificationPlacement = NotificationPlacement(
+            rawValue: defaults.string(forKey: notificationPlacementKey) ?? ""
+        ) ?? .bottomRight
+
+        let storedNotificationDelay = defaults.double(forKey: notificationAutoHideDelayKey)
+        self.notificationAutoHideDelay = Self.notificationAutoHideDelayOptions.contains(storedNotificationDelay)
+            ? storedNotificationDelay
+            : 4
     }
 
     static let seekSecondsOptions = [3, 5, 10, 15, 30, 45, 60, 90]
     static let playbackSpeedOptions: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     static let spacebarHoldPlaybackSpeedOptions: [Double] = [1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
+    static let notificationAutoHideDelayOptions: [Double] = [2, 4, 6, 8, 12]
 
     var preferredColorScheme: ColorScheme {
         appearanceMode.preferredColorScheme
@@ -612,6 +685,26 @@ final class AppSettings: ObservableObject {
 
     var separatorColor: Color {
         appearanceMode.separatorColor
+    }
+
+    var notificationStackAlignment: Alignment {
+        switch notificationPlacement {
+        case .bottomLeft:
+            return .bottomLeading
+        case .bottomRight:
+            return .bottomTrailing
+        }
+    }
+
+    func shouldDisplayNotification(accent: AppNotificationAccent) -> Bool {
+        switch notificationDisplayMode {
+        case .errorsOnly:
+            return accent == .red
+        case .all:
+            return true
+        case .none:
+            return false
+        }
     }
 
     func binding(for action: PlayerKeyAction) -> KeyBinding {

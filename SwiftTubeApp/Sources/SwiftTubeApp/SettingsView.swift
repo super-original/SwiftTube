@@ -4,6 +4,7 @@ import SwiftUI
 private enum SettingsPane: String, CaseIterable, Identifiable {
     case appearance
     case sidebar
+    case notifications
     case playback
     case seeking
     case shortcuts
@@ -14,6 +15,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .appearance: return "Appearance"
         case .sidebar: return "Sidebar"
+        case .notifications: return "Notifications"
         case .playback: return "Playback"
         case .seeking: return "Seeking"
         case .shortcuts: return "Keybinds"
@@ -24,6 +26,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .appearance: return "Themes and colors"
         case .sidebar: return "Navigation layout"
+        case .notifications: return "Queue and toasts"
         case .playback: return "Quality and speed"
         case .seeking: return "Seek timings"
         case .shortcuts: return "Keyboard controls"
@@ -34,6 +37,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .appearance: return "circle.lefthalf.filled"
         case .sidebar: return "sidebar.left"
+        case .notifications: return "bell.badge"
         case .playback: return "play.circle"
         case .seeking: return "gobackward.10"
         case .shortcuts: return "keyboard"
@@ -103,6 +107,8 @@ struct SettingsView: View {
                         AppearancePane()
                     case .sidebar:
                         SidebarPane()
+                    case .notifications:
+                        NotificationsPane()
                     case .playback:
                         PlaybackPane()
                     case .seeking:
@@ -380,6 +386,67 @@ private struct SidebarSettingsListRow: View {
             RoundedRectangle(cornerRadius: 14)
                 .fill(isDraggingOver ? Color.accentColor.opacity(0.12) : .clear)
         )
+    }
+}
+
+private struct NotificationsPane: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsHeader(
+                title: "Notifications",
+                subtitle: "Control how background API actions report their progress back into the app."
+            )
+
+            SettingsCard(title: "Visibility", icon: "bell.badge") {
+                NativePickerRow(
+                    title: "Show notifications",
+                    selectionText: settings.notificationDisplayMode.subtitle
+                ) {
+                    Picker("Show notifications", selection: $settings.notificationDisplayMode) {
+                        ForEach(NotificationDisplayMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                }
+            }
+
+            SettingsCard(title: "Placement", icon: "uiwindow.split.2x1") {
+                NativePickerRow(
+                    title: "Stack position"
+                ) {
+                    Picker("Stack position", selection: $settings.notificationPlacement) {
+                        ForEach(NotificationPlacement.allCases) { placement in
+                            Text(placement.title).tag(placement)
+                        }
+                    }
+                    .labelsHidden()
+                }
+
+                Text("Notifications stack upward from the selected corner and can still be dismissed manually.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            SettingsCard(title: "Auto Hide", icon: "timer") {
+                NativePickerRow(
+                    title: "Hide after"
+                ) {
+                    Picker("Hide after", selection: $settings.notificationAutoHideDelay) {
+                        ForEach(AppSettings.notificationAutoHideDelayOptions, id: \.self) { seconds in
+                            Text("\(Int(seconds))s").tag(seconds)
+                        }
+                    }
+                    .labelsHidden()
+                }
+
+                Text("Hover a notification to reveal its close button, or swipe it sideways to dismiss it early.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

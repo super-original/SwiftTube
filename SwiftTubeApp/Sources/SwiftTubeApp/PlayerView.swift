@@ -148,6 +148,7 @@ struct PlayerScreen: View {
     @State private var isSharePopoverPresented = false
     @State private var isPlaylistPopoverPresented = false
     @State private var isPlaylistRailExpanded = true
+    @ObservedObject private var mutationCenter = AppMutationCenter.shared
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
 
@@ -430,24 +431,14 @@ private extension PlayerScreen {
     }
 
     var actionToolbar: some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    likeDislikeControl
-                    shareButton
-                    watchLaterButton
-                    playlistButton
-                }
-                .padding(.vertical, 2)
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-
-            if let actionMessage = viewModel.actionMessage, !actionMessage.isEmpty {
-                Text(actionMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        WrappingHStack(alignment: .trailing, horizontalSpacing: 8, verticalSpacing: 8) {
+            likeDislikeControl
+            shareButton
+            watchLaterButton
+            playlistButton
         }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.vertical, 2)
     }
 
     var subscribeButton: some View {
@@ -522,6 +513,7 @@ private extension PlayerScreen {
                 .stroke(Color.white.opacity(0.14), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
+        .fixedSize(horizontal: true, vertical: false)
         .opacity(rating == nil ? 0.55 : 1)
         .disabled(rating == nil)
     }
@@ -627,6 +619,7 @@ private extension PlayerScreen {
                 .stroke(Color.white.opacity(0.14), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     var compactStatsRow: some View {
@@ -721,7 +714,7 @@ private extension PlayerScreen {
                     }
                 }
                 Spacer(minLength: 8)
-                if viewModel.playlistMutationIDs.contains(option.id) {
+                if mutationCenter.isPending(MutationQueueKey.playlist(videoID: video.id, playlistID: option.id)) {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -735,7 +728,6 @@ private extension PlayerScreen {
             )
         }
         .buttonStyle(.plain)
-        .disabled(viewModel.playlistMutationIDs.contains(option.id))
     }
 
     var shareURL: URL {
@@ -919,27 +911,9 @@ private extension PlayerScreen {
                                 userPlaylists: movablePlaylistsForQueue(),
                                 onPlay: { navigation.showVideo(queueVideo) },
                                 onPlayFromHere: { navigation.showVideo(queueVideo) },
-                                onAddToWatchLater: navigation.activePlaylistReference?.kind == .watchLater ? nil : {
-                                    _ = Task<Void, Never> {
-                                        do {
-                                            _ = try await BackendClient.shared.updateWatchLater(id: queueVideo.id, saved: true)
-                                        } catch {
-                                            viewModel.actionMessage = error.localizedDescription
-                                        }
-                                    }
-                                },
+                                onAddToWatchLater: navigation.activePlaylistReference?.kind == .watchLater ? nil : queueAddToWatchLater(videoID: queueVideo.id),
                                 onSaveToPlaylist: { playlistID in
-                                    _ = Task<Void, Never> {
-                                        do {
-                                            _ = try await BackendClient.shared.updatePlaylist(
-                                                id: queueVideo.id,
-                                                playlistId: playlistID,
-                                                saved: true
-                                            )
-                                        } catch {
-                                            viewModel.actionMessage = error.localizedDescription
-                                        }
-                                    }
+                                    queueSaveToPlaylist(videoID: queueVideo.id, playlistID: playlistID)
                                 },
                                 onMoveToPlaylist: queueVideo.playlistCanRemove ? { playlistID in
                                     moveQueueVideo(queueVideo, to: playlistID)
@@ -1033,21 +1007,38 @@ private extension PlayerScreen {
               let setVideoId = video.playlistSetVideoId else { return }
 
         let previousItems = navigation.activePlaylistItems
-        navigation.replaceActivePlaylistItems(
-            previousItems.filter { $0.playlistSetVideoId != setVideoId }
-        )
 
-        Task {
-            do {
+        mutationCenter.submit(
+            key: MutationQueueKey.playlistMembership(playlistID: playlistID, setVideoID: setVideoId),
+            successNotice: MutationNotice(
+                title: "Removed from \(navigation.activePlaylistTitle ?? "playlist")",
+                message: nil,
+                symbol: "trash",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t update playlist",
+                    message: error.localizedDescription,
+                    symbol: "trash",
+                    accent: .red
+                )
+            },
+            optimistic: {
+                navigation.replaceActivePlaylistItems(
+                    previousItems.filter { $0.playlistSetVideoId != setVideoId }
+                )
+            },
+            rollback: { _ in
+                navigation.replaceActivePlaylistItems(previousItems)
+            },
+            execute: {
                 _ = try await BackendClient.shared.removePlaylistItem(
                     playlistId: playlistID,
                     setVideoId: setVideoId
                 )
-            } catch {
-                navigation.replaceActivePlaylistItems(previousItems)
-                viewModel.actionMessage = error.localizedDescription
             }
-        }
+        )
     }
 
     func monitorPlaybackProgress() async {
@@ -1071,20 +1062,37 @@ private extension PlayerScreen {
               let setVideoId = video.playlistSetVideoId else { return }
 
         let previousItems = navigation.activePlaylistItems
-        navigation.replaceActivePlaylistItems(reorderedQueue(previousItems, moving: video, position: position))
 
-        Task {
-            do {
+        mutationCenter.submit(
+            key: MutationQueueKey.playlistPosition(playlistID: playlistID, setVideoID: setVideoId),
+            successNotice: MutationNotice(
+                title: position == "top" ? "Moved to top" : "Moved to bottom",
+                message: nil,
+                symbol: position == "top" ? "arrow.up.to.line" : "arrow.down.to.line",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t reorder playlist",
+                    message: error.localizedDescription,
+                    symbol: "arrow.up.arrow.down",
+                    accent: .red
+                )
+            },
+            optimistic: {
+                navigation.replaceActivePlaylistItems(reorderedQueue(previousItems, moving: video, position: position))
+            },
+            rollback: { _ in
+                navigation.replaceActivePlaylistItems(previousItems)
+            },
+            execute: {
                 _ = try await BackendClient.shared.reorderPlaylistItem(
                     playlistId: playlistID,
                     setVideoId: setVideoId,
                     position: position
                 )
-            } catch {
-                navigation.replaceActivePlaylistItems(previousItems)
-                viewModel.actionMessage = error.localizedDescription
             }
-        }
+        )
     }
 
     func moveQueueVideo(withID draggedID: String, toInsertionIndex insertionIndex: Int) -> Bool {
@@ -1098,44 +1106,119 @@ private extension PlayerScreen {
         let updated = reorderedQueue(previousItems, sourceIndex: sourceIndex, insertionIndex: insertionIndex)
         guard updated != previousItems else { return false }
 
-        navigation.replaceActivePlaylistItems(updated)
-
-        Task {
-            do {
-                try await syncQueueOrder(updated, playlistId: playlistID)
-            } catch {
+        mutationCenter.submit(
+            key: MutationQueueKey.playlistOrder(playlistID: playlistID),
+            successNotice: MutationNotice(
+                title: "Playlist order updated",
+                message: nil,
+                symbol: "arrow.up.arrow.down",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t save playlist order",
+                    message: error.localizedDescription,
+                    symbol: "arrow.up.arrow.down",
+                    accent: .red
+                )
+            },
+            optimistic: {
+                navigation.replaceActivePlaylistItems(updated)
+            },
+            rollback: { _ in
                 navigation.replaceActivePlaylistItems(previousItems)
-                viewModel.actionMessage = error.localizedDescription
+            },
+            execute: {
+                try await syncQueueOrder(updated, playlistId: playlistID)
             }
-        }
+        )
 
         return true
     }
 
     func moveQueueVideo(_ video: VideoItem, to playlistID: String) {
-        Task {
-            do {
+        guard let currentPlaylistID = navigation.activePlaylistReference?.playlistId,
+              let setVideoId = video.playlistSetVideoId else { return }
+
+        let previousItems = navigation.activePlaylistItems
+        let destinationTitle = playlistUserLibrary.first(where: { $0.playlistId == playlistID })?.title ?? "playlist"
+
+        mutationCenter.submit(
+            key: MutationQueueKey.playlistMembership(playlistID: currentPlaylistID, setVideoID: setVideoId),
+            successNotice: MutationNotice(
+                title: "Moved to \(destinationTitle)",
+                message: nil,
+                symbol: "folder",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t move video",
+                    message: error.localizedDescription,
+                    symbol: "folder",
+                    accent: .red
+                )
+            },
+            optimistic: {
+                navigation.replaceActivePlaylistItems(
+                    previousItems.filter { $0.playlistSetVideoId != setVideoId }
+                )
+            },
+            rollback: { _ in
+                navigation.replaceActivePlaylistItems(previousItems)
+            },
+            execute: {
                 _ = try await BackendClient.shared.updatePlaylist(
                     id: video.id,
                     playlistId: playlistID,
                     saved: true
                 )
-                removeQueueVideo(video)
-            } catch {
-                viewModel.actionMessage = error.localizedDescription
+                _ = try await BackendClient.shared.removePlaylistItem(
+                    playlistId: currentPlaylistID,
+                    setVideoId: setVideoId
+                )
             }
-        }
+        )
     }
 
     func moveQueueVideoToWatchLater(_ video: VideoItem) {
-        Task {
-            do {
+        guard let currentPlaylistID = navigation.activePlaylistReference?.playlistId,
+              let setVideoId = video.playlistSetVideoId else { return }
+
+        let previousItems = navigation.activePlaylistItems
+
+        mutationCenter.submit(
+            key: MutationQueueKey.playlistMembership(playlistID: currentPlaylistID, setVideoID: setVideoId),
+            successNotice: MutationNotice(
+                title: "Moved to Watch Later",
+                message: nil,
+                symbol: "clock.badge.checkmark",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t move video",
+                    message: error.localizedDescription,
+                    symbol: "clock",
+                    accent: .red
+                )
+            },
+            optimistic: {
+                navigation.replaceActivePlaylistItems(
+                    previousItems.filter { $0.playlistSetVideoId != setVideoId }
+                )
+            },
+            rollback: { _ in
+                navigation.replaceActivePlaylistItems(previousItems)
+            },
+            execute: {
                 _ = try await BackendClient.shared.updateWatchLater(id: video.id, saved: true)
-                removeQueueVideo(video)
-            } catch {
-                viewModel.actionMessage = error.localizedDescription
+                _ = try await BackendClient.shared.removePlaylistItem(
+                    playlistId: currentPlaylistID,
+                    setVideoId: setVideoId
+                )
             }
-        }
+        )
     }
 
     func reorderedQueue(_ items: [VideoItem], moving video: VideoItem, position: String) -> [VideoItem] {
@@ -1206,6 +1289,61 @@ private extension PlayerScreen {
         return playlistUserLibrary.filter { $0.playlistId != currentPlaylistID }
     }
 
+    func queueAddToWatchLater(videoID: String) -> () -> Void {
+        {
+            mutationCenter.submit(
+                key: MutationQueueKey.watchLater(videoID: videoID),
+                successNotice: MutationNotice(
+                    title: "Added to Watch Later",
+                    message: nil,
+                    symbol: "clock.badge.checkmark",
+                    accent: .green
+                ),
+                errorNotice: { error in
+                    MutationNotice(
+                        title: "Couldn’t update Watch Later",
+                        message: error.localizedDescription,
+                        symbol: "clock",
+                        accent: .red
+                    )
+                },
+                optimistic: {},
+                execute: {
+                    _ = try await BackendClient.shared.updateWatchLater(id: videoID, saved: true)
+                }
+            )
+        }
+    }
+
+    func queueSaveToPlaylist(videoID: String, playlistID: String) {
+        let playlistTitle = playlistUserLibrary.first(where: { $0.playlistId == playlistID })?.title ?? "playlist"
+        mutationCenter.submit(
+            key: MutationQueueKey.playlist(videoID: videoID, playlistID: playlistID),
+            successNotice: MutationNotice(
+                title: "Saved to \(playlistTitle)",
+                message: nil,
+                symbol: "text.badge.plus",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t save to \(playlistTitle)",
+                    message: error.localizedDescription,
+                    symbol: "text.badge.plus",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            execute: {
+                _ = try await BackendClient.shared.updatePlaylist(
+                    id: videoID,
+                    playlistId: playlistID,
+                    saved: true
+                )
+            }
+        )
+    }
+
     var recommendationsColumn: some View {
         VStack(alignment: .leading, spacing: 14) {
             if hasActivePlaylistContext, let activePlaylistFeed {
@@ -1239,27 +1377,9 @@ private extension PlayerScreen {
                                 userPlaylists: playlistUserLibrary,
                                 onPlay: { navigation.showVideo(relatedVideo) },
                                 onPlayFromHere: nil,
-                                onAddToWatchLater: authSession.status.authenticated ? {
-                                    _ = Task<Void, Never> {
-                                        do {
-                                            _ = try await BackendClient.shared.updateWatchLater(id: relatedVideo.id, saved: true)
-                                        } catch {
-                                            viewModel.actionMessage = error.localizedDescription
-                                        }
-                                    }
-                                } : nil,
+                                onAddToWatchLater: authSession.status.authenticated ? queueAddToWatchLater(videoID: relatedVideo.id) : nil,
                                 onSaveToPlaylist: authSession.status.authenticated ? { playlistID in
-                                    _ = Task<Void, Never> {
-                                        do {
-                                            _ = try await BackendClient.shared.updatePlaylist(
-                                                id: relatedVideo.id,
-                                                playlistId: playlistID,
-                                                saved: true
-                                            )
-                                        } catch {
-                                            viewModel.actionMessage = error.localizedDescription
-                                        }
-                                    }
+                                    queueSaveToPlaylist(videoID: relatedVideo.id, playlistID: playlistID)
                                 } : nil,
                                 onMoveToPlaylist: nil,
                                 onMoveToWatchLater: nil,
