@@ -1847,6 +1847,9 @@ private struct PlayerChromeOverlay: View {
                     .padding(.horizontal, (edgeToEdge ? 20 : 18) + sidePad)
                     .padding(.bottom, edgeToEdge ? 20 : 18)
             }
+            // Keep the chrome pinned to the stage width so scrub-preview updates
+            // cannot change the control stack's ideal width mid-drag.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -3027,6 +3030,7 @@ private struct ScrubPreviewPositioned: View {
             let popupY = stageSize.height - bottomPad - scrubberRowHeight - 10 - dispH / 2
 
             ScrubPreviewBubble(spec: spec, time: hoverTime, displayWidth: dispW, displayHeight: dispH)
+                .fixedSize()
                 .position(x: clampedX, y: popupY)
         }
     }
