@@ -19,10 +19,10 @@ final class ChannelAvatarLoader: ObservableObject {
         activeChannelID = channelID
         resolvedURL = fallbackURL
 
-        guard let channelID, fallbackURL == nil else { return }
+        guard let channelID else { return }
 
         if Self.cachedURLs.keys.contains(channelID) {
-            resolvedURL = Self.cachedURLs[channelID] ?? nil
+            resolvedURL = Self.cachedURLs[channelID] ?? fallbackURL
             return
         }
 
@@ -48,7 +48,7 @@ final class ChannelAvatarLoader: ObservableObject {
             Self.inFlightTasks[channelID] = nil
             guard !Task.isCancelled else { return }
             guard self?.activeChannelID == channelID else { return }
-            self?.resolvedURL = resolvedURL
+            self?.resolvedURL = resolvedURL ?? fallbackURL
         }
     }
 }
