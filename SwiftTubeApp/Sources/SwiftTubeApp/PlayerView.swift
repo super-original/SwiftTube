@@ -1527,6 +1527,8 @@ private struct PlayerStageSurface: View {
                         .allowsHitTesting(false)
                 }
             }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
             .onHover { hovering in
                 if hovering {
                     hoverExitTask?.cancel()
@@ -2963,6 +2965,7 @@ private struct ScrubVideoOverlay: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
         .task(id: tileTaskID) {
             await loadTile()
         }

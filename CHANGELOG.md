@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.22
+
+- Pinned the player stage to its measured window size during scrubbing so storyboard overlays can no longer enlarge the stage and push the chrome off to the right on affected videos.
+- Clipped the full-frame scrub storyboard overlay to the stage bounds to keep unusual storyboard dimensions from leaking into layout.
+
 ## 0.12.21
 
 - Locked the player chrome to the stage width while scrubbing so preview updates can no longer stretch the scrubber row into the right-side controls.
