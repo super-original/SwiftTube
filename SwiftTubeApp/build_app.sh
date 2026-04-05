@@ -56,6 +56,7 @@ mkdir -p "$ICON_BUILD_DIR"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
+mkdir -p "$APP_DIR/Contents/Resources/Docs"
 mkdir -p "$FRAMEWORKS_DIR"
 
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
@@ -101,6 +102,9 @@ fi
 
 cp "$EXECUTABLE_PATH" "$APP_DIR/Contents/MacOS/$EXECUTABLE_NAME"
 ditto "$RESOURCE_BUNDLE_PATH" "$APP_DIR/Contents/Resources/$RESOURCE_BUNDLE_NAME"
+if [[ -f "$ROOT_DIR/../CHANGELOG.md" ]]; then
+    cp "$ROOT_DIR/../CHANGELOG.md" "$APP_DIR/Contents/Resources/Docs/CHANGELOG.md"
+fi
 if [[ -f "$ICON_BUILD_DIR/AppIcon.icns" ]]; then
     cp "$ICON_BUILD_DIR/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 fi

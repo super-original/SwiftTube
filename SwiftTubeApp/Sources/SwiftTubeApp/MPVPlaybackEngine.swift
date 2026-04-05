@@ -218,7 +218,7 @@ private extension MPVPlaybackEngine {
         }
 
         mpv = handle
-        try check(mpv_request_log_messages(handle, "debug"))
+        try check(mpv_request_log_messages(handle, "no"))
         PlaybackDebugLogger.log(
             "mpv initialize videoHeaders=\(request.video.headers.keys.sorted()) audioHeaders=\(request.audio?.headers.keys.sorted() ?? []) logPath=\(PlaybackDebugLogger.path)"
         )

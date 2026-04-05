@@ -204,6 +204,7 @@ struct PlayerScreen: View {
                 } else if let resumeStartTime = playback.resumeStartTimeSeconds {
                     playbackCoordinator.setInitialStartTime(resumeStartTime)
                 }
+                playbackCoordinator.updateSponsorSegments(playback.sponsorSegments)
                 playbackCoordinator.configure(with: playback)
                 if authSession.status.authenticated, playback.playlistSaveEnabled {
                     viewModel.loadPlaylistOptions()
@@ -211,6 +212,9 @@ struct PlayerScreen: View {
             } else {
                 playbackCoordinator.reset()
             }
+        }
+        .onChange(of: viewModel.playback?.sponsorSegments ?? []) { _, segments in
+            playbackCoordinator.updateSponsorSegments(segments)
         }
         .task(id: "\(video.id)-\(viewModel.playbackLoadID.uuidString)-progress") {
             await monitorPlaybackProgress()
@@ -1445,6 +1449,10 @@ private struct PlayerStageSurface: View {
                     PlayerStageErrorOverlay(message: errorMessage, retry: retry)
                 } else if coordinator.shouldShowPlaybackLoadingOverlay {
                     PlayerStageLoadingOverlay(text: isLoading ? "Loading video..." : coordinator.playbackLoadingText)
+                } else if coordinator.didReachPlaybackEnd {
+                    PlayerStageEndedOverlay {
+                        coordinator.restartPlayback()
+                    }
                 }
 
                 // Tap-to-toggle layer. Hover enter/exit is tracked on the
@@ -1558,6 +1566,29 @@ private struct PlayerStageLoadingOverlay: View {
     }
 }
 
+private struct PlayerStageEndedOverlay: View {
+    let replay: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "arrow.counterclockwise.circle.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(.white.opacity(0.9))
+
+            Text("Playback finished")
+                .font(.headline)
+                .foregroundStyle(.white)
+
+            Button("Replay") {
+                replay()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(26)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 private struct PlayerStageErrorOverlay: View {
     let message: String
     let retry: () -> Void
@@ -1577,6 +1608,33 @@ private struct PlayerStageErrorOverlay: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct SponsorBlockTimelineOverlay: View {
+    let segments: [SponsorBlockSegment]
+    let duration: Double
+
+    private let trackHeight: CGFloat = 5
+
+    var body: some View {
+        GeometryReader { proxy in
+            if duration > 0, !segments.isEmpty {
+                ZStack(alignment: .leading) {
+                    ForEach(segments) { segment in
+                        let startFraction = max(min(segment.startTime / duration, 1), 0)
+                        let endFraction = max(min(segment.endTime / duration, 1), startFraction)
+                        let width = max((endFraction - startFraction) * proxy.size.width, 3)
+
+                        Capsule(style: .continuous)
+                            .fill(Color(red: 0.26, green: 0.84, blue: 0.53).opacity(0.95))
+                            .frame(width: width, height: trackHeight)
+                            .offset(x: startFraction * proxy.size.width)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            }
+        }
     }
 }
 
@@ -1846,6 +1904,13 @@ private struct PlayerControlBar: View {
             // events when applied directly, so the container approach is reliable
             // for both passive hover and active drag.
             ZStack {
+                SponsorBlockTimelineOverlay(
+                    segments: coordinator.visibleSponsorSegments,
+                    duration: coordinator.duration
+                )
+                .padding(.horizontal, 10)
+                .allowsHitTesting(false)
+
                 Slider(
                     value: Binding(
                         get: { coordinator.scrubPosition },

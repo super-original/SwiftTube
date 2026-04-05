@@ -1,105 +1,68 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This repository-specific guide is for Claude Code and other AI agents that read this file.
+It intentionally mirrors `AGENTS.md` so the repo has one consistent set of expectations.
 
-## What is SwiftTube
+## SwiftTube overview
 
-SwiftTube is a personal macOS YouTube client. It has a Swift/SwiftUI frontend that embeds and auto-manages a Python (FastAPI) backend. The app bootstraps the backend on launch, including venv creation and dependency installation.
+SwiftTube is a personal macOS YouTube client built with SwiftUI and Swift Package Manager.
+The app now uses an in-process Swift backend actor plus MPV playback. It does not launch a bundled Python or FastAPI backend anymore.
+`yt-dlp` remains an external helper for browser-cookie import and stream extraction paths.
 
-## Build and Run
+## Key locations
 
-The project is a Swift Package Manager executable (swift-tools-version 6.2, macOS 26+).
+- App sources: `SwiftTubeApp/Sources/SwiftTubeApp/`
+- Resources: `SwiftTubeApp/Sources/SwiftTubeApp/Resources/`
+- Build/package script: `SwiftTubeApp/build_app.sh`
+- App version: `SwiftTubeApp/VERSION`
+- Changelog: `CHANGELOG.md`
+- Supplemental docs: `docs/`
+
+## Build commands
 
 ```bash
-# Build (from SwiftTubeApp/)
 cd SwiftTubeApp && swift build
-
-# Build release
 cd SwiftTubeApp && swift build -c release
-
-# Run (the app bootstraps its own Python backend on launch)
 cd SwiftTubeApp && swift run
+cd SwiftTubeApp && zsh build_app.sh
 ```
 
-There are no tests. There is no linter configured.
+There are no formal tests at the moment.
 
-## Architecture
+## Architecture map
 
-### Two-process design
+- `SwiftTubeApp.swift`: app entry point and top-level environment setup
+- `ContentView.swift`: shell UI, routing, feed/search/history/playlists
+- `SettingsView.swift`: desktop settings UI and release-notes surface
+- `SwiftTubeBackend.swift`: in-process backend actor for feed/search/history/player data and mutations
+- `YouTubeAPI.swift`: raw YouTube/InnerTube networking layer
+- `BackendClient.swift`: async facade used by view models
+- `PlayerPlaybackCoordinator.swift`: playback state machine
+- `MPVPlaybackEngine.swift`: MPV/libmpv wrapper
+- `MutationCenter.swift`: queued optimistic mutations and notifications
 
-1. **Swift frontend** (`SwiftTubeApp/Sources/SwiftTubeApp/`) - SwiftUI macOS app
-2. **Python backend** (`SwiftTubeApp/Sources/SwiftTubeApp/Resources/backend/`) - FastAPI server bundled as a resource, copied to `~/Library/Application Support/SwiftTube/` at runtime
+## Expectations when changing the app
 
-The frontend spawns the backend as a `uvicorn` subprocess on `127.0.0.1:4891`. `BackendManager` handles the full lifecycle: Python discovery, venv bootstrap, dependency install, process launch, health polling. `BackendClient` is a singleton HTTP client for all API calls.
+- Read the relevant code and docs first.
+- Do not revert unrelated user work.
+- Keep changes focused and easy to review.
+- Commit after every material change set.
+- Bump `SwiftTubeApp/VERSION` for material app changes.
+- Rebuild the packaged app after version bumps with `cd SwiftTubeApp && zsh build_app.sh`.
+- Update `CHANGELOG.md` whenever the version changes.
 
-### Backend API (Python, FastAPI)
+## Release rules
 
-- `GET /health` - health check with instance ID
-- `GET /recommendations?continuation=` - home feed via InnerTube (`innertube` library)
-- `GET /video/{video_id}` - video metadata + streams (uses `yt-dlp` + InnerTube player)
-- `GET /video/{video_id}/comments` - comments
-- `GET /auth/status`, `POST /auth/browser`, `DELETE /auth/session` - browser cookie auth
+- The first version digit stays below `1` until the user explicitly approves `1.0`.
+- The second digit only changes for major releases or when explicitly requested.
+- Every future second-digit release must include a codename and a flagship theme in `CHANGELOG.md`.
 
-Key backend files:
-- `app/main.py` - FastAPI routes, InnerTube clients, request orchestration
-- `app/playback.py` - yt-dlp stream extraction, quality scoring, stream validation
-- `app/parse.py` - InnerTube response parsing (video items, metadata, comments)
-- `app/auth.py` - browser cookie import via yt-dlp cookie extraction
-- `app/provider.py` - authenticated yt-dlp option builder
+## Documentation expectations
 
-### Playback engine (MPV-only since v0.6.0)
+Keep these files aligned with the real codebase:
 
-All playback uses `MPVPlaybackEngine` via MPVKit (libmpv). The previous AVFoundation path was removed in v0.6.0 since YouTube now serves adaptive streams exclusively.
-
-`PlayerPlaybackCoordinator` is the central playback controller. It manages the MPV engine lifecycle, quality switching (via `replaceFile` on the same mpv context), theater/fullscreen modes, and scrubbing. Quality options are built from AV1 mp4 adaptive streams paired with m4a audio.
-
-### Navigation
-
-`AppNavigationModel` manages a stack-based navigation with back/forward between `.home` and `.video(VideoItem)` routes.
-
-### Key environment objects
-
-`SwiftTubeApp` (@main) creates three `@StateObject`s injected as `@EnvironmentObject`:
-- `BackendManager` - backend process lifecycle
-- `AppNavigationModel` - route state
-- `AuthSessionModel` - YouTube auth state
-
-## Commit conventions (from AGENTS.md)
-
-- Create a git commit after every change set that materially updates code or configuration
-- Keep commits small and focused; avoid bundling unrelated changes
-- Use clear, present-tense commit messages (e.g., "Add backend bootstrap", "Fix navigation routing")
-- Before committing, check `git status` and include only intended files
-- Do not commit secrets or large binary artifacts
-- When making material app changes, also update the user-visible app version in `SwiftTube > About`. Keep that version in sync with the build metadata used for the packaged app
-
-## Versioning and Packaging
-
-- The app version lives in `SwiftTubeApp/VERSION` (single line, e.g., `0.6.0`)
-- Build number is auto-derived from `git rev-list --count HEAD`
-- `SwiftTubeApp/build_app.sh` builds the app bundle at `SwiftTubeApp/Build/SwiftTube.app`
-  - Runs `swift build`, copies the binary + resources, embeds frameworks, and codesigns
-  - Reads version from `VERSION` file, writes `Info.plist` with `CFBundleShortVersionString`
-
-## Workflow rules (always follow)
-    - After every code or config change: run `git add <files> && git
-    commit`
-    - After every material app change: bump `SwiftTubeApp/VERSION`
-    (e.g. 0.6.1 → 0.6.2) **before** committing
-    - After every VERSION bump: rebuild the app bundle with `cd
-    SwiftTubeApp && zsh build_app.sh`
-    - Never bundle unrelated changes into one commit
-
-## Dependencies
-
-Swift: `MPVKit` (>= 0.41.0) for libmpv video playback
-
-Python (`requirements.txt`): `fastapi`, `uvicorn`, `innertube`, `pydantic`, `httpx`, `yt-dlp`, `bgutil-ytdlp-pot-provider`
-
-## Environment variables
-
-- `SWIFTTUBE_BACKEND` - override backend base URL (default: `http://127.0.0.1:4891`)
-- `SWIFTTUBE_PYTHON_PATH` - override Python executable for venv
-- `SWIFTTUBE_APP_SUPPORT_DIR` - passed to backend for data storage
-- `SWIFTTUBE_INSTANCE_ID` - unique per launch, used for health check identity
-- `SWIFTTUBE_APP_VERSION` - passed to backend
+- `SwiftTubeApp/README.md`
+- `AGENTS.md`
+- `CLAUDE.md`
+- `CHANGELOG.md`
+- files in `docs/`

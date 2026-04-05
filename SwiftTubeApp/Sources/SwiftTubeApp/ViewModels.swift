@@ -1093,6 +1093,7 @@ final class PlayerViewModel: ObservableObject {
     let video: VideoItem
     private var loadTask: Task<Void, Never>? = nil
     private var commentsTask: Task<Void, Never>? = nil
+    private var sponsorSegmentsTask: Task<Void, Never>? = nil
     private var commentsContinuation: String? = nil
     private var recommendationsContinuation: String? = nil
     private let mutationCenter = AppMutationCenter.shared
@@ -1104,6 +1105,7 @@ final class PlayerViewModel: ObservableObject {
     func load() {
         loadTask?.cancel()
         commentsTask?.cancel()
+        sponsorSegmentsTask?.cancel()
         loadTask = Task {
             await fetchPlayback()
         }
@@ -1112,6 +1114,7 @@ final class PlayerViewModel: ObservableObject {
     func stop() {
         loadTask?.cancel()
         commentsTask?.cancel()
+        sponsorSegmentsTask?.cancel()
     }
 
     func reportPlaybackProgress(
@@ -1153,6 +1156,7 @@ final class PlayerViewModel: ObservableObject {
         commentCountText = nil
         isLoadingComments = false
         isLoadingRecommendations = false
+        sponsorSegmentsTask?.cancel()
         commentsContinuation = nil
         recommendationsContinuation = nil
         playlistOptions = []
@@ -1169,6 +1173,7 @@ final class PlayerViewModel: ObservableObject {
             self.recommendationsContinuation = playback.recommendationsContinuation
             isLoading = false
             playbackLoadID = UUID()
+            loadSponsorSegments(for: playback)
             startCommentsLoad()
         } catch {
             guard !Task.isCancelled else { return }
@@ -1187,6 +1192,21 @@ final class PlayerViewModel: ObservableObject {
         commentsTask?.cancel()
         commentsTask = Task { [weak self] in
             await self?.fetchComments()
+        }
+    }
+
+    private func loadSponsorSegments(for playback: VideoPlayback) {
+        sponsorSegmentsTask?.cancel()
+        sponsorSegmentsTask = Task { [weak self] in
+            guard let self else { return }
+            let segments = await SponsorBlockClient.shared.fetchSegments(
+                videoID: self.video.id,
+                duration: playback.progress?.durationSeconds
+            )
+            guard !Task.isCancelled else { return }
+            self.updatePlayback { current in
+                current.with(sponsorSegments: segments)
+            }
         }
     }
 

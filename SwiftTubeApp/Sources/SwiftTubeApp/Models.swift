@@ -196,6 +196,20 @@ struct StoryboardSpec: Codable, Sendable {
     }
 }
 
+struct SponsorBlockSegment: Codable, Hashable, Identifiable, Sendable {
+    let id: String
+    let category: String
+    let actionType: String
+    let startTime: Double
+    let endTime: Double
+    let votes: Int
+    let description: String
+
+    var duration: Double {
+        max(endTime - startTime, 0)
+    }
+}
+
 struct SubtitleTrack: Codable, Hashable, Sendable {
     let language: String
     let label: String
@@ -330,6 +344,7 @@ struct VideoPlayback: Codable, Sendable {
     let bestStream: StreamInfo?
     let subtitles: [SubtitleTrack]?
     let storyboard: StoryboardSpec?
+    let sponsorSegments: [SponsorBlockSegment]
     let progress: VideoProgress?
     let resumeStartTimeSeconds: Double?
     let subscription: SubscriptionState?
@@ -350,7 +365,8 @@ struct VideoPlayback: Codable, Sendable {
         rating: RatingState? = nil,
         watchLater: PlaylistOption? = nil,
         progress: VideoProgress? = nil,
-        resumeStartTimeSeconds: Double? = nil
+        resumeStartTimeSeconds: Double? = nil,
+        sponsorSegments: [SponsorBlockSegment]? = nil
     ) -> VideoPlayback {
         VideoPlayback(
             id: id,
@@ -378,6 +394,7 @@ struct VideoPlayback: Codable, Sendable {
             bestStream: bestStream,
             subtitles: subtitles,
             storyboard: storyboard,
+            sponsorSegments: sponsorSegments ?? self.sponsorSegments,
             progress: progress ?? self.progress,
             resumeStartTimeSeconds: resumeStartTimeSeconds ?? self.resumeStartTimeSeconds,
             subscription: subscription ?? self.subscription,

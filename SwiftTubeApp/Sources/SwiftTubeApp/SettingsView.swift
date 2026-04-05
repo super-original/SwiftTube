@@ -7,6 +7,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case sidebar
     case notifications
     case playback
+    case updates
     case seeking
     case shortcuts
 
@@ -19,6 +20,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .sidebar: return "Sidebar"
         case .notifications: return "Notifications"
         case .playback: return "Playback"
+        case .updates: return "Updates"
         case .seeking: return "Seeking"
         case .shortcuts: return "Keybinds"
         }
@@ -31,6 +33,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .sidebar: return "Navigation layout"
         case .notifications: return "Queue and toasts"
         case .playback: return "Quality and speed"
+        case .updates: return "Release notes"
         case .seeking: return "Seek timings"
         case .shortcuts: return "Keyboard controls"
         }
@@ -43,6 +46,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .sidebar: return "sidebar.left"
         case .notifications: return "bell.badge"
         case .playback: return "play.circle"
+        case .updates: return "sparkles.rectangle.stack"
         case .seeking: return "gobackward.10"
         case .shortcuts: return "keyboard"
         }
@@ -117,6 +121,8 @@ struct SettingsView: View {
                         NotificationsPane()
                     case .playback:
                         PlaybackPane()
+                    case .updates:
+                        UpdatesPane()
                     case .seeking:
                         SeekingPane()
                     case .shortcuts:
@@ -683,6 +689,41 @@ private struct PlaybackPane: View {
                 }
 
             }
+
+            SettingsCard(title: "SponsorBlock", icon: "scissors") {
+                VStack(alignment: .leading, spacing: 14) {
+                    Toggle(isOn: $settings.sponsorBlockEnabled) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Show sponsor markers")
+                                .font(.headline)
+                            Text("Display SponsorBlock segments on the player timeline.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+
+                    Rectangle()
+                        .fill(settings.separatorColor)
+                        .frame(height: 1)
+
+                    Toggle(isOn: $settings.sponsorBlockAutoSkipEnabled) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Auto-skip sponsor segments")
+                                .font(.headline)
+                            Text("Jump past sponsor sections automatically when playback enters them.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .disabled(!settings.sponsorBlockEnabled)
+
+                    Text("SwiftTube currently uses SponsorBlock only for viewing and skipping sponsor sections. Submission and voting tools stay out of the app.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
@@ -690,6 +731,49 @@ private struct PlaybackPane: View {
         Rectangle()
             .fill(settings.separatorColor)
             .frame(height: 1)
+    }
+}
+
+private struct UpdatesPane: View {
+    @State private var changelog = ChangelogDocument.load()
+
+    private var currentVersionText: String {
+        if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+           !version.isEmpty {
+            return version
+        }
+        return "Development Build"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsHeader(
+                title: "Updates",
+                subtitle: "Release notes and version history for SwiftTube."
+            )
+
+            SettingsCard(title: "Current Version", icon: "app.badge") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(currentVersionText)
+                        .font(.title2.weight(.bold))
+                    Text("Every shipped update is recorded in the bundled changelog, including future named milestone releases.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            SettingsCard(title: "Changelog", icon: "text.document") {
+                if let changelog {
+                    Text(changelog)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text("SwiftTube couldn’t load the bundled changelog.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }
 
@@ -836,6 +920,26 @@ private struct SettingsHeader: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+private enum ChangelogDocument {
+    static func load() -> AttributedString? {
+        let bundledURL = Bundle.main.url(forResource: "CHANGELOG", withExtension: "md", subdirectory: "Docs")
+        let sourceTreeURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("../../../CHANGELOG.md")
+            .standardizedFileURL
+
+        for url in [bundledURL, sourceTreeURL] {
+            guard let url else { continue }
+            guard let rawMarkdown = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            return try? AttributedString(
+                markdown: rawMarkdown,
+                options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .full)
+            )
+        }
+        return nil
     }
 }
 

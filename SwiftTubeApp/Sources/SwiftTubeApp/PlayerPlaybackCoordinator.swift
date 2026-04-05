@@ -339,6 +339,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var errorMessage: String? = nil
     @Published private(set) var isPlaying = false
     @Published private(set) var controlsVisible = true
+    @Published private(set) var didReachPlaybackEnd = false
     @Published private(set) var currentTime: Double = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var scrubPosition: Double = 0
@@ -355,6 +356,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published var keyboardLocked = false
     @Published private(set) var videoAspect: Double = 16.0 / 9.0
     @Published private(set) var storyboard: StoryboardSpec? = nil
+    @Published private(set) var sponsorSegments: [SponsorBlockSegment] = []
     /// Non-nil while the cursor hovers over the scrubber track (0…1 fraction of track width).
     @Published var scrubHoverFraction: Double? = nil
     @Published var volume: Double = 0.9 {
@@ -376,6 +378,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var hideControlsTask: Task<Void, Never>? = nil
     private var menuInteractionTask: Task<Void, Never>? = nil
     private var mpvStateTask: Task<Void, Never>? = nil
+    private var sponsorSkipTask: Task<Void, Never>? = nil
     private var feedbackDismissTask: Task<Void, Never>? = nil
     private var spacebarHoldTask: Task<Void, Never>? = nil
     private var playbackSpeedTransitionTask: Task<Void, Never>? = nil
@@ -385,6 +388,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var isSpacebarPressed = false
     private var didActivateSpacebarHoldSpeed = false
     private var initialStartTime: Double = 0
+    private var suppressedSponsorSegmentID: String? = nil
     var onPlaybackEnded: (() -> Void)?
     var onShortcutAction: ((PlayerKeyAction) -> Void)?
 
@@ -499,6 +503,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         max(duration, 1)
     }
 
+    var visibleSponsorSegments: [SponsorBlockSegment] {
+        guard AppSettings.shared.sponsorBlockEnabled, duration > 0 else { return [] }
+        return sponsorSegments.filter { segment in
+            segment.endTime > 0 && segment.startTime < duration
+        }
+    }
+
     var hasSubtitleOptions: Bool {
         !subtitleOptions.isEmpty
     }
@@ -534,6 +545,18 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         initialStartTime = max(0, seconds)
     }
 
+    func updateSponsorSegments(_ segments: [SponsorBlockSegment]) {
+        sponsorSegments = segments.sorted { lhs, rhs in
+            lhs.startTime == rhs.startTime
+                ? lhs.endTime < rhs.endTime
+                : lhs.startTime < rhs.startTime
+        }
+        if suppressedSponsorSegmentID != nil,
+           sponsorSegments.contains(where: { $0.id == suppressedSponsorSegmentID }) == false {
+            suppressedSponsorSegmentID = nil
+        }
+    }
+
     func reset() {
         prepareTask?.cancel()
         stopHideMonitor()
@@ -545,6 +568,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         isPreparingInitialPlayback = false
         controlsVisible = true
         isPlaying = false
+        didReachPlaybackEnd = false
         currentTime = 0
         duration = 0
         scrubPosition = 0
@@ -560,6 +584,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         keyboardLocked = false
         videoAspect = 16.0 / 9.0
         storyboard = nil
+        sponsorSegments = []
         scrubHoverFraction = nil
         wasPlayingBeforeScrub = false
         lastInteractionAt = Date()
@@ -568,6 +593,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         isSpacebarPressed = false
         didActivateSpacebarHoldSpeed = false
         initialStartTime = 0
+        suppressedSponsorSegmentID = nil
+        sponsorSkipTask?.cancel()
+        sponsorSkipTask = nil
         scheduleMPVStop(mpvEngine, pauseFirst: true)
         mpvEngine = nil
     }
@@ -620,6 +648,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     func togglePlayback() {
         noteInteraction()
         guard let mpvEngine else { return }
+        if shouldRestartFromEnd {
+            restartPlayback()
+            return
+        }
         if isPlaying {
             mpvEngine.pause()
             isPlaying = false
@@ -839,6 +871,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func restartPlayback() {
         noteInteraction()
+        didReachPlaybackEnd = false
+        suppressedSponsorSegmentID = nil
         Task { [weak self] in
             guard let self, let mpvEngine else { return }
             await mpvEngine.seek(to: 0)
@@ -919,6 +953,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         do {
             currentPlayback = playback
+            sponsorSegments = playback.sponsorSegments
             selectedQualityOptionID = QualityOption.automaticID
             mpvStateTask?.cancel()
             scheduleMPVStop(mpvEngine, pauseFirst: true)
@@ -938,7 +973,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
             let engine = MPVPlaybackEngine(request: request)
             engine.onPlaybackEnded = { [weak self] in
-                self?.onPlaybackEnded?()
+                self?.handlePlaybackEndedEvent()
             }
             mpvEngine = engine
 
@@ -981,6 +1016,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         previousSelectionID: String
     ) async {
         errorMessage = nil
+        sponsorSegments = playback.sponsorSegments
         PlaybackDebugLogger.log(
             "quality switch start option=\(debugDescription(for: option)) previous=\(previousSelectionID)"
         )
@@ -1025,7 +1061,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             } else {
                 let engine = MPVPlaybackEngine(request: request)
                 engine.onPlaybackEnded = { [weak self] in
-                    self?.onPlaybackEnded?()
+                    self?.handlePlaybackEndedEvent()
                 }
                 mpvEngine = engine
 
@@ -1255,8 +1291,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         )
     }
 
+    private var shouldRestartFromEnd: Bool {
+        didReachPlaybackEnd || (duration > 0 && currentTime >= max(duration - 0.35, 0))
+    }
+
     private func seekToScrubPosition() {
         let shouldResume = wasPlayingBeforeScrub
+        didReachPlaybackEnd = false
         Task { [weak self] in
             guard let self, let mpvEngine else { return }
             let target = min(scrubPosition, scrubberUpperBound)
@@ -1277,6 +1318,65 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
     }
 
+    private func handlePlaybackEndedEvent() {
+        isPlaying = false
+        didReachPlaybackEnd = true
+        controlsVisible = true
+        stopHideMonitor()
+        if duration > 0 {
+            currentTime = duration
+            if !isScrubbing {
+                scrubPosition = duration
+            }
+        }
+        onPlaybackEnded?()
+    }
+
+    private func maybeClearSuppressedSponsorSegment() {
+        guard let suppressedSponsorSegmentID,
+              let segment = sponsorSegments.first(where: { $0.id == suppressedSponsorSegmentID }) else {
+            suppressedSponsorSegmentID = nil
+            return
+        }
+
+        let outsideSegment = currentTime < max(segment.startTime - 0.4, 0) || currentTime > segment.endTime + 0.4
+        if outsideSegment {
+            self.suppressedSponsorSegmentID = nil
+        }
+    }
+
+    private func maybeAutoSkipSponsorSegment(using engine: MPVPlaybackEngine, previousTime: Double) {
+        guard AppSettings.shared.sponsorBlockEnabled else { return }
+        guard AppSettings.shared.sponsorBlockAutoSkipEnabled else { return }
+        guard sponsorSkipTask == nil else { return }
+        guard !isScrubbing, !didReachPlaybackEnd, duration > 0 else { return }
+
+        guard let segment = sponsorSegments.first(where: { segment in
+            segment.id != suppressedSponsorSegmentID
+                && currentTime >= segment.startTime
+                && currentTime < max(segment.endTime - 0.15, segment.startTime)
+        }) else {
+            return
+        }
+
+        let enteredFromBefore = previousTime < segment.startTime + 0.1 || abs(previousTime - currentTime) > 1.0
+        guard enteredFromBefore else { return }
+
+        let skipTarget = min(max(segment.endTime + 0.05, 0), duration)
+        guard skipTarget > currentTime else { return }
+
+        suppressedSponsorSegmentID = segment.id
+        sponsorSkipTask = Task { @MainActor [weak self, weak engine] in
+            defer { self?.sponsorSkipTask = nil }
+            guard let self, let engine else { return }
+            await engine.seek(to: skipTarget)
+            self.currentTime = skipTarget
+            if !self.isScrubbing {
+                self.scrubPosition = skipTarget
+            }
+        }
+    }
+
     private func startPollingMPVState(using engine: MPVPlaybackEngine) {
         mpvStateTask?.cancel()
         syncMPVState(using: engine)
@@ -1290,6 +1390,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func syncMPVState(using engine: MPVPlaybackEngine) {
+        let previousTime = currentTime
         let snapshot = engine.snapshot()
         currentTime = sanitizeSeconds(snapshot.currentTime)
         if !isScrubbing {
@@ -1300,6 +1401,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
         isPlaying = snapshot.isPlaying
         if engine.videoAspect > 0 { videoAspect = engine.videoAspect }
+        if didReachPlaybackEnd, currentTime + 0.25 < scrubberUpperBound {
+            didReachPlaybackEnd = false
+        }
+        maybeClearSuppressedSponsorSegment()
+        maybeAutoSkipSponsorSegment(using: engine, previousTime: previousTime)
     }
 
     private func mpvRequest(for selection: ManualPlaybackSelection) throws -> MPVPlaybackRequest {

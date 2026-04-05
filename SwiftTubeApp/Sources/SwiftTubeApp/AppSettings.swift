@@ -540,6 +540,8 @@ final class AppSettings: ObservableObject {
     private let notificationPlacementKey = "notificationPlacement"
     private let notificationAutoHideDelayKey = "notificationAutoHideDelay"
     private let browseVideoCardWidthKey = "browseVideoCardWidth"
+    private let sponsorBlockEnabledKey = "sponsorBlockEnabled"
+    private let sponsorBlockAutoSkipKey = "sponsorBlockAutoSkipEnabled"
 
     @Published var appearanceMode: AppAppearanceMode {
         didSet { defaults.set(appearanceMode.rawValue, forKey: "appearanceMode") }
@@ -609,6 +611,14 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(browseVideoCardWidth, forKey: browseVideoCardWidthKey) }
     }
 
+    @Published var sponsorBlockEnabled: Bool {
+        didSet { defaults.set(sponsorBlockEnabled, forKey: sponsorBlockEnabledKey) }
+    }
+
+    @Published var sponsorBlockAutoSkipEnabled: Bool {
+        didSet { defaults.set(sponsorBlockAutoSkipEnabled, forKey: sponsorBlockAutoSkipKey) }
+    }
+
     init() {
         let storedAppearance = defaults.string(forKey: "appearanceMode") ?? ""
         self.appearanceMode = AppAppearanceMode(rawValue: storedAppearance)
@@ -662,6 +672,16 @@ final class AppSettings: ObservableObject {
         self.browseVideoCardWidth = Self.browseVideoCardWidthRange.contains(storedBrowseVideoCardWidth)
             ? storedBrowseVideoCardWidth
             : 380
+        if defaults.object(forKey: sponsorBlockEnabledKey) == nil {
+            self.sponsorBlockEnabled = true
+        } else {
+            self.sponsorBlockEnabled = defaults.bool(forKey: sponsorBlockEnabledKey)
+        }
+        if defaults.object(forKey: sponsorBlockAutoSkipKey) == nil {
+            self.sponsorBlockAutoSkipEnabled = true
+        } else {
+            self.sponsorBlockAutoSkipEnabled = defaults.bool(forKey: sponsorBlockAutoSkipKey)
+        }
     }
 
     static let seekSecondsOptions = [3, 5, 10, 15, 30, 45, 60, 90]

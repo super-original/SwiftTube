@@ -2,6 +2,7 @@ import Foundation
 
 enum PlaybackDebugLogger {
     private static let queue = DispatchQueue(label: "SwiftTube.playback-debug-log")
+    private static let isEnabled = ProcessInfo.processInfo.environment["SWIFTTUBE_PLAYBACK_DEBUG_LOG"] == "1"
     private static let logURL: URL = {
         let logsDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library", isDirectory: true)
@@ -20,6 +21,7 @@ enum PlaybackDebugLogger {
         file: StaticString = #fileID,
         line: Int = #line
     ) {
+        guard isEnabled else { return }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let timestamp = formatter.string(from: Date())

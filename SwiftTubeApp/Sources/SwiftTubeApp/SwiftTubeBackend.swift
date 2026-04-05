@@ -667,6 +667,7 @@ actor SwiftTubeBackend {
             bestStream: playbackBundle.bestStream ?? bestStream,
             subtitles: deduplicatedSubtitles(playbackBundle.subtitles),
             storyboard: extractStoryboard(from: webPlayerData.isEmpty ? playerData : webPlayerData) ?? extractStoryboard(from: playerData),
+            sponsorSegments: [],
             progress: progress,
             resumeStartTimeSeconds: progress?.bestResumeSeconds,
             subscription: extractSubscriptionState(from: watchData, metadata: metadata),
