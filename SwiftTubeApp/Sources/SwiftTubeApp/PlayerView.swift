@@ -1994,14 +1994,14 @@ private struct PlayerControlBar: View {
                 )
                 .disabled(coordinator.duration <= 0)
                 .accessibilityLabel("Playback position")
-                .overlay {
-                    SponsorBlockTimelineOverlay(
-                        segments: coordinator.visibleSponsorSegments,
-                        duration: coordinator.duration
-                    )
-                    .padding(.horizontal, 10)
-                    .allowsHitTesting(false)
-                }
+
+                SponsorBlockTimelineOverlay(
+                    segments: coordinator.visibleSponsorSegments,
+                    duration: coordinator.duration
+                )
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .allowsHitTesting(false)
             }
             .frame(maxWidth: .infinity)
             // Measure the ZStack width (= Slider width) without affecting layout.
