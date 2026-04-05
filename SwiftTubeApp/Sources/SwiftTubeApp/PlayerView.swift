@@ -424,7 +424,6 @@ private extension PlayerScreen {
 
             subscribeButton
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     var actionToolbar: some View {
@@ -2591,7 +2590,6 @@ private struct ChannelSummary: View {
                         .lineLimit(1)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

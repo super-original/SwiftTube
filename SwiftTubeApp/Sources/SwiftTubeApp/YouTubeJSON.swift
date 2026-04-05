@@ -126,6 +126,15 @@ func channelID(from value: Any?) -> String? {
         return channelID
     }
 
+    if let browseID = object["browseId"] as? String, browseID.hasPrefix("UC") {
+        return browseID
+    }
+
+    if let browseEndpointID = (object["browseEndpoint"] as? JSONDictionary)?["browseId"] as? String,
+       browseEndpointID.hasPrefix("UC") {
+        return browseEndpointID
+    }
+
     for sourceKey in ["ownerText", "shortBylineText", "longBylineText", "bylineText"] {
         if let source = object[sourceKey] as? JSONDictionary,
            let runs = source["runs"] as? [Any] {
