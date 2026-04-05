@@ -391,6 +391,11 @@ private struct SidebarSettingsListRow: View {
 
 private struct NotificationsPane: View {
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var mutationCenter = AppMutationCenter.shared
+    @State private var customTitle = "Custom notification"
+    @State private var customMessage = "This is how your custom toast will look."
+    @State private var customSymbol = "wand.and.stars"
+    @State private var customColor = Color(red: 0.49, green: 0.75, blue: 1.0)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -446,6 +451,115 @@ private struct NotificationsPane: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+
+            SettingsCard(title: "Preview", icon: "sparkles") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Quick presets")
+                        .font(.headline)
+
+                    HStack(spacing: 10) {
+                        ForEach(NotificationPreviewPreset.allCases) { preset in
+                            Button(preset.title) {
+                                mutationCenter.showPreview(preset.notice)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+
+                    Rectangle()
+                        .fill(settings.separatorColor)
+                        .frame(height: 1)
+
+                    Text("Custom test notification")
+                        .font(.headline)
+
+                    TextField("Title", text: $customTitle)
+                        .textFieldStyle(.roundedBorder)
+
+                    TextField("Message", text: $customMessage)
+                        .textFieldStyle(.roundedBorder)
+
+                    HStack(spacing: 12) {
+                        TextField("SF Symbol", text: $customSymbol)
+                            .textFieldStyle(.roundedBorder)
+
+                        ColorPicker("Color", selection: $customColor, supportsOpacity: false)
+                            .labelsHidden()
+                    }
+
+                    Button("Show Custom Notification") {
+                        mutationCenter.showPreview(
+                            MutationNotice(
+                                title: customTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Custom notification" : customTitle,
+                                message: customMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : customMessage,
+                                symbol: customSymbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "wand.and.stars" : customSymbol,
+                                accent: .blue,
+                                customColor: customColor.notificationColorValue
+                            )
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Text("Preview buttons always show a toast, even if normal notifications are currently hidden.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+private enum NotificationPreviewPreset: String, CaseIterable, Identifiable {
+    case like
+    case watchLater
+    case error
+    case history
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .like:
+            return "Liked"
+        case .watchLater:
+            return "Watch Later"
+        case .error:
+            return "Error"
+        case .history:
+            return "History"
+        }
+    }
+
+    var notice: MutationNotice {
+        switch self {
+        case .like:
+            return MutationNotice(
+                title: "Liked video",
+                message: nil,
+                symbol: "hand.thumbsup.fill",
+                accent: .green
+            )
+        case .watchLater:
+            return MutationNotice(
+                title: "Added to Watch Later",
+                message: nil,
+                symbol: "clock.fill",
+                accent: .green
+            )
+        case .error:
+            return MutationNotice(
+                title: "Couldn’t save to playlist",
+                message: "YouTube rejected the request.",
+                symbol: "text.badge.xmark",
+                accent: .red
+            )
+        case .history:
+            return MutationNotice(
+                title: "Removed from history",
+                message: nil,
+                symbol: "trash",
+                accent: .green
+            )
         }
     }
 }
@@ -888,5 +1002,17 @@ private struct KeyBindingRecorderButton: View {
             NSEvent.removeMonitor(keyUpMonitor)
             self.keyUpMonitor = nil
         }
+    }
+}
+
+private extension Color {
+    var notificationColorValue: NotificationColorValue {
+        let nsColor = NSColor(self).usingColorSpace(.deviceRGB) ?? .systemBlue
+        return NotificationColorValue(
+            red: Double(nsColor.redComponent),
+            green: Double(nsColor.greenComponent),
+            blue: Double(nsColor.blueComponent),
+            opacity: Double(nsColor.alphaComponent)
+        )
     }
 }

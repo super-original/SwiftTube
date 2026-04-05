@@ -55,11 +55,37 @@ enum AppNotificationAccent: String, Sendable {
     }
 }
 
+struct NotificationColorValue: Sendable, Equatable {
+    let red: Double
+    let green: Double
+    let blue: Double
+    let opacity: Double
+
+    var color: Color {
+        Color(red: red, green: green, blue: blue, opacity: opacity)
+    }
+}
+
 struct MutationNotice: Sendable {
     let title: String
     let message: String?
     let symbol: String
     let accent: AppNotificationAccent
+    let customColor: NotificationColorValue?
+
+    init(
+        title: String,
+        message: String?,
+        symbol: String,
+        accent: AppNotificationAccent,
+        customColor: NotificationColorValue? = nil
+    ) {
+        self.title = title
+        self.message = message
+        self.symbol = symbol
+        self.accent = accent
+        self.customColor = customColor
+    }
 }
 
 struct AppNotificationItem: Identifiable, Equatable {
@@ -68,6 +94,7 @@ struct AppNotificationItem: Identifiable, Equatable {
     let message: String?
     let symbol: String
     let accent: AppNotificationAccent
+    let customColor: NotificationColorValue?
 }
 
 private struct EmptyMutationResult: Sendable {}
@@ -164,6 +191,10 @@ final class AppMutationCenter: ObservableObject {
         notifications.removeAll { $0.id == id }
     }
 
+    func showPreview(_ notice: MutationNotice) {
+        present(notice, bypassVisibility: true)
+    }
+
     private func enqueue<Output: Sendable>(
         key: String,
         successNotice: MutationNotice?,
@@ -234,15 +265,16 @@ final class AppMutationCenter: ObservableObject {
         }
     }
 
-    private func present(_ notice: MutationNotice) {
+    private func present(_ notice: MutationNotice, bypassVisibility: Bool = false) {
         let settings = AppSettings.shared
-        guard settings.shouldDisplayNotification(accent: notice.accent) else { return }
+        guard bypassVisibility || settings.shouldDisplayNotification(accent: notice.accent) else { return }
 
         let item = AppNotificationItem(
             title: notice.title,
             message: notice.message,
             symbol: notice.symbol,
-            accent: notice.accent
+            accent: notice.accent,
+            customColor: notice.customColor
         )
 
         notifications.append(item)
@@ -303,12 +335,12 @@ private struct NotificationToast: View {
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
             Circle()
-                .fill(item.accent.color.opacity(0.18))
+                .fill(iconColor.opacity(0.18))
                 .frame(width: 34, height: 34)
                 .overlay {
                     Image(systemName: item.symbol)
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(item.accent.color)
+                        .foregroundStyle(iconColor)
                 }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -371,6 +403,10 @@ private struct NotificationToast: View {
     private var opacity: Double {
         let fade = min(abs(dragOffset) / 180, 0.55)
         return 1 - fade
+    }
+
+    private var iconColor: Color {
+        item.customColor?.color ?? item.accent.color
     }
 }
 

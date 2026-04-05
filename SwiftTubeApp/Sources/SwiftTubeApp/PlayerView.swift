@@ -1144,7 +1144,7 @@ private extension PlayerScreen {
             successNotice: MutationNotice(
                 title: "Moved to \(destinationTitle)",
                 message: nil,
-                symbol: "folder",
+                symbol: "folder.fill",
                 accent: .green
             ),
             errorNotice: { error in
@@ -1188,7 +1188,7 @@ private extension PlayerScreen {
             successNotice: MutationNotice(
                 title: "Moved to Watch Later",
                 message: nil,
-                symbol: "clock.badge.checkmark",
+                symbol: "clock.fill",
                 accent: .green
             ),
             errorNotice: { error in
@@ -1292,7 +1292,7 @@ private extension PlayerScreen {
                 successNotice: MutationNotice(
                     title: "Added to Watch Later",
                     message: nil,
-                    symbol: "clock.badge.checkmark",
+                    symbol: "clock.fill",
                     accent: .green
                 ),
                 errorNotice: { error in
@@ -1318,14 +1318,14 @@ private extension PlayerScreen {
             successNotice: MutationNotice(
                 title: "Saved to \(playlistTitle)",
                 message: nil,
-                symbol: "text.badge.plus",
+                symbol: "music.note.list",
                 accent: .green
             ),
             errorNotice: { error in
                 MutationNotice(
                     title: "Couldn’t save to \(playlistTitle)",
                     message: error.localizedDescription,
-                    symbol: "text.badge.plus",
+                    symbol: "music.note.list",
                     accent: .red
                 )
             },

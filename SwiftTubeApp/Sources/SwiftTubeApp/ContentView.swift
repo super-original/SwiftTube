@@ -266,7 +266,7 @@ private extension ContentView {
                 Text("History")
                     .font(.system(size: 28, weight: .bold))
 
-                Text("Your full YouTube watch stack, with official history search plus SwiftTube's exact resume tracking layered on top.")
+                Text(historyViewModel.hasActiveFilter ? "Search through your watched videos." : "Your recently watched videos.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
@@ -547,14 +547,14 @@ private extension ContentView {
                 successNotice: MutationNotice(
                     title: "Added to Watch Later",
                     message: nil,
-                    symbol: "clock.badge.checkmark",
+                    symbol: "clock.fill",
                     accent: .green
                 ),
                 errorNotice: { error in
                     MutationNotice(
                         title: "Couldn’t update Watch Later",
                         message: error.localizedDescription,
-                        symbol: "clock.badge.exclamationmark",
+                        symbol: "clock",
                         accent: .red
                     )
                 },
@@ -573,14 +573,14 @@ private extension ContentView {
             successNotice: MutationNotice(
                 title: "Saved to \(playlistTitle)",
                 message: nil,
-                symbol: "text.badge.plus",
+                symbol: "music.note.list",
                 accent: .green
             ),
             errorNotice: { error in
                 MutationNotice(
                     title: "Couldn’t save to \(playlistTitle)",
                     message: error.localizedDescription,
-                    symbol: "text.badge.plus",
+                    symbol: "music.note.list",
                     accent: .red
                 )
             },
@@ -612,14 +612,9 @@ private extension ContentView {
     var historyVideoStack: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(historyViewModel.hasActiveFilter ? "History Search Results" : "Recently Watched")
-                        .font(.title2.weight(.bold))
-
-                    Text(historySummaryLine)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+                Text(historySummaryLine)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
 
                 Spacer()
             }
@@ -1138,7 +1133,7 @@ private struct PlaylistFeedScreen: View {
                 successNotice: MutationNotice(
                     title: "Added to Watch Later",
                     message: nil,
-                    symbol: "clock.badge.checkmark",
+                    symbol: "clock.fill",
                     accent: .green
                 ),
                 errorNotice: { error in
@@ -1164,14 +1159,14 @@ private struct PlaylistFeedScreen: View {
             successNotice: MutationNotice(
                 title: "Saved to \(playlistTitle)",
                 message: nil,
-                symbol: "text.badge.plus",
+                symbol: "music.note.list",
                 accent: .green
             ),
             errorNotice: { error in
                 MutationNotice(
                     title: "Couldn’t save to \(playlistTitle)",
                     message: error.localizedDescription,
-                    symbol: "text.badge.plus",
+                    symbol: "music.note.list",
                     accent: .red
                 )
             },
@@ -2273,6 +2268,7 @@ private struct HistoryVideoRow: View {
     let onDelete: () -> Void
 
     @State private var isHovered = false
+    @State private var isDeleteHovered = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -2305,7 +2301,7 @@ private struct HistoryVideoRow: View {
                 if let youtubeLine {
                     Label(youtubeLine, systemImage: "rectangle.bottomthird.inset.filled")
                         .font(.caption)
-                        .foregroundStyle(Color(red: 0.93, green: 0.13, blue: 0.13))
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(.vertical, 3)
@@ -2322,17 +2318,23 @@ private struct HistoryVideoRow: View {
                                 } else {
                                     Image(systemName: "trash")
                                         .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(isDeleteHovered ? Color(red: 0.93, green: 0.13, blue: 0.13) : .secondary)
                                 }
                             }
                             .frame(width: 28, height: 28)
                             .background(
                                 Circle()
-                                    .fill(Color.white.opacity(0.08))
+                                    .fill(isDeleteHovered ? Color(red: 0.93, green: 0.13, blue: 0.13).opacity(0.14) : Color.white.opacity(0.08))
                             )
                         }
                         .buttonStyle(.plain)
                         .disabled(isDeleting)
                         .help("Delete from history")
+                        .onHover { hovering in
+                            withAnimation(.easeOut(duration: 0.12)) {
+                                isDeleteHovered = hovering
+                            }
+                        }
                     }
 
                     Spacer(minLength: 0)

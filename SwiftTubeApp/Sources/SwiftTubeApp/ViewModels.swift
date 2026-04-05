@@ -894,7 +894,7 @@ final class PlaylistFeedViewModel: ObservableObject {
             successNotice: MutationNotice(
                 title: "Moved to \(destinationTitle)",
                 message: nil,
-                symbol: "folder",
+                symbol: "folder.fill",
                 accent: .green
             ),
             errorNotice: { error in
@@ -949,7 +949,7 @@ final class PlaylistFeedViewModel: ObservableObject {
             successNotice: MutationNotice(
                 title: "Moved to Watch Later",
                 message: nil,
-                symbol: "clock.badge.checkmark",
+                symbol: "clock.fill",
                 accent: .green
             ),
             errorNotice: { error in
@@ -1473,7 +1473,7 @@ final class PlayerViewModel: ObservableObject {
             successNotice: MutationNotice(
                 title: optimisticWatchLater.saved ? "Added to Watch Later" : "Removed from Watch Later",
                 message: nil,
-                symbol: optimisticWatchLater.saved ? "clock.badge.checkmark" : "clock.badge.minus",
+                symbol: optimisticWatchLater.saved ? "clock.fill" : "clock",
                 accent: .green
             ),
             errorNotice: { error in
@@ -1533,14 +1533,14 @@ final class PlayerViewModel: ObservableObject {
             successNotice: MutationNotice(
                 title: optimisticOption.saved ? "Saved to \(option.title)" : "Removed from \(option.title)",
                 message: nil,
-                symbol: optimisticOption.saved ? "text.badge.plus" : "minus.circle",
+                symbol: optimisticOption.saved ? "music.note.list" : "music.note.list",
                 accent: .green
             ),
             errorNotice: { error in
                 MutationNotice(
                     title: "Couldn’t update \(option.title)",
                     message: error.localizedDescription,
-                    symbol: "text.badge.plus",
+                    symbol: "music.note.list",
                     accent: .red
                 )
             },
@@ -1603,7 +1603,7 @@ final class PlayerViewModel: ObservableObject {
         case "DISLIKE":
             return "hand.thumbsdown.fill"
         default:
-            return "hand.thumbsup"
+            return "hand.thumbsup.slash"
         }
     }
 }
