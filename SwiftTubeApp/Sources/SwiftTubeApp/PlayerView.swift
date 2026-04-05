@@ -1440,7 +1440,11 @@ private struct PlayerStageSurface: View {
                 // During scrubbing, cover the video with a storyboard tile scaled to
                 // fill — same image data the hover popup uses, already cached, instant.
                 if coordinator.isScrubbing, let spec = coordinator.storyboard {
-                    ScrubVideoOverlay(spec: spec, time: coordinator.scrubPosition)
+                    ScrubVideoOverlay(
+                        spec: spec,
+                        time: coordinator.scrubPosition,
+                        containerSize: geo.size
+                    )
                         .allowsHitTesting(false)
                 }
 
@@ -2966,6 +2970,7 @@ private struct RecommendationRow: View {
 private struct ScrubVideoOverlay: View {
     let spec: StoryboardSpec
     let time: Double
+    let containerSize: CGSize
 
     @State private var tile: CGImage? = nil
 
@@ -2978,7 +2983,10 @@ private struct ScrubVideoOverlay: View {
                     .aspectRatio(contentMode: .fill)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Storyboard tiles can be much wider than the stage on ultrawide videos.
+        // Pin this overlay to the measured stage size so the tile cannot widen
+        // the parent ZStack while scrubbing.
+        .frame(width: containerSize.width, height: containerSize.height)
         .clipped()
         .task(id: tileTaskID) {
             await loadTile()

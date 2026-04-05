@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.24
+
+- Fixed scrubbing on non-16:9 videos by constraining the full-frame storyboard overlay to the measured player stage, so ultrawide storyboard tiles can no longer widen the chrome layout during drag.
+
 ## 0.12.23
 
 - Rebuilt the scrubber row so the time labels are anchored independently of the slider track, preventing scrubbing-only layout negotiation from stretching the control bar on affected videos.
