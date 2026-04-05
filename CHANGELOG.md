@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.19
+
+- Moved the SponsorBlock marker strip into a true non-layout background for the scrubber so sponsored videos stop stretching the timeline row to the right during drag.
+
 ## 0.12.18
 
 - Removed the accidental infinite-height SponsorBlock marker layout that was blowing the scrubber glass surface up into a giant pill while dragging.
