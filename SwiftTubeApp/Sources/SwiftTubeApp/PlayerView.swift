@@ -2000,7 +2000,7 @@ private struct PlayerControlBar: View {
                     duration: coordinator.duration
                 )
                 .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .allowsHitTesting(false)
             }
             .frame(maxWidth: .infinity)
