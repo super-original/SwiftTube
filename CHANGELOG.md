@@ -16,6 +16,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - Disabled MPV playback debug logging by default.
 - Cleaned up and expanded repo documentation to match the current Swift-only architecture.
 
+## 0.12.14
+
+- Rebuilt the changelog screen into a proper structured release-notes view instead of rendering the markdown as a single blob of text.
+- Fixed the SponsorBlock scrubber overlay layout so the player controls keep their intended size and shape.
+
 ## 0.12.12
 
 - Added adjustable Home/Search video card sizing in Settings.

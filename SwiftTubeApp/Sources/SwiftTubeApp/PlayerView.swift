@@ -1632,9 +1632,10 @@ private struct SponsorBlockTimelineOverlay: View {
                             .offset(x: startFraction * proxy.size.width)
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .frame(height: trackHeight)
     }
 }
 
@@ -1904,13 +1905,6 @@ private struct PlayerControlBar: View {
             // events when applied directly, so the container approach is reliable
             // for both passive hover and active drag.
             ZStack {
-                SponsorBlockTimelineOverlay(
-                    segments: coordinator.visibleSponsorSegments,
-                    duration: coordinator.duration
-                )
-                .padding(.horizontal, 10)
-                .allowsHitTesting(false)
-
                 Slider(
                     value: Binding(
                         get: { coordinator.scrubPosition },
@@ -1927,6 +1921,14 @@ private struct PlayerControlBar: View {
                 )
                 .disabled(coordinator.duration <= 0)
                 .accessibilityLabel("Playback position")
+                .overlay {
+                    SponsorBlockTimelineOverlay(
+                        segments: coordinator.visibleSponsorSegments,
+                        duration: coordinator.duration
+                    )
+                    .padding(.horizontal, 10)
+                    .allowsHitTesting(false)
+                }
             }
             // Measure the ZStack width (= Slider width) without affecting layout.
             .background(

@@ -735,7 +735,7 @@ private struct PlaybackPane: View {
 }
 
 private struct UpdatesPane: View {
-    @State private var changelog = ChangelogDocument.load()
+    @State private var changelogReleases = ChangelogDocument.load()
 
     private var currentVersionText: String {
         if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
@@ -763,10 +763,12 @@ private struct UpdatesPane: View {
             }
 
             SettingsCard(title: "Changelog", icon: "text.document") {
-                if let changelog {
-                    Text(changelog)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                if changelogReleases.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 16) {
+                        ForEach(changelogReleases) { release in
+                            ChangelogReleaseCard(release: release)
+                        }
+                    }
                 } else {
                     Text("SwiftTube couldn’t load the bundled changelog.")
                         .font(.callout)
@@ -774,6 +776,55 @@ private struct UpdatesPane: View {
                 }
             }
         }
+    }
+}
+
+private struct ChangelogReleaseCard: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let release: ChangelogRelease
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(release.title)
+                .font(.title3.weight(.bold))
+
+            if let theme = release.theme, !theme.isEmpty {
+                Text(theme)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+
+            ForEach(release.paragraphs, id: \.self) { paragraph in
+                Text(paragraph)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach(release.bullets, id: \.self) { bullet in
+                HStack(alignment: .top, spacing: 10) {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.9))
+                        .frame(width: 6, height: 6)
+                        .padding(.top, 7)
+
+                    Text(bullet)
+                        .font(.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(settings.windowBackgroundColor.opacity(0.45))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(settings.separatorColor.opacity(0.8), lineWidth: 1)
+        )
     }
 }
 
@@ -924,7 +975,7 @@ private struct SettingsHeader: View {
 }
 
 private enum ChangelogDocument {
-    static func load() -> AttributedString? {
+    static func load() -> [ChangelogRelease] {
         let bundledURL = Bundle.main.url(forResource: "CHANGELOG", withExtension: "md", subdirectory: "Docs")
         let sourceTreeURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -934,13 +985,78 @@ private enum ChangelogDocument {
         for url in [bundledURL, sourceTreeURL] {
             guard let url else { continue }
             guard let rawMarkdown = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            return try? AttributedString(
-                markdown: rawMarkdown,
-                options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .full)
-            )
+            let releases = parseReleases(from: rawMarkdown)
+            if releases.isEmpty == false {
+                return releases
+            }
         }
-        return nil
+        return []
     }
+
+    private static func parseReleases(from rawMarkdown: String) -> [ChangelogRelease] {
+        var releases: [ChangelogRelease] = []
+        var currentTitle: String?
+        var currentTheme: String?
+        var currentParagraphs: [String] = []
+        var currentBullets: [String] = []
+
+        func flushCurrentRelease() {
+            guard let currentTitle else { return }
+            releases.append(
+                ChangelogRelease(
+                    title: currentTitle,
+                    theme: currentTheme,
+                    paragraphs: currentParagraphs,
+                    bullets: currentBullets
+                )
+            )
+            selfReset()
+        }
+
+        func selfReset() {
+            currentTitle = nil
+            currentTheme = nil
+            currentParagraphs = []
+            currentBullets = []
+        }
+
+        for rawLine in rawMarkdown.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty {
+                continue
+            }
+
+            if line.hasPrefix("## ") {
+                flushCurrentRelease()
+                currentTitle = String(line.dropFirst(3))
+                continue
+            }
+
+            guard currentTitle != nil else {
+                continue
+            }
+
+            if line.hasPrefix("- ") {
+                currentBullets.append(String(line.dropFirst(2)))
+            } else if line.hasPrefix("Theme: ") {
+                currentTheme = String(line.dropFirst("Theme: ".count))
+            } else {
+                currentParagraphs.append(line)
+            }
+        }
+
+        flushCurrentRelease()
+        return releases
+    }
+}
+
+private struct ChangelogRelease: Identifiable {
+    let title: String
+    let theme: String?
+    let paragraphs: [String]
+    let bullets: [String]
+
+    var id: String { title }
 }
 
 private struct SettingsCard<Content: View>: View {
