@@ -539,6 +539,7 @@ final class AppSettings: ObservableObject {
     private let notificationDisplayModeKey = "notificationDisplayMode"
     private let notificationPlacementKey = "notificationPlacement"
     private let notificationAutoHideDelayKey = "notificationAutoHideDelay"
+    private let browseVideoCardWidthKey = "browseVideoCardWidth"
 
     @Published var appearanceMode: AppAppearanceMode {
         didSet { defaults.set(appearanceMode.rawValue, forKey: "appearanceMode") }
@@ -604,6 +605,10 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(notificationAutoHideDelay, forKey: notificationAutoHideDelayKey) }
     }
 
+    @Published var browseVideoCardWidth: Double {
+        didSet { defaults.set(browseVideoCardWidth, forKey: browseVideoCardWidthKey) }
+    }
+
     init() {
         let storedAppearance = defaults.string(forKey: "appearanceMode") ?? ""
         self.appearanceMode = AppAppearanceMode(rawValue: storedAppearance)
@@ -652,12 +657,19 @@ final class AppSettings: ObservableObject {
         self.notificationAutoHideDelay = Self.notificationAutoHideDelayOptions.contains(storedNotificationDelay)
             ? storedNotificationDelay
             : 4
+
+        let storedBrowseVideoCardWidth = defaults.double(forKey: browseVideoCardWidthKey)
+        self.browseVideoCardWidth = Self.browseVideoCardWidthRange.contains(storedBrowseVideoCardWidth)
+            ? storedBrowseVideoCardWidth
+            : 380
     }
 
     static let seekSecondsOptions = [3, 5, 10, 15, 30, 45, 60, 90]
     static let playbackSpeedOptions: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     static let spacebarHoldPlaybackSpeedOptions: [Double] = [1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
     static let notificationAutoHideDelayOptions: [Double] = [2, 4, 6, 8, 12]
+    static let browseVideoCardWidthRange: ClosedRange<Double> = 280...440
+    static let browseVideoCardWidthStep: Double = 10
 
     var preferredColorScheme: ColorScheme {
         appearanceMode.preferredColorScheme

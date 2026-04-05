@@ -24,9 +24,15 @@ struct ContentView: View {
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 240), spacing: 20, alignment: .top)
-    ]
+    private var columns: [GridItem] {
+        [
+            GridItem(
+                .adaptive(minimum: CGFloat(settings.browseVideoCardWidth)),
+                spacing: 20,
+                alignment: .top
+            )
+        ]
+    }
     private let searchChromeWidth: CGFloat = 300
     private let searchAssistWidth: CGFloat = 680
 

@@ -39,8 +39,11 @@ struct VideoCard: View {
             }
 
             Text(video.title)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .lineLimit(2)
+                .lineSpacing(1.2)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
                 .foregroundStyle(.primary)
 
             VideoChannelIdentityLine(

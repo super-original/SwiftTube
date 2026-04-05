@@ -3,6 +3,7 @@ import SwiftUI
 
 private enum SettingsPane: String, CaseIterable, Identifiable {
     case appearance
+    case browse
     case sidebar
     case notifications
     case playback
@@ -14,6 +15,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .appearance: return "Appearance"
+        case .browse: return "Browse"
         case .sidebar: return "Sidebar"
         case .notifications: return "Notifications"
         case .playback: return "Playback"
@@ -25,6 +27,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .appearance: return "Themes and colors"
+        case .browse: return "Grid and cards"
         case .sidebar: return "Navigation layout"
         case .notifications: return "Queue and toasts"
         case .playback: return "Quality and speed"
@@ -36,6 +39,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .appearance: return "circle.lefthalf.filled"
+        case .browse: return "rectangle.grid.2x2"
         case .sidebar: return "sidebar.left"
         case .notifications: return "bell.badge"
         case .playback: return "play.circle"
@@ -105,6 +109,8 @@ struct SettingsView: View {
                     switch selection {
                     case .appearance:
                         AppearancePane()
+                    case .browse:
+                        BrowsePane()
                     case .sidebar:
                         SidebarPane()
                     case .notifications:
@@ -307,6 +313,70 @@ private struct ThemeSwatch: View {
     private var borderColor: Color {
         if isSelected { return Color.accentColor }
         return Color.primary.opacity(isHovered ? 0.45 : 0.18)
+    }
+}
+
+private struct BrowsePane: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    private var widthText: String {
+        "\(Int(settings.browseVideoCardWidth)) pt"
+    }
+
+    private var densityLabel: String {
+        switch settings.browseVideoCardWidth {
+        case ..<320:
+            return "Compact"
+        case ..<390:
+            return "Balanced"
+        default:
+            return "Large"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsHeader(
+                title: "Browse",
+                subtitle: "Tune the size of video cards on Home and Search."
+            )
+
+            SettingsCard(title: "Video Grid", icon: "rectangle.grid.2x2") {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Recommendations and search size")
+                                .font(.headline)
+                            Text("Larger cards reduce the number of columns and give titles more room before truncating.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Text("\(densityLabel) · \(widthText)")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Slider(
+                        value: $settings.browseVideoCardWidth,
+                        in: AppSettings.browseVideoCardWidthRange,
+                        step: AppSettings.browseVideoCardWidthStep
+                    )
+
+                    HStack {
+                        Text("Smaller")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("Larger")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
     }
 }
 
