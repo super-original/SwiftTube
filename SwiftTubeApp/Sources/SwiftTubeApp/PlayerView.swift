@@ -1889,6 +1889,7 @@ private struct PlayerControlBar: View {
     @State private var settingsVisibleSubmenu: SettingsPopoverDestination? = nil
     @State private var settingsShowingSubmenu = false
     @State private var sliderWidth: CGFloat = 0
+    @State private var lastMeasuredSliderWidth: CGFloat = 0
 
     private let compactControlHeight: CGFloat = 38
     private let circularButtonLabelSize: CGFloat = 30
@@ -1996,7 +1997,7 @@ private struct PlayerControlBar: View {
                 .accessibilityLabel("Playback position")
             }
             .frame(maxWidth: .infinity)
-            .background(alignment: .center) {
+            .overlay(alignment: .center) {
                 SponsorBlockTimelineOverlay(
                     segments: coordinator.visibleSponsorSegments,
                     duration: coordinator.duration
@@ -2008,8 +2009,10 @@ private struct PlayerControlBar: View {
             .background(
                 GeometryReader { geo in
                     Color.clear
-                        .onAppear { sliderWidth = geo.size.width }
-                        .onChange(of: geo.size.width) { _, w in sliderWidth = w }
+                        .onAppear { updateMeasuredSliderWidth(geo.size.width) }
+                        .onChange(of: geo.size.width) { _, width in
+                            updateMeasuredSliderWidth(width)
+                        }
                 }
             )
             .onContinuousHover { phase in
@@ -2037,6 +2040,18 @@ private struct PlayerControlBar: View {
             glass: .regular,
             shape: Capsule()
         )
+    }
+
+    private func updateMeasuredSliderWidth(_ width: CGFloat) {
+        sliderWidth = width
+
+        guard abs(width - lastMeasuredSliderWidth) > 0.5 else { return }
+        PlaybackDebugLogger.log(
+            "player scrubber width=\(Int(width.rounded())) previous=\(Int(lastMeasuredSliderWidth.rounded())) " +
+            "isScrubbing=\(coordinator.isScrubbing) sponsorSegments=\(coordinator.visibleSponsorSegments.count) " +
+            "duration=\(coordinator.duration)"
+        )
+        lastMeasuredSliderWidth = width
     }
 
     var settingsMenu: some View {
