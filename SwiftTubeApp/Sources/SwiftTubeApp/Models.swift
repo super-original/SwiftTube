@@ -83,6 +83,7 @@ struct VideoItem: Codable, Identifiable, Hashable, Sendable {
     var playlistCanMoveToTop: Bool = false
     var playlistCanMoveToBottom: Bool = false
     var progress: VideoProgress? = nil
+    var tags: [VideoTag] = []
 
     var thumbnailURL: URL? {
         guard let urlString = thumbnails.last?.url else { return nil }
@@ -97,6 +98,10 @@ struct VideoItem: Codable, Identifiable, Hashable, Sendable {
     var channelReference: ChannelReference? {
         guard let channelId else { return nil }
         return ChannelReference(channelId: channelId, title: channel, canonicalBaseUrl: nil)
+    }
+
+    var isMembersOnly: Bool {
+        tags.contains(where: \.isMembersOnly)
     }
 }
 
@@ -353,6 +358,51 @@ struct StreamInfo: Codable, Hashable, Sendable {
     let streamKind: String
 }
 
+struct VideoTagColor: Codable, Hashable, Sendable {
+    let red: Double
+    let green: Double
+    let blue: Double
+    let opacity: Double
+
+    init(red: Double, green: Double, blue: Double, opacity: Double = 1) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.opacity = opacity
+    }
+}
+
+struct VideoTag: Codable, Hashable, Identifiable, Sendable {
+    let id: String
+    let label: String
+    let systemImageName: String
+    let foregroundColor: VideoTagColor
+    let backgroundColor: VideoTagColor
+
+    var isMembersOnly: Bool {
+        id == "members-only"
+    }
+
+    static let membersOnly = VideoTag(
+        id: "members-only",
+        label: "Members only",
+        systemImageName: "star.circle.fill",
+        foregroundColor: VideoTagColor(red: 0.18, green: 0.82, blue: 0.34, opacity: 1),
+        backgroundColor: VideoTagColor(red: 0.12, green: 0.26, blue: 0.14, opacity: 0.94)
+    )
+}
+
+enum VideoAccessIssueKind: String, Codable, Hashable, Sendable {
+    case membersOnly
+    case unavailable
+}
+
+struct VideoAccessIssue: Codable, Hashable, Sendable {
+    let kind: VideoAccessIssueKind
+    let title: String
+    let message: String
+}
+
 struct CommentItem: Codable, Hashable, Identifiable, Sendable {
     let id: String
     let author: String
@@ -552,6 +602,8 @@ struct VideoPlayback: Codable, Sendable {
     let watchLater: PlaylistOption?
     let playlistSaveEnabled: Bool
     let recommendationsContinuation: String?
+    let tags: [VideoTag]
+    let accessIssue: VideoAccessIssue?
 
     var channelAvatarURL: URL? {
         guard let channelAvatarUrl else { return nil }
@@ -606,7 +658,9 @@ struct VideoPlayback: Codable, Sendable {
             rating: rating ?? self.rating,
             watchLater: watchLater ?? self.watchLater,
             playlistSaveEnabled: playlistSaveEnabled,
-            recommendationsContinuation: recommendationsContinuation
+            recommendationsContinuation: recommendationsContinuation,
+            tags: tags,
+            accessIssue: accessIssue
         )
     }
 }

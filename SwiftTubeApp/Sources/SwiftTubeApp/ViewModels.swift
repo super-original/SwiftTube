@@ -624,6 +624,15 @@ final class ChannelPageViewModel: ObservableObject {
         Task { await fetchSorted(token: option.continuationToken) }
     }
 
+    func clearSelectedFilters() {
+        guard filterOptions.contains(where: \.isSelected),
+              !isLoading,
+              let currentRoute else {
+            return
+        }
+        Task { await fetchInitial(route: currentRoute, force: true) }
+    }
+
     func loadAboutIfNeeded() {
         guard about == nil,
               let token = header?.aboutContinuationToken,
@@ -928,7 +937,8 @@ final class ChannelPageViewModel: ObservableObject {
                         playlistCanRemove: video.playlistCanRemove,
                         playlistCanMoveToTop: video.playlistCanMoveToTop,
                         playlistCanMoveToBottom: video.playlistCanMoveToBottom,
-                        progress: video.progress
+                        progress: video.progress,
+                        tags: video.tags
                     )
                 }
                 return .video(video)

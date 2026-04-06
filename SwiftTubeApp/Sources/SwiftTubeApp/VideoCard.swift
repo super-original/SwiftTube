@@ -62,6 +62,7 @@ struct VideoCard: View {
             )
 
             VideoStatsMetadataLine(
+                tags: video.tags,
                 viewCountText: video.viewCountText,
                 publishedTimeText: video.publishedTimeText,
                 font: .system(size: 14, weight: .medium)
@@ -197,9 +198,22 @@ private struct ChannelAvatarView: View {
 }
 
 struct VideoStatsMetadataLine: View {
+    let tags: [VideoTag]
     let viewCountText: String?
     let publishedTimeText: String?
     let font: Font
+
+    init(
+        tags: [VideoTag] = [],
+        viewCountText: String?,
+        publishedTimeText: String?,
+        font: Font
+    ) {
+        self.tags = tags
+        self.viewCountText = viewCountText
+        self.publishedTimeText = publishedTimeText
+        self.font = font
+    }
 
     var body: some View {
         let parts = [viewCountText, publishedTimeText].compactMap { value -> String? in
@@ -208,6 +222,10 @@ struct VideoStatsMetadataLine: View {
         }
 
         HStack(spacing: 6) {
+            ForEach(tags) { tag in
+                VideoTagBadgeView(tag: tag, font: font)
+            }
+
             ForEach(Array(parts.enumerated()), id: \.offset) { index, value in
                 if index > 0 {
                     Text("•")
@@ -218,5 +236,38 @@ struct VideoStatsMetadataLine: View {
         }
         .font(font)
         .foregroundStyle(.secondary)
+    }
+}
+
+struct VideoTagBadgeView: View {
+    let tag: VideoTag
+    let font: Font
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: tag.systemImageName)
+                .font(.caption.weight(.bold))
+            Text(tag.label)
+                .lineLimit(1)
+        }
+        .font(font.weight(.semibold))
+        .foregroundStyle(Color(tag.foregroundColor))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(tag.backgroundColor))
+        )
+    }
+}
+
+private extension Color {
+    init(_ tagColor: VideoTagColor) {
+        self.init(
+            red: tagColor.red,
+            green: tagColor.green,
+            blue: tagColor.blue,
+            opacity: tagColor.opacity
+        )
     }
 }

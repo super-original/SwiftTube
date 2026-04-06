@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.42
+
+- Tightened the channel control bar by bringing button spacing closer within each group, flipping selected chips to the white subscribe-style state, and adding an `All` pseudo-filter that clears the member/public filter group back to its default state.
+- Added a reusable custom video-tag system with icon, label, and color styling, then wired a green `Members only` tag into video cards, history rows, channel rows, playlist/queue rows, related videos, and compact attachment previews.
+- Detected members-only and other blocked videos from InnerTube playability and badge data, so the player now keeps metadata visible and shows a clear access warning instead of hanging forever on inaccessible videos.
+
 ## 0.12.41
 
 - Restyled the channel sort and filter controls to match the player’s pill buttons, so the browse chrome now feels consistent with the watch page actions.

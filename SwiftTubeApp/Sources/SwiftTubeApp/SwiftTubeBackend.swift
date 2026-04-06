@@ -667,6 +667,15 @@ actor SwiftTubeBackend {
                 + extractSubtitles(from: webPlayerData)
                 + extractSubtitles(from: mwebPlayerData)
         )
+        let playbackTags = deduplicatedVideoTags(
+            extractVideoTags(from: watchData),
+            extractVideoTags(from: playerData),
+            extractVideoTags(from: webPlayerData),
+            extractVideoTags(from: mwebPlayerData)
+        )
+        let accessIssue = extractVideoAccessIssue(from: playerData, fallbackTags: playbackTags)
+            ?? extractVideoAccessIssue(from: webPlayerData, fallbackTags: playbackTags)
+            ?? extractVideoAccessIssue(from: mwebPlayerData, fallbackTags: playbackTags)
         let nativePlaybackBundle = buildPlaybackBundle(
             streams: playerStreams,
             subtitles: playerSubtitles
@@ -688,9 +697,6 @@ actor SwiftTubeBackend {
 
         let resolvedStreams = ((preferredYTDLPPlayback?.streams.isEmpty == false) ? preferredYTDLPPlayback?.streams : nil)
             ?? playerStreams
-        guard !resolvedStreams.isEmpty else {
-            throw BackendClientError(message: "No playable streams found")
-        }
 
         let playbackBundle: PlaybackBundle = {
             if let preferredYTDLPPlayback, preferredYTDLPPlayback.streams.isEmpty == false {
@@ -702,6 +708,9 @@ actor SwiftTubeBackend {
             return nativePlaybackBundle
         }()
         let bestStream = pickBestStream(in: resolvedStreams)
+        if resolvedStreams.isEmpty, accessIssue == nil {
+            throw BackendClientError(message: "No playable streams found")
+        }
         let details = playerData["videoDetails"] as? JSONDictionary
         let title: String? = metadata["title"] ?? preferredYTDLPPlayback?.title ?? (details?["title"] as? String)
         let duration = metadata["durationText"] ?? preferredYTDLPPlayback?.durationText ?? metadataDurationText(from: details)
@@ -750,7 +759,9 @@ actor SwiftTubeBackend {
             rating: extractRatingState(from: watchData),
             watchLater: findPlaylistOption(in: playlistOptions, playlistID: "WL"),
             playlistSaveEnabled: extractWatchPageSaveCommand(from: watchData) != nil,
-            recommendationsContinuation: extractRelatedContinuationToken(from: watchData)
+            recommendationsContinuation: extractRelatedContinuationToken(from: watchData),
+            tags: playbackTags,
+            accessIssue: accessIssue
         )
     }
 
@@ -1468,6 +1479,111 @@ private func makeRemoteProgress(youtubeFraction: Double?, durationText: String?)
     )
 }
 
+private func deduplicatedVideoTags(_ groups: [VideoTag]...) -> [VideoTag] {
+    var seen = Set<String>()
+    var result: [VideoTag] = []
+
+    for group in groups {
+        for tag in group where seen.insert(tag.id).inserted {
+            result.append(tag)
+        }
+    }
+
+    return result
+}
+
+private func extractVideoTags(from data: Any?) -> [VideoTag] {
+    guard let data else { return [] }
+    var hasMembersOnly = false
+
+    visitJSONObjects(in: data) { node in
+        if let renderer = node["metadataBadgeRenderer"] as? JSONDictionary {
+            let style = (renderer["style"] as? String) ?? ""
+            let label = textValue(from: renderer["label"]) ?? ""
+            let tooltip = textValue(from: renderer["tooltip"]) ?? ""
+            if style.localizedCaseInsensitiveContains("members_only")
+                || matchesMembersOnlyBadge(label)
+                || matchesMembersOnlyBadge(tooltip) {
+                hasMembersOnly = true
+            }
+        }
+
+        if let badgeViewModel = node["badgeViewModel"] as? JSONDictionary {
+            let iconName = (badgeViewModel["iconName"] as? String) ?? ""
+            let label = (badgeViewModel["label"] as? String) ?? contentTextValue(from: badgeViewModel["text"]) ?? ""
+            if iconName.localizedCaseInsensitiveContains("members")
+                || matchesMembersOnlyBadge(label) {
+                hasMembersOnly = true
+            }
+        }
+
+        if let thumbnailBadgeViewModel = node["thumbnailBadgeViewModel"] as? JSONDictionary {
+            let text = (thumbnailBadgeViewModel["text"] as? String) ?? ""
+            if matchesMembersOnlyBadge(text) {
+                hasMembersOnly = true
+            }
+        }
+
+        return hasMembersOnly ? .stop : .continue
+    }
+
+    return hasMembersOnly ? [.membersOnly] : []
+}
+
+private func matchesMembersOnlyBadge(_ text: String) -> Bool {
+    let normalized = text
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    guard !normalized.isEmpty else { return false }
+    return normalized.contains("members only")
+        || normalized.contains("member only")
+        || normalized.contains("for members")
+        || normalized.contains("members-only")
+}
+
+private func extractVideoAccessIssue(from data: Any?, fallbackTags: [VideoTag]) -> VideoAccessIssue? {
+    guard let root = data as? JSONDictionary,
+          let playability = root["playabilityStatus"] as? JSONDictionary else {
+        if fallbackTags.contains(where: \.isMembersOnly) {
+            return VideoAccessIssue(
+                kind: .membersOnly,
+                title: "Members-only video",
+                message: "Join this channel on YouTube to watch this video."
+            )
+        }
+        return nil
+    }
+
+    let status = ((playability["status"] as? String) ?? "").uppercased()
+    let errorRenderer = (playability["errorScreen"] as? JSONDictionary)?["playerErrorMessageRenderer"] as? JSONDictionary
+    let reason = textValue(from: playability["reason"])
+        ?? textValue(from: errorRenderer?["reason"])
+    let subreason = textValue(from: errorRenderer?["subreason"])
+        ?? contentTextValue(from: errorRenderer?["subreason"])
+    let message = [reason, subreason]
+        .compactMap { value in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        .joined(separator: " ")
+
+    if matchesMembersOnlyBadge(message) || fallbackTags.contains(where: \.isMembersOnly) {
+        return VideoAccessIssue(
+            kind: .membersOnly,
+            title: "Members-only video",
+            message: message.isEmpty ? "Join this channel on YouTube to watch this video." : message
+        )
+    }
+
+    guard status != "OK" else { return nil }
+
+    return VideoAccessIssue(
+        kind: .unavailable,
+        title: "This video can’t be played",
+        message: message.isEmpty ? "YouTube did not return a playable stream for this video." : message
+    )
+}
+
 private func parseStandardVideoItem(_ renderer: JSONDictionary) -> VideoItem? {
     guard let videoID = renderer["videoId"] as? String, !videoID.isEmpty else {
         return nil
@@ -1495,7 +1611,8 @@ private func parseStandardVideoItem(_ renderer: JSONDictionary) -> VideoItem? {
         progress: makeRemoteProgress(
             youtubeFraction: extractWatchProgressFraction(from: renderer["thumbnailOverlays"]),
             durationText: durationText
-        )
+        ),
+        tags: extractVideoTags(from: renderer)
     )
 }
 
@@ -2120,7 +2237,8 @@ private func parseShortsVideoItem(_ renderer: JSONDictionary) -> VideoItem? {
         viewCountText: contentTextValue(from: (renderer["overlayMetadata"] as? JSONDictionary)?["secondaryText"]),
         publishedTimeText: nil,
         durationText: nil,
-        thumbnails: thumbnails(from: reelEndpoint?["thumbnail"])
+        thumbnails: thumbnails(from: reelEndpoint?["thumbnail"]),
+        tags: extractVideoTags(from: renderer)
     )
 }
 
@@ -2529,7 +2647,8 @@ private func extractRelatedVideos(from data: Any, currentVideoID: String?, limit
                 viewCountText: secondRow.first,
                 publishedTimeText: secondRow.count > 1 ? secondRow[1] : nil,
                 durationText: extractLockupDuration(from: lockup),
-                thumbnails: sourceThumbnails(from: thumbnailImage)
+                thumbnails: sourceThumbnails(from: thumbnailImage),
+                tags: extractVideoTags(from: lockup)
             )
         )
 
@@ -2707,7 +2826,8 @@ private func extractPlaylistFeed(from data: Any, playlistID: String) -> Playlist
                 playlistSelected: renderer.keys.contains("selected") ? (renderer["selected"] as? Bool) : nil,
                 playlistCanRemove: menuFlags.remove,
                 playlistCanMoveToTop: menuFlags.moveTop,
-                playlistCanMoveToBottom: menuFlags.moveBottom
+                playlistCanMoveToBottom: menuFlags.moveBottom,
+                tags: extractVideoTags(from: renderer)
             )
         )
 
@@ -3098,7 +3218,8 @@ private func parseLockupVideoItem(_ lockup: JSONDictionary) -> VideoItem? {
         progress: makeRemoteProgress(
             youtubeFraction: extractWatchProgressFraction(from: lockup),
             durationText: durationText
-        )
+        ),
+        tags: extractVideoTags(from: lockup)
     )
 }
 

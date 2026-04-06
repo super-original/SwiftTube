@@ -316,6 +316,17 @@ private extension PlayerScreen {
         return items
     }
 
+    var displayTags: [VideoTag] {
+        if let playback, playback.tags.isEmpty == false {
+            return playback.tags
+        }
+        return video.tags
+    }
+
+    var playbackAccessIssue: VideoAccessIssue? {
+        playback?.accessIssue
+    }
+
     var scrollContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             if layoutState.isFullscreen {
@@ -397,8 +408,22 @@ private extension PlayerScreen {
                 .font(.system(size: 24, weight: .bold))
                 .fixedSize(horizontal: false, vertical: true)
 
+            if !displayTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(displayTags) { tag in
+                            VideoTagBadgeView(tag: tag, font: .system(size: 13, weight: .semibold))
+                        }
+                    }
+                }
+            }
+
             if !statsOverviewItems.isEmpty {
                 compactStatsRow
+            }
+
+            if let accessIssue = playbackAccessIssue {
+                PlayerAccessIssueBanner(issue: accessIssue)
             }
 
             channelAndActionsSection
@@ -1628,6 +1653,38 @@ private struct PlayerStageErrorOverlay: View {
     }
 }
 
+private struct PlayerAccessIssueBanner: View {
+    let issue: VideoAccessIssue
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: issue.kind == .membersOnly ? "person.crop.circle.badge.exclamationmark" : "exclamationmark.triangle.fill")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(issue.kind == .membersOnly ? Color(red: 0.27, green: 0.88, blue: 0.41) : Color.orange)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(issue.title)
+                    .font(.headline.weight(.bold))
+                Text(issue.message)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
 private struct SponsorBlockTimelineOverlay: View {
     let segments: [SponsorBlockSegment]
     let duration: Double
@@ -2708,6 +2765,14 @@ private struct PlaylistQueueRailRow: View {
                     .font(.headline.weight(.semibold))
                     .lineLimit(2)
 
+                if !video.tags.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(video.tags) { tag in
+                            VideoTagBadgeView(tag: tag, font: .caption2)
+                        }
+                    }
+                }
+
                 if !statsLine.isEmpty {
                     Text(statsLine)
                         .font(.caption)
@@ -2968,6 +3033,7 @@ private struct RecommendationRow: View {
                 )
 
                 VideoStatsMetadataLine(
+                    tags: video.tags,
                     viewCountText: video.viewCountText,
                     publishedTimeText: video.publishedTimeText,
                     font: .system(size: 12.5, weight: .medium)

@@ -979,6 +979,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 PlaybackDebugLogger.log(
                     "prepare playback missing startup source id=\(playback.id) streams=\(playback.streams.count)"
                 )
+                if let accessIssue = playback.accessIssue {
+                    errorMessage = accessIssue.message
+                    isPreparingInitialPlayback = false
+                    return
+                }
                 throw URLError(.badURL)
             }
 

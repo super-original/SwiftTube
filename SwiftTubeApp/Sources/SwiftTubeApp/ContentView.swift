@@ -902,12 +902,15 @@ private struct ChannelPageScreen: View {
                             onSelectTab: { tab in
                                 navigation.showChannel(route.channel, tab: tab)
                             },
-                            onSelectControl: { option in
-                                viewModel.selectSortOption(option)
-                            },
-                            onChangeLayoutMode: { mode in
-                                contentLayoutModeRaw = mode.rawValue
-                            },
+                        onSelectControl: { option in
+                            viewModel.selectSortOption(option)
+                        },
+                        onClearFilters: {
+                            viewModel.clearSelectedFilters()
+                        },
+                        onChangeLayoutMode: { mode in
+                            contentLayoutModeRaw = mode.rawValue
+                        },
                             onToggleSubscription: {
                                 viewModel.toggleSubscription()
                             }
@@ -1173,6 +1176,7 @@ private struct ChannelHeaderView: View {
     let contentLayoutMode: ChannelContentLayoutMode
     let onSelectTab: (ChannelTabKind) -> Void
     let onSelectControl: (ChannelSortOption) -> Void
+    let onClearFilters: () -> Void
     let onChangeLayoutMode: (ChannelContentLayoutMode) -> Void
     let onToggleSubscription: () -> Void
 
@@ -1234,6 +1238,7 @@ private struct ChannelHeaderView: View {
                     options: sortOptions,
                     contentLayoutMode: contentLayoutMode,
                     onSelect: onSelectControl,
+                    onClearFilters: onClearFilters,
                     onChangeLayoutMode: onChangeLayoutMode
                 )
             }
@@ -1393,46 +1398,63 @@ private struct ChannelSortToolbar: View {
     let options: [ChannelSortOption]
     let contentLayoutMode: ChannelContentLayoutMode
     let onSelect: (ChannelSortOption) -> Void
+    let onClearFilters: () -> Void
     let onChangeLayoutMode: (ChannelContentLayoutMode) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 14) {
-                ForEach(options) { option in
-                    ChannelToolbarTextButton(
-                        title: option.title,
-                        isSelected: option.isSelected,
-                        action: { onSelect(option) }
-                    )
+            HStack(spacing: 18) {
+                if !options.isEmpty {
+                    HStack(spacing: 10) {
+                        ForEach(options) { option in
+                            ChannelToolbarTextButton(
+                                title: option.title,
+                                isSelected: option.isSelected,
+                                action: { onSelect(option) }
+                            )
+                        }
+                    }
                 }
 
                 if !filterOptions.isEmpty && !options.isEmpty {
                     divider
                 }
 
-                ForEach(filterOptions) { option in
-                    ChannelToolbarTextButton(
-                        title: option.title,
-                        isSelected: option.isSelected,
-                        action: { onSelect(option) }
-                    )
+                if !filterOptions.isEmpty {
+                    HStack(spacing: 10) {
+                        ChannelToolbarTextButton(
+                            title: "All",
+                            isSelected: filterOptions.contains(where: \.isSelected) == false,
+                            action: onClearFilters
+                        )
+
+                        ForEach(filterOptions) { option in
+                            ChannelToolbarTextButton(
+                                title: option.title,
+                                isSelected: option.isSelected,
+                                action: { onSelect(option) }
+                            )
+                        }
+                    }
                 }
 
                 if !options.isEmpty || !filterOptions.isEmpty {
                     divider
                 }
 
-                ChannelLayoutModeButton(
-                    mode: .grid,
-                    currentMode: contentLayoutMode,
-                    onSelect: onChangeLayoutMode
-                )
+                HStack(spacing: 10) {
+                    ChannelLayoutModeButton(
+                        mode: .grid,
+                        currentMode: contentLayoutMode,
+                        onSelect: onChangeLayoutMode
+                    )
 
-                ChannelLayoutModeButton(
-                    mode: .list,
-                    currentMode: contentLayoutMode,
-                    onSelect: onChangeLayoutMode
-                )
+                    ChannelLayoutModeButton(
+                        mode: .list,
+                        currentMode: contentLayoutMode,
+                        onSelect: onChangeLayoutMode
+                    )
+                }
             }
         }
     }
@@ -1497,16 +1519,16 @@ private struct ChannelToolbarPillButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(isSelected ? Color.blue : Color.white)
+            .foregroundStyle(isSelected ? Color.black : Color.white)
             .padding(.horizontal, horizontalPadding)
             .frame(height: 36)
             .background(
                 Capsule()
-                    .fill(Color.white.opacity(isSelected ? 0.13 : 0.08))
+                    .fill(isSelected ? Color.white : Color.white.opacity(0.08))
             )
             .overlay(
                 Capsule()
-                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                    .stroke(isSelected ? Color.white.opacity(0.75) : Color.white.opacity(0.14), lineWidth: 1)
             )
             .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
             .opacity(configuration.isPressed ? 0.84 : 1)
@@ -1711,6 +1733,14 @@ private struct CompactChannelPostVideoPreview: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(2)
+
+                    if !video.tags.isEmpty {
+                        HStack(spacing: 6) {
+                            ForEach(video.tags) { tag in
+                                VideoTagBadgeView(tag: tag, font: .caption2)
+                            }
+                        }
+                    }
 
                     let metadata = [video.channel, video.viewCountText, video.publishedTimeText]
                         .compactMap { value in
@@ -2782,6 +2812,16 @@ private struct PlaylistVideoRow: View {
                     .font(.title3.weight(.semibold))
                     .lineLimit(2)
 
+                if !video.tags.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(video.tags) { tag in
+                                VideoTagBadgeView(tag: tag, font: .caption)
+                            }
+                        }
+                    }
+                }
+
                 if !metadataLine.isEmpty {
                     Text(metadataLine)
                         .font(.subheadline)
@@ -3850,8 +3890,8 @@ private struct HistoryVideoRow: View {
                     onOpenChannel: onOpenChannel
                 )
 
-                if metadataChips.isEmpty == false {
-                    FlexibleChipRow(items: metadataChips)
+                if !video.tags.isEmpty || metadataChips.isEmpty == false {
+                    VideoMetadataChipRow(tags: video.tags, items: metadataChips)
                 }
 
                 if let localProgressLine {
@@ -4022,6 +4062,24 @@ private struct FlexibleChipRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            ForEach(items, id: \.self) { item in
+                HistoryMetadataChip(text: item)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct VideoMetadataChipRow: View {
+    let tags: [VideoTag]
+    let items: [String]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(tags) { tag in
+                VideoTagBadgeView(tag: tag, font: .caption)
+            }
+
             ForEach(items, id: \.self) { item in
                 HistoryMetadataChip(text: item)
             }
