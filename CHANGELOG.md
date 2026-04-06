@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.34
+
+- Reworked channel headers to feel much closer to YouTube with a real tab strip, separate sort chips, a subscribe button, and banner layouts that no longer leave blank space or blow out the page.
+- Fixed channel avatars and banners to prefer the highest-quality InnerTube image sources, which sharpens the header media noticeably on Retina displays.
+- Expanded the channel details sheet with full external links, business-email entry points, and extra metadata from the official about payload.
+
 ## 0.12.33
 
 - Added first-class channel pages with real YouTube channel tabs for Videos, Shorts, Live, Playlists, and Posts, including official sort chips where YouTube exposes them.

@@ -1494,14 +1494,40 @@ private func extractChannelHeader(from data: Any) -> ChannelHeader? {
             canonicalBaseUrl: canonicalBaseURL
         ),
         handleText: handleText,
-        avatarUrl: firstThumbnailURL(sourceThumbnails(from: avatarImage))
-            ?? firstThumbnailURL(thumbnails(from: metadataRenderer?["avatar"])),
-        bannerUrl: firstThumbnailURL(sourceThumbnails(from: bannerImage)),
+        avatarUrl: bestThumbnailURL(sourceThumbnails(from: avatarImage))
+            ?? bestThumbnailURL(thumbnails(from: metadataRenderer?["avatar"])),
+        bannerUrl: bestThumbnailURL(sourceThumbnails(from: bannerImage)),
         descriptionPreview: descriptionPreview,
         subscriberCountText: metrics.first,
         videoCountText: metrics.count > 1 ? metrics[1] : nil,
+        subscribeButtonTitle: extractChannelSubscribeButtonTitle(from: pageHeader),
         aboutContinuationToken: extractChannelAboutContinuationToken(from: pageHeader)
     )
+}
+
+private func extractChannelSubscribeButtonTitle(from pageHeader: JSONDictionary?) -> String? {
+    guard let actions = pageHeader?["actions"] else { return nil }
+
+    var title: String?
+    visitJSONObjects(in: actions) { node in
+        guard let buttonViewModel = node["buttonViewModel"] as? JSONDictionary else { return .continue }
+        guard let candidate = contentTextValue(from: buttonViewModel["title"]) ?? (buttonViewModel["title"] as? String) else {
+            return .continue
+        }
+
+        let normalized = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.isEmpty == false else { return .continue }
+
+        let lowercase = normalized.lowercased()
+        guard lowercase.contains("subscribe") || lowercase.contains("subscribed") else {
+            return .continue
+        }
+
+        title = normalized
+        return .stop
+    }
+
+    return title
 }
 
 private func extractChannelTabs(from data: Any) -> [ChannelTabSummary] {
@@ -1613,12 +1639,108 @@ private func extractChannelAbout(from data: Any) -> ChannelAbout? {
             joinedDateText: contentTextValue(from: viewModel["joinedDateText"]),
             subscriberCountText: viewModel["subscriberCountText"] as? String,
             videoCountText: viewModel["videoCountText"] as? String,
-            viewCountText: viewModel["viewCountText"] as? String
+            viewCountText: viewModel["viewCountText"] as? String,
+            country: viewModel["country"] as? String,
+            linksLabel: viewModel["customLinksLabel"] as? String,
+            links: extractChannelLinks(from: viewModel),
+            businessEmailPrompt: extractBusinessEmailPrompt(from: viewModel["signInForBusinessEmail"]),
+            businessEmailURL: extractCommandURL(from: viewModel["signInForBusinessEmail"])
         )
         return .stop
     }
 
     return about
+}
+
+private func extractChannelLinks(from viewModel: JSONDictionary) -> [ChannelLink] {
+    let entries = viewModel["links"] as? [Any] ?? []
+
+    return entries.compactMap { value in
+        let renderer = (value as? JSONDictionary)?["channelExternalLinkViewModel"] as? JSONDictionary
+            ?? value as? JSONDictionary
+        guard let renderer else { return nil }
+
+        let title = contentTextValue(from: renderer["title"])
+            ?? textValue(from: renderer["title"])
+            ?? contentTextValue(from: renderer["link"])
+            ?? textValue(from: renderer["link"])
+        guard let title, title.isEmpty == false else { return nil }
+
+        let displayURL = contentTextValue(from: renderer["link"])
+            ?? textValue(from: renderer["link"])
+            ?? extractCommandURL(from: renderer["link"])
+        guard let url = normalizedExternalURL(extractCommandURL(from: renderer["link"]) ?? displayURL) else {
+            return nil
+        }
+
+        return ChannelLink(
+            title: title,
+            url: url,
+            faviconUrl: bestThumbnailURL(sourceThumbnails(from: renderer["favicon"]))
+                ?? bestThumbnailURL(thumbnails(from: renderer["favicon"]))
+        )
+    }
+}
+
+private func extractBusinessEmailPrompt(from value: Any?) -> String? {
+    guard let prompt = contentTextValue(from: value) ?? textValue(from: value) else {
+        return nil
+    }
+
+    let normalized = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    return normalized.isEmpty ? nil : normalized
+}
+
+private func extractCommandURL(from value: Any?) -> String? {
+    if let object = value as? JSONDictionary {
+        if let url = normalizeURL(((object["commandMetadata"] as? JSONDictionary)?["webCommandMetadata"] as? JSONDictionary)?["url"]) {
+            return url
+        }
+
+        if let url = normalizeURL((object["urlEndpoint"] as? JSONDictionary)?["url"]) {
+            return url
+        }
+
+        if let commandRuns = object["commandRuns"] as? [Any] {
+            for run in commandRuns {
+                guard let runObject = run as? JSONDictionary else { continue }
+                if let url = extractCommandURL(from: (runObject["onTap"] as? JSONDictionary)?["innertubeCommand"]) {
+                    return url
+                }
+            }
+        }
+
+        if let runs = object["runs"] as? [Any] {
+            for run in runs {
+                guard let runObject = run as? JSONDictionary else { continue }
+                if let url = extractCommandURL(from: runObject["navigationEndpoint"]) {
+                    return url
+                }
+            }
+        }
+    }
+
+    return nil
+}
+
+private func normalizedExternalURL(_ value: String?) -> String? {
+    guard let rawValue = value?.trimmingCharacters(in: .whitespacesAndNewlines), rawValue.isEmpty == false else {
+        return nil
+    }
+
+    if rawValue.hasPrefix("http://") || rawValue.hasPrefix("https://") || rawValue.hasPrefix("mailto:") {
+        return rawValue
+    }
+
+    if rawValue.hasPrefix("/") {
+        return "https://www.youtube.com\(rawValue)"
+    }
+
+    if rawValue.hasPrefix("//") {
+        return "https:\(rawValue)"
+    }
+
+    return "https://\(rawValue)"
 }
 
 private func parseChannelContentItem(from value: Any) -> ChannelContentItem? {

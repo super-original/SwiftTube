@@ -195,6 +195,7 @@ struct ChannelHeader: Codable, Hashable, Sendable {
     let descriptionPreview: String?
     let subscriberCountText: String?
     let videoCountText: String?
+    let subscribeButtonTitle: String?
     let aboutContinuationToken: String?
 
     var avatarURL: URL? {
@@ -208,6 +209,30 @@ struct ChannelHeader: Codable, Hashable, Sendable {
     }
 }
 
+struct ChannelLink: Codable, Hashable, Identifiable, Sendable {
+    let title: String
+    let url: String
+    let faviconUrl: String?
+
+    var id: String { "\(title)|\(url)" }
+
+    var resolvedURL: URL? {
+        URL(string: url)
+    }
+
+    var displayURL: String {
+        url
+            .replacingOccurrences(of: "https://", with: "")
+            .replacingOccurrences(of: "http://", with: "")
+            .replacingOccurrences(of: "mailto:", with: "")
+    }
+
+    var faviconURL: URL? {
+        guard let faviconUrl else { return nil }
+        return URL(string: faviconUrl)
+    }
+}
+
 struct ChannelAbout: Codable, Hashable, Sendable {
     let description: String?
     let canonicalChannelUrl: String?
@@ -216,6 +241,11 @@ struct ChannelAbout: Codable, Hashable, Sendable {
     let subscriberCountText: String?
     let videoCountText: String?
     let viewCountText: String?
+    let country: String?
+    let linksLabel: String?
+    let links: [ChannelLink]
+    let businessEmailPrompt: String?
+    let businessEmailURL: String?
 }
 
 struct ChannelPost: Codable, Hashable, Identifiable, Sendable {

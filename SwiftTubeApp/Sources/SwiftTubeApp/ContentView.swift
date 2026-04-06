@@ -1027,6 +1027,8 @@ private struct ChannelPageScreen: View {
 }
 
 private struct ChannelHeaderView: View {
+    @EnvironmentObject private var authSession: AuthSessionModel
+
     let header: ChannelHeader
     let selectedTab: ChannelTabKind
     let tabs: [ChannelTabSummary]
@@ -1037,47 +1039,86 @@ private struct ChannelHeaderView: View {
     let onShowAbout: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            banner
+        VStack(alignment: .leading, spacing: 22) {
+            if let bannerURL = header.bannerURL {
+                ChannelBannerView(url: bannerURL)
+            }
 
-            HStack(alignment: .top, spacing: 18) {
-                CachedAsyncImage(url: header.avatarURL, maxPixelSize: 320, contentMode: .fill) {
+            HStack(alignment: .top, spacing: 24) {
+                CachedAsyncImage(url: header.avatarURL, maxPixelSize: 960, contentMode: .fill) {
                     Circle()
                         .fill(Color.gray.opacity(0.22))
                         .overlay(
                             Image(systemName: "person.fill")
-                                .font(.system(size: 38, weight: .semibold))
+                                .font(.system(size: 40, weight: .semibold))
                                 .foregroundStyle(.secondary)
                         )
                 }
-                .frame(width: 132, height: 132)
+                .frame(width: 160, height: 160)
                 .clipShape(Circle())
 
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 14) {
                     Text(header.channel.title ?? "Channel")
-                        .font(.system(size: 40, weight: .bold))
+                        .font(.system(size: 44, weight: .bold))
+                        .lineLimit(2)
 
                     if !identityLine.isEmpty {
                         Text(identityLine)
-                            .font(.title3.weight(.medium))
+                            .font(.title3.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
 
                     if let preview = header.descriptionPreview, !preview.isEmpty {
                         Button(action: onShowAbout) {
-                            Text(preview)
-                                .font(.body)
-                                .foregroundStyle(.primary)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
+                            Text(preview + (header.aboutContinuationToken == nil ? "" : " ...more"))
+                            .font(.title3)
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
                         }
                         .buttonStyle(.plain)
                     }
 
-                    HStack(spacing: 10) {
+                    HStack(spacing: 12) {
+                        Button {
+                            if authSession.status.authenticated == false {
+                                authSession.isSheetPresented = true
+                            }
+                        } label: {
+                            Text(subscribeButtonTitle)
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(isSubscribed ? Color.primary : Color.black)
+                                .padding(.horizontal, 22)
+                                .frame(height: 46)
+                                .background(
+                                    Capsule()
+                                        .fill(isSubscribed ? Color.white.opacity(0.14) : Color.white)
+                                )
+                                .overlay(
+                                    Capsule()
+                                        .stroke(isSubscribed ? Color.white.opacity(0.16) : Color.white.opacity(0.72), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help(authSession.status.authenticated ? "Channel subscription controls" : "Sign in to subscribe")
+
                         if header.aboutContinuationToken != nil {
-                            Button("More Info", action: onShowAbout)
-                                .buttonStyle(.borderedProminent)
+                            Button(action: onShowAbout) {
+                                Text("More info")
+                                    .font(.headline.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .padding(.horizontal, 18)
+                                    .frame(height: 42)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.white.opacity(0.08))
+                                    )
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -1086,23 +1127,11 @@ private struct ChannelHeaderView: View {
             }
 
             if !tabs.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(tabs) { tab in
-                            Button(tab.title) {
-                                onSelectTab(tab.kind)
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                Capsule()
-                                    .fill(tab.kind == selectedTab ? Color.white : Color.white.opacity(0.08))
-                            )
-                            .foregroundStyle(tab.kind == selectedTab ? Color.black : Color.primary)
-                        }
-                    }
-                }
+                ChannelTabStrip(
+                    tabs: tabs,
+                    selectedTab: selectedTab,
+                    onSelectTab: onSelectTab
+                )
             }
 
             if selectedTab == .search, let searchQuery, !searchQuery.isEmpty {
@@ -1132,9 +1161,31 @@ private struct ChannelHeaderView: View {
         }
     }
 
-    private var banner: some View {
-        CachedAsyncImage(url: header.bannerURL, maxPixelSize: 1920, contentMode: .fill) {
-            RoundedRectangle(cornerRadius: 28)
+    private var identityLine: String {
+        [header.handleText, header.subscriberCountText, header.videoCountText]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: " • ")
+    }
+
+    private var subscribeButtonTitle: String {
+        let title = header.subscribeButtonTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (title?.isEmpty == false ? title : nil) ?? "Subscribe"
+    }
+
+    private var isSubscribed: Bool {
+        subscribeButtonTitle.lowercased().contains("subscribed")
+    }
+}
+
+private struct ChannelBannerView: View {
+    let url: URL
+
+    var body: some View {
+        CachedAsyncImage(url: url, maxPixelSize: 4096, contentMode: .fill) {
+            RoundedRectangle(cornerRadius: 26)
                 .fill(
                     LinearGradient(
                         colors: [
@@ -1147,17 +1198,48 @@ private struct ChannelHeaderView: View {
                 )
         }
         .frame(maxWidth: .infinity)
-        .aspectRatio(5.3, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 28))
+        .frame(height: 210)
+        .clipShape(RoundedRectangle(cornerRadius: 26))
+        .overlay(
+            RoundedRectangle(cornerRadius: 26)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
+}
 
-    private var identityLine: String {
-        [header.handleText, header.subscriberCountText, header.videoCountText]
-            .compactMap { value in
-                guard let value, !value.isEmpty else { return nil }
-                return value
+private struct ChannelTabStrip: View {
+    let tabs: [ChannelTabSummary]
+    let selectedTab: ChannelTabKind
+    let onSelectTab: (ChannelTabKind) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .bottom, spacing: 28) {
+                ForEach(tabs) { tab in
+                    Button {
+                        onSelectTab(tab.kind)
+                    } label: {
+                        VStack(spacing: 12) {
+                            Text(tab.title)
+                                .font(.title3.weight(tab.kind == selectedTab ? .bold : .semibold))
+                                .foregroundStyle(tab.kind == selectedTab ? Color.primary : Color.secondary)
+
+                            Capsule()
+                                .fill(tab.kind == selectedTab ? Color.white : Color.clear)
+                                .frame(height: 3)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .joined(separator: " • ")
+            .padding(.horizontal, 4)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.white.opacity(0.1))
+                .frame(height: 1)
+        }
     }
 }
 
@@ -1294,9 +1376,42 @@ private struct ChannelAboutSheet: View {
                             }
                         }
 
+                        if !about.links.isEmpty {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Text(about.linksLabel ?? "Links")
+                                    .font(.title2.weight(.bold))
+
+                                ForEach(about.links) { link in
+                                    ChannelAboutLinkRow(link: link)
+                                }
+                            }
+                        }
+
                         VStack(alignment: .leading, spacing: 12) {
                             Text("More Info")
                                 .font(.title2.weight(.bold))
+
+                            if let businessEmailPrompt = about.businessEmailPrompt,
+                               let businessEmailURL = normalizedSheetURL(about.businessEmailURL) {
+                                Button {
+                                    NSWorkspace.shared.open(businessEmailURL)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "envelope")
+                                        Text(businessEmailPrompt)
+                                            .font(.headline.weight(.semibold))
+                                    }
+                                    .foregroundStyle(.primary)
+                                    .padding(.horizontal, 18)
+                                    .frame(height: 42)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.white.opacity(0.08))
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.bottom, 4)
+                            }
 
                             if let url = about.displayCanonicalChannelUrl ?? about.canonicalChannelUrl {
                                 ChannelAboutMetricRow(symbol: "play.rectangle", text: url)
@@ -1313,6 +1428,9 @@ private struct ChannelAboutSheet: View {
                             if let viewCountText = about.viewCountText {
                                 ChannelAboutMetricRow(symbol: "arrow.up.forward", text: viewCountText)
                             }
+                            if let country = about.country, !country.isEmpty {
+                                ChannelAboutMetricRow(symbol: "globe", text: country)
+                            }
                         }
                     }
                 }
@@ -1324,6 +1442,46 @@ private struct ChannelAboutSheet: View {
             }
         }
         .padding(28)
+    }
+}
+
+private struct ChannelAboutLinkRow: View {
+    let link: ChannelLink
+
+    var body: some View {
+        Button {
+            guard let url = link.resolvedURL else { return }
+            NSWorkspace.shared.open(url)
+        } label: {
+            HStack(alignment: .top, spacing: 14) {
+                CachedAsyncImage(url: link.faviconURL, maxPixelSize: 128, contentMode: .fit) {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.white.opacity(0.08))
+                        .overlay(
+                            Image(systemName: "globe")
+                                .foregroundStyle(.secondary)
+                        )
+                }
+                .frame(width: 36, height: 36)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(link.title)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+
+                    Text(link.displayURL)
+                        .font(.body)
+                        .foregroundStyle(Color.blue)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -1343,6 +1501,22 @@ private struct ChannelAboutMetricRow: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
+}
+
+private func normalizedSheetURL(_ value: String?) -> URL? {
+    guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), value.isEmpty == false else {
+        return nil
+    }
+
+    if let url = URL(string: value), url.scheme != nil {
+        return url
+    }
+
+    if value.hasPrefix("/") {
+        return URL(string: "https://www.youtube.com\(value)")
+    }
+
+    return URL(string: "https://\(value)")
 }
 
 private struct PlaceholderCardGrid: View {

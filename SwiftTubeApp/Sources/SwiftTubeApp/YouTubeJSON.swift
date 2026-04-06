@@ -107,8 +107,22 @@ func sourceThumbnails(from value: Any?) -> [Thumbnail] {
     }
 }
 
+private func thumbnailQualityScore(_ thumbnail: Thumbnail) -> Int {
+    let width = thumbnail.width ?? 0
+    let height = thumbnail.height ?? 0
+    let areaScore = width * height
+    let edgeScore = max(width, height)
+    return areaScore > 0 ? areaScore : edgeScore
+}
+
+func bestThumbnailURL(_ thumbnails: [Thumbnail]) -> String? {
+    thumbnails.max { lhs, rhs in
+        thumbnailQualityScore(lhs) < thumbnailQualityScore(rhs)
+    }?.url
+}
+
 func firstThumbnailURL(_ thumbnails: [Thumbnail]) -> String? {
-    thumbnails.first?.url
+    bestThumbnailURL(thumbnails)
 }
 
 func normalizeURL(_ value: Any?) -> String? {
@@ -221,7 +235,7 @@ private func thumbnailURLCandidate(from value: Any?) -> String? {
     ]
 
     for candidate in candidates {
-        let url = firstThumbnailURL(thumbnails(from: candidate))
+        let url = bestThumbnailURL(thumbnails(from: candidate))
         if url != nil {
             return url
         }
