@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.28
+
+- Restored the sponsor marker layering and alignment from `2e64f5b`, reverting the later masking experiment while keeping the separate ultrawide scrub-overlay fix.
+
 ## 0.12.27
 
 - Kept sponsor markers visible over the played track while masking them out under the scrubber thumb, so sponsor segments no longer paint across the knob.

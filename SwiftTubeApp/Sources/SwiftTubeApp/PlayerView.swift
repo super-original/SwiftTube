@@ -1656,30 +1656,6 @@ private struct SponsorBlockTimelineOverlay: View {
     }
 }
 
-private struct SponsorTimelineThumbExclusionMask: Shape {
-    let fraction: CGFloat
-    let horizontalInset: CGFloat
-    let thumbDiameter: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.addRect(rect)
-
-        let clampedFraction = min(max(fraction, 0), 1)
-        let usableWidth = max(rect.width - horizontalInset * 2, 0)
-        let thumbCenterX = horizontalInset + usableWidth * clampedFraction
-        let thumbRect = CGRect(
-            x: thumbCenterX - thumbDiameter / 2,
-            y: (rect.height - thumbDiameter) / 2,
-            width: thumbDiameter,
-            height: thumbDiameter
-        )
-
-        path.addEllipse(in: thumbRect)
-        return path
-    }
-}
-
 private struct SponsorBlockManualSkipOverlay: View {
     let segment: SponsorBlockSegment
     let skip: () -> Void
@@ -1927,8 +1903,6 @@ private struct PlayerControlBar: View {
     private let compactControlHeight: CGFloat = 38
     private let circularButtonLabelSize: CGFloat = 30
     private let qualityButtonMinWidth: CGFloat = 104
-    private let scrubberTrackInset: CGFloat = 10
-    private let scrubberThumbMaskDiameter: CGFloat = 28
     private let volumeIconContentHeight: CGFloat = 22
     private let timeLabelWidth: CGFloat = 54
 
@@ -2057,22 +2031,14 @@ private struct PlayerControlBar: View {
             )
             .disabled(coordinator.duration <= 0)
             .accessibilityLabel("Playback position")
-            .overlay {
-                SponsorBlockTimelineOverlay(
-                    segments: coordinator.visibleSponsorSegments,
-                    duration: coordinator.duration
-                )
-                .padding(.horizontal, scrubberTrackInset)
-                .mask {
-                    SponsorTimelineThumbExclusionMask(
-                        fraction: scrubberProgressFraction,
-                        horizontalInset: scrubberTrackInset,
-                        thumbDiameter: scrubberThumbMaskDiameter
-                    )
-                    .fill(style: FillStyle(eoFill: true))
-                }
-                .allowsHitTesting(false)
-            }
+
+            SponsorBlockTimelineOverlay(
+                segments: coordinator.visibleSponsorSegments,
+                duration: coordinator.duration
+            )
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .allowsHitTesting(false)
         }
         .frame(maxWidth: .infinity)
         .clipped()
@@ -2090,18 +2056,13 @@ private struct PlayerControlBar: View {
             switch phase {
             case .active(let loc):
                 guard coordinator.duration > 0, sliderWidth > 0 else { return }
-                let trackW = max(1, sliderWidth - scrubberTrackInset * 2)
-                coordinator.scrubHoverFraction = max(0, min(1, (loc.x - scrubberTrackInset) / trackW))
+                let trackInset: CGFloat = 10
+                let trackW = max(1, sliderWidth - trackInset * 2)
+                coordinator.scrubHoverFraction = max(0, min(1, (loc.x - trackInset) / trackW))
             case .ended:
                 coordinator.scrubHoverFraction = nil
             }
         }
-    }
-
-    private var scrubberProgressFraction: CGFloat {
-        guard coordinator.scrubberUpperBound > 0 else { return 0 }
-        let fraction = coordinator.scrubPosition / coordinator.scrubberUpperBound
-        return CGFloat(min(max(fraction, 0), 1))
     }
 
     private func updateMeasuredSliderWidth(_ width: CGFloat) {
