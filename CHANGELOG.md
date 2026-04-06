@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.33
+
+- Added first-class channel pages with real YouTube channel tabs for Videos, Shorts, Live, Playlists, and Posts, including official sort chips where YouTube exposes them.
+- Made channel names and profile pictures open the channel page from browse cards, history rows, related videos, and the player header.
+- Wired the toolbar search to run official in-channel search requests while you are on a channel page, and added a details sheet backed by the channel’s official about payload.
+
 ## 0.12.32
 
 - Restored the original simple SponsorBlock scrubber layering from the first SponsorBlock release by drawing the marker strip behind the native slider inside the same `ZStack`, and lifted the compact skip banner further above the control row.

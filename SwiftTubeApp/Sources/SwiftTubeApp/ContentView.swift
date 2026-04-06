@@ -190,11 +190,25 @@ private extension ContentView {
     }
 
     var toolbarSearchScope: SearchViewModel.Scope {
-        return navigation.currentRoute == .watchHistory ? .history : .global
+        switch navigation.currentRoute {
+        case .watchHistory:
+            return .history
+        case .channel(let route):
+            return .channel(route.channel)
+        default:
+            return .global
+        }
     }
 
     var toolbarSearchPlaceholder: String {
-        toolbarSearchScope == .history ? "Search history" : "Search or paste YouTube URL"
+        switch toolbarSearchScope {
+        case .history:
+            return "Search history"
+        case .channel:
+            return "Search this channel"
+        case .global:
+            return "Search or paste YouTube URL"
+        }
     }
 
     var searchAssistState: SearchAssistState {
@@ -244,6 +258,13 @@ private extension ContentView {
                 )
                     .environmentObject(navigation)
                     .id("\(playlist.id)-\(navigation.routeRefreshID.uuidString)")
+            case .channel(let route):
+                ChannelPageScreen(
+                    route: route,
+                    columns: columns
+                )
+                    .environmentObject(navigation)
+                    .id("\(route.id)-\(navigation.routeRefreshID.uuidString)")
             case .video(let video):
                 PlayerScreen(
                     video: video,
@@ -324,13 +345,17 @@ private extension ContentView {
         } else {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
                 ForEach(viewModel.videos, id: \.id) { video in
-                    Button {
-                        navigation.showVideo(video)
-                    } label: {
-                        VideoCard(video: video)
-                    }
-                    .buttonStyle(.plain)
+                    VideoCard(
+                        video: video,
+                        onOpenChannel: {
+                            openChannel(from: video)
+                        }
+                    )
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(RoundedRectangle(cornerRadius: 16))
+                    .onTapGesture {
+                        navigation.showVideo(video)
+                    }
                     .contextMenu {
                         VideoContextMenuContent(
                             video: video,
@@ -418,13 +443,17 @@ private extension ContentView {
         } else {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
                 ForEach(searchViewModel.results, id: \.id) { video in
-                    Button {
-                        openVideoFromSearch(video)
-                    } label: {
-                        VideoCard(video: video)
-                    }
-                    .buttonStyle(.plain)
+                    VideoCard(
+                        video: video,
+                        onOpenChannel: {
+                            openChannelFromSearch(video)
+                        }
+                    )
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(RoundedRectangle(cornerRadius: 16))
+                    .onTapGesture {
+                        openVideoFromSearch(video)
+                    }
                     .contextMenu {
                         VideoContextMenuContent(
                             video: video,
@@ -480,6 +509,8 @@ private extension ContentView {
         case .playlistLibrary:
             playlistLibraryViewModel.reload()
         case .playlistFeed:
+            navigation.refreshCurrentRoute()
+        case .channel:
             navigation.refreshCurrentRoute()
         case .video:
             navigation.refreshCurrentRoute()
@@ -664,6 +695,7 @@ private extension ContentView {
                             video: video,
                             isDeleting: mutationCenter.isPending(MutationQueueKey.watchHistory(videoID: video.id)),
                             onOpen: { navigation.showVideo(video) },
+                            onOpenChannel: { openChannel(from: video) },
                             onDelete: { removeVideoFromHistory(video) }
                         )
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -753,6 +785,18 @@ private extension ContentView {
         navigation.showVideo(video)
     }
 
+    func openChannel(from video: VideoItem) {
+        guard let channel = video.channelReference else { return }
+        navigation.showChannel(channel)
+    }
+
+    func openChannelFromSearch(_ video: VideoItem) {
+        isSearchFieldFocused = false
+        searchViewModel.dismissAssist()
+        searchViewModel.dismissResults()
+        openChannel(from: video)
+    }
+
     func syncHistorySearchQuery() {
         guard toolbarSearchScope == .history else {
             historyViewModel.updateSearchQuery("")
@@ -804,6 +848,513 @@ private extension ContentView {
             return
         }
         NSWorkspace.shared.open(url)
+    }
+}
+
+private struct ChannelPageScreen: View {
+    let route: ChannelRoute
+    let columns: [GridItem]
+
+    @StateObject private var viewModel = ChannelPageViewModel()
+    @State private var isShowingAboutSheet = false
+
+    @EnvironmentObject private var navigation: AppNavigationModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if let header = viewModel.header {
+                    ChannelHeaderView(
+                        header: header,
+                        selectedTab: route.tab,
+                        tabs: visibleTabs,
+                        searchQuery: route.searchQuery,
+                        sortOptions: viewModel.sortOptions,
+                        onSelectTab: { tab in
+                            navigation.showChannel(route.channel, tab: tab)
+                        },
+                        onSelectSort: { option in
+                            viewModel.selectSortOption(option)
+                        },
+                        onShowAbout: {
+                            isShowingAboutSheet = true
+                            viewModel.loadAboutIfNeeded()
+                        }
+                    )
+                }
+
+                if viewModel.items.isEmpty {
+                    if viewModel.isLoading {
+                        PlaceholderCardGrid(columns: columns)
+                    } else if let error = viewModel.errorMessage {
+                        EmptyStateView(
+                            title: "Couldn’t load channel",
+                            message: error,
+                            actionTitle: "Try Again"
+                        ) {
+                            viewModel.reload(route: route)
+                        }
+                    } else {
+                        EmptyStateView(
+                            title: emptyStateTitle,
+                            message: emptyStateMessage,
+                            actionTitle: route.tab == .search ? "Search Again" : "Refresh"
+                        ) {
+                            viewModel.reload(route: route)
+                        }
+                    }
+                } else if route.tab == .posts {
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        ForEach(viewModel.items, id: \.id) { item in
+                            if case .post(let post) = item {
+                                ChannelPostCard(
+                                    post: post,
+                                    channelHeader: viewModel.header,
+                                    onOpenVideo: { video in
+                                        navigation.showVideo(video)
+                                    },
+                                    onOpenChannel: {
+                                        navigation.showChannel(route.channel)
+                                    }
+                                )
+                                .onAppear {
+                                    viewModel.loadMoreIfNeeded(currentItem: item)
+                                }
+                            }
+                        }
+
+                        if viewModel.isLoadingMore {
+                            ProgressView("Loading more posts...")
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.top, 8)
+                        }
+                    }
+                } else {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                        ForEach(viewModel.items, id: \.id) { item in
+                            switch item {
+                            case .video(let video):
+                                VideoCard(
+                                    video: video,
+                                    onOpenChannel: {
+                                        guard let channel = video.channelReference else { return }
+                                        navigation.showChannel(channel)
+                                    }
+                                )
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(RoundedRectangle(cornerRadius: 16))
+                                .onTapGesture {
+                                    navigation.showVideo(video)
+                                }
+                                .onAppear {
+                                    viewModel.loadMoreIfNeeded(currentItem: item)
+                                }
+                            case .playlist(let playlist):
+                                PlaylistCard(playlist: playlist)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(RoundedRectangle(cornerRadius: 18))
+                                    .onTapGesture {
+                                        navigation.showPlaylist(
+                                            PlaylistReference(
+                                                playlistId: playlist.playlistId,
+                                                title: playlist.title,
+                                                kind: .userPlaylist
+                                            )
+                                        )
+                                    }
+                                    .onAppear {
+                                        viewModel.loadMoreIfNeeded(currentItem: item)
+                                    }
+                            case .post:
+                                EmptyView()
+                            }
+                        }
+                    }
+
+                    if viewModel.isLoadingMore {
+                        ProgressView("Loading more...")
+                            .padding(.top, 12)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                }
+            }
+            .padding(24)
+        }
+        .task(id: route.id) {
+            viewModel.load(route: route)
+        }
+        .sheet(isPresented: $isShowingAboutSheet) {
+            ChannelAboutSheet(
+                title: viewModel.header?.channel.title ?? route.channel.title ?? "Channel",
+                about: viewModel.about,
+                isLoading: viewModel.isLoadingAbout,
+                errorMessage: viewModel.aboutErrorMessage
+            )
+            .frame(minWidth: 520, minHeight: 420)
+        }
+    }
+
+    private var visibleTabs: [ChannelTabSummary] {
+        viewModel.tabs.filter { $0.kind != .search }
+    }
+
+    private var emptyStateTitle: String {
+        switch route.tab {
+        case .search:
+            return "No results"
+        case .playlists:
+            return "No playlists yet"
+        case .posts:
+            return "No posts yet"
+        default:
+            return "Nothing here yet"
+        }
+    }
+
+    private var emptyStateMessage: String {
+        switch route.tab {
+        case .search:
+            let query = route.searchQuery ?? ""
+            return "This channel didn’t return anything for \"\(query)\"."
+        case .playlists:
+            return "This channel doesn’t have visible playlists right now."
+        case .posts:
+            return "This channel doesn’t have visible posts right now."
+        default:
+            return "YouTube didn’t return any items for this tab."
+        }
+    }
+}
+
+private struct ChannelHeaderView: View {
+    let header: ChannelHeader
+    let selectedTab: ChannelTabKind
+    let tabs: [ChannelTabSummary]
+    let searchQuery: String?
+    let sortOptions: [ChannelSortOption]
+    let onSelectTab: (ChannelTabKind) -> Void
+    let onSelectSort: (ChannelSortOption) -> Void
+    let onShowAbout: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            banner
+
+            HStack(alignment: .top, spacing: 18) {
+                CachedAsyncImage(url: header.avatarURL, maxPixelSize: 320, contentMode: .fill) {
+                    Circle()
+                        .fill(Color.gray.opacity(0.22))
+                        .overlay(
+                            Image(systemName: "person.fill")
+                                .font(.system(size: 38, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        )
+                }
+                .frame(width: 132, height: 132)
+                .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(header.channel.title ?? "Channel")
+                        .font(.system(size: 40, weight: .bold))
+
+                    if !identityLine.isEmpty {
+                        Text(identityLine)
+                            .font(.title3.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let preview = header.descriptionPreview, !preview.isEmpty {
+                        Button(action: onShowAbout) {
+                            Text(preview)
+                                .font(.body)
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    HStack(spacing: 10) {
+                        if header.aboutContinuationToken != nil {
+                            Button("More Info", action: onShowAbout)
+                                .buttonStyle(.borderedProminent)
+                        }
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if !tabs.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(tabs) { tab in
+                            Button(tab.title) {
+                                onSelectTab(tab.kind)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                Capsule()
+                                    .fill(tab.kind == selectedTab ? Color.white : Color.white.opacity(0.08))
+                            )
+                            .foregroundStyle(tab.kind == selectedTab ? Color.black : Color.primary)
+                        }
+                    }
+                }
+            }
+
+            if selectedTab == .search, let searchQuery, !searchQuery.isEmpty {
+                Text("Search results for \"\(searchQuery)\"")
+                    .font(.title3.weight(.semibold))
+            }
+
+            if !sortOptions.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(sortOptions) { option in
+                            Button(option.title) {
+                                onSelectSort(option)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                Capsule()
+                                    .fill(option.isSelected ? Color.white : Color.white.opacity(0.08))
+                            )
+                            .foregroundStyle(option.isSelected ? Color.black : Color.primary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var banner: some View {
+        CachedAsyncImage(url: header.bannerURL, maxPixelSize: 1920, contentMode: .fill) {
+            RoundedRectangle(cornerRadius: 28)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.18, green: 0.24, blue: 0.34),
+                            Color(red: 0.11, green: 0.14, blue: 0.20)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(5.3, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 28))
+    }
+
+    private var identityLine: String {
+        [header.handleText, header.subscriberCountText, header.videoCountText]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: " • ")
+    }
+}
+
+private struct ChannelPostCard: View {
+    let post: ChannelPost
+    let channelHeader: ChannelHeader?
+    let onOpenVideo: (VideoItem) -> Void
+    let onOpenChannel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                Button(action: onOpenChannel) {
+                    CachedAsyncImage(url: post.authorAvatarURL ?? channelHeader?.avatarURL, maxPixelSize: 160, contentMode: .fill) {
+                        Circle()
+                            .fill(Color.gray.opacity(0.2))
+                            .overlay(
+                                Image(systemName: "person.fill")
+                                    .foregroundStyle(.secondary)
+                            )
+                    }
+                    .frame(width: 48, height: 48)
+                    .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Button(action: onOpenChannel) {
+                        Text(post.author)
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    .buttonStyle(.plain)
+
+                    if let published = post.publishedTimeText, !published.isEmpty {
+                        Text(published)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            Text(post.content)
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let attachedVideo = post.attachedVideo {
+                VideoCard(video: attachedVideo, onOpenChannel: nil)
+                    .frame(maxWidth: 460, alignment: .leading)
+                    .contentShape(RoundedRectangle(cornerRadius: 16))
+                    .onTapGesture {
+                        onOpenVideo(attachedVideo)
+                    }
+            }
+
+            let metrics = [post.likeCountText, post.commentCountText]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+            if !metrics.isEmpty {
+                HStack(spacing: 10) {
+                    ForEach(metrics, id: \.self) { metric in
+                        Text(metric)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
+    }
+}
+
+private struct ChannelAboutSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let title: String
+    let about: ChannelAbout?
+    let isLoading: Bool
+    let errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top) {
+                Text(title)
+                    .font(.largeTitle.weight(.bold))
+
+                Spacer(minLength: 0)
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.title2.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+            }
+
+            if isLoading && about == nil {
+                Spacer()
+                ProgressView("Loading details...")
+                    .frame(maxWidth: .infinity, alignment: .center)
+                Spacer()
+            } else if let errorMessage {
+                Spacer()
+                EmptyStateView(
+                    title: "Couldn’t load details",
+                    message: errorMessage,
+                    actionTitle: "Close"
+                ) {
+                    dismiss()
+                }
+                Spacer()
+            } else if let about {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        if let description = about.description, !description.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Description")
+                                    .font(.title2.weight(.bold))
+                                Text(description)
+                                    .font(.body)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("More Info")
+                                .font(.title2.weight(.bold))
+
+                            if let url = about.displayCanonicalChannelUrl ?? about.canonicalChannelUrl {
+                                ChannelAboutMetricRow(symbol: "play.rectangle", text: url)
+                            }
+                            if let joinedDateText = about.joinedDateText {
+                                ChannelAboutMetricRow(symbol: "info.circle", text: joinedDateText)
+                            }
+                            if let subscriberCountText = about.subscriberCountText {
+                                ChannelAboutMetricRow(symbol: "person.2.wave.2", text: subscriberCountText)
+                            }
+                            if let videoCountText = about.videoCountText {
+                                ChannelAboutMetricRow(symbol: "film", text: videoCountText)
+                            }
+                            if let viewCountText = about.viewCountText {
+                                ChannelAboutMetricRow(symbol: "arrow.up.forward", text: viewCountText)
+                            }
+                        }
+                    }
+                }
+            } else {
+                Spacer()
+                Text("No details available.")
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+        }
+        .padding(28)
+    }
+}
+
+private struct ChannelAboutMetricRow: View {
+    let symbol: String
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .frame(width: 28)
+                .foregroundStyle(.secondary)
+
+            Text(text)
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct PlaceholderCardGrid: View {
+    let columns: [GridItem]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+            ForEach(0..<8, id: \.self) { _ in
+                PlaceholderCard()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
     }
 }
 
@@ -2271,6 +2822,7 @@ private struct HistoryVideoRow: View {
     let video: VideoItem
     let isDeleting: Bool
     let onOpen: () -> Void
+    let onOpenChannel: (() -> Void)?
     let onDelete: () -> Void
 
     @State private var isHovered = false
@@ -2291,7 +2843,8 @@ private struct HistoryVideoRow: View {
                     channelID: video.channelId,
                     channel: video.channel,
                     avatarSize: 20,
-                    font: .system(size: 14, weight: .medium)
+                    font: .system(size: 14, weight: .medium),
+                    onOpenChannel: onOpenChannel
                 )
 
                 if metadataChips.isEmpty == false {

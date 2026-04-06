@@ -93,6 +93,11 @@ struct VideoItem: Codable, Identifiable, Hashable, Sendable {
         guard let channelAvatarUrl else { return nil }
         return URL(string: channelAvatarUrl)
     }
+
+    var channelReference: ChannelReference? {
+        guard let channelId else { return nil }
+        return ChannelReference(channelId: channelId, title: channel, canonicalBaseUrl: nil)
+    }
 }
 
 struct RecommendationsResponse: Codable, Sendable {
@@ -131,6 +136,140 @@ enum WatchHistoryTrimRange: String, Codable, CaseIterable, Sendable {
 struct SearchSuggestionsResponse: Codable, Sendable {
     let query: String
     let suggestions: [String]
+}
+
+struct ChannelReference: Codable, Hashable, Identifiable, Sendable {
+    let channelId: String
+    let title: String?
+    let canonicalBaseUrl: String?
+
+    var id: String { channelId }
+}
+
+enum ChannelTabKind: String, CaseIterable, Codable, Hashable, Sendable {
+    case videos
+    case shorts
+    case live
+    case playlists
+    case posts
+    case search
+
+    var title: String {
+        switch self {
+        case .videos:
+            return "Videos"
+        case .shorts:
+            return "Shorts"
+        case .live:
+            return "Live"
+        case .playlists:
+            return "Playlists"
+        case .posts:
+            return "Posts"
+        case .search:
+            return "Search"
+        }
+    }
+}
+
+struct ChannelTabSummary: Codable, Hashable, Identifiable, Sendable {
+    let kind: ChannelTabKind
+    let title: String
+
+    var id: String { kind.rawValue }
+}
+
+struct ChannelSortOption: Codable, Hashable, Identifiable, Sendable {
+    let title: String
+    let continuationToken: String
+    let isSelected: Bool
+
+    var id: String { title }
+}
+
+struct ChannelHeader: Codable, Hashable, Sendable {
+    let channel: ChannelReference
+    let handleText: String?
+    let avatarUrl: String?
+    let bannerUrl: String?
+    let descriptionPreview: String?
+    let subscriberCountText: String?
+    let videoCountText: String?
+    let aboutContinuationToken: String?
+
+    var avatarURL: URL? {
+        guard let avatarUrl else { return nil }
+        return URL(string: avatarUrl)
+    }
+
+    var bannerURL: URL? {
+        guard let bannerUrl else { return nil }
+        return URL(string: bannerUrl)
+    }
+}
+
+struct ChannelAbout: Codable, Hashable, Sendable {
+    let description: String?
+    let canonicalChannelUrl: String?
+    let displayCanonicalChannelUrl: String?
+    let joinedDateText: String?
+    let subscriberCountText: String?
+    let videoCountText: String?
+    let viewCountText: String?
+}
+
+struct ChannelPost: Codable, Hashable, Identifiable, Sendable {
+    let id: String
+    let author: String
+    let authorChannelId: String?
+    let authorAvatarUrl: String?
+    let content: String
+    let publishedTimeText: String?
+    let likeCountText: String?
+    let commentCountText: String?
+    let attachedVideo: VideoItem?
+
+    var authorAvatarURL: URL? {
+        guard let authorAvatarUrl else { return nil }
+        return URL(string: authorAvatarUrl)
+    }
+}
+
+enum ChannelContentItem: Hashable, Identifiable, Sendable {
+    case video(VideoItem)
+    case playlist(PlaylistSummary)
+    case post(ChannelPost)
+
+    var id: String {
+        switch self {
+        case .video(let video):
+            return "video:\(video.id)"
+        case .playlist(let playlist):
+            return "playlist:\(playlist.id)"
+        case .post(let post):
+            return "post:\(post.id)"
+        }
+    }
+}
+
+struct ChannelPageResponse: Sendable {
+    let header: ChannelHeader
+    let tabs: [ChannelTabSummary]
+    let selectedTab: ChannelTabKind
+    let items: [ChannelContentItem]
+    let sortOptions: [ChannelSortOption]
+    let continuation: String?
+    let searchQuery: String?
+}
+
+struct ChannelPageContinuationResponse: Sendable {
+    let items: [ChannelContentItem]
+    let sortOptions: [ChannelSortOption]
+    let continuation: String?
+}
+
+struct ChannelAboutResponse: Sendable {
+    let about: ChannelAbout
 }
 
 struct StreamInfo: Codable, Hashable, Sendable {
@@ -356,6 +495,11 @@ struct VideoPlayback: Codable, Sendable {
     var channelAvatarURL: URL? {
         guard let channelAvatarUrl else { return nil }
         return URL(string: channelAvatarUrl)
+    }
+
+    var channelReference: ChannelReference? {
+        guard let channelId else { return nil }
+        return ChannelReference(channelId: channelId, title: channel, canonicalBaseUrl: nil)
     }
 
     func with(

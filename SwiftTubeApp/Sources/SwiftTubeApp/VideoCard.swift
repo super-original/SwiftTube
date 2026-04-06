@@ -3,7 +3,13 @@ import SwiftUI
 struct VideoCard: View {
     @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
+    let onOpenChannel: (() -> Void)?
     @State private var isHovered = false
+
+    init(video: VideoItem, onOpenChannel: (() -> Void)? = nil) {
+        self.video = video
+        self.onOpenChannel = onOpenChannel
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -51,7 +57,8 @@ struct VideoCard: View {
                 channelID: video.channelId,
                 channel: video.channel,
                 avatarSize: 22,
-                font: .system(size: 14, weight: .medium)
+                font: .system(size: 14, weight: .medium),
+                onOpenChannel: onOpenChannel
             )
 
             VideoStatsMetadataLine(
@@ -125,8 +132,22 @@ struct VideoChannelIdentityLine: View {
     let channel: String?
     let avatarSize: CGFloat
     let font: Font
+    let onOpenChannel: (() -> Void)?
 
     var body: some View {
+        Group {
+            if let onOpenChannel {
+                Button(action: onOpenChannel) {
+                    label
+                }
+                .buttonStyle(.plain)
+            } else {
+                label
+            }
+        }
+    }
+
+    private var label: some View {
         HStack(spacing: 8) {
             ChannelAvatarView(
                 avatarURL: avatarURL,

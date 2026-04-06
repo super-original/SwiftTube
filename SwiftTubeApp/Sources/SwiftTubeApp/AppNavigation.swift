@@ -56,11 +56,22 @@ struct PlaylistReference: Equatable, Hashable, Identifiable, Sendable {
     )
 }
 
+struct ChannelRoute: Equatable, Hashable, Identifiable, Sendable {
+    let channel: ChannelReference
+    let tab: ChannelTabKind
+    let searchQuery: String?
+
+    var id: String {
+        "\(channel.channelId)|\(tab.rawValue)|\(searchQuery ?? "")"
+    }
+}
+
 enum AppRoute: Equatable {
     case home
     case watchHistory
     case playlistLibrary
     case playlistFeed(PlaylistReference)
+    case channel(ChannelRoute)
     case video(VideoItem)
 
     var video: VideoItem? {
@@ -129,6 +140,26 @@ final class AppNavigationModel: ObservableObject {
             selectedSidebarItem = .playlists
         }
         navigate(to: .playlistFeed(playlist))
+    }
+
+    func showChannel(
+        _ channel: ChannelReference,
+        tab: ChannelTabKind = .videos,
+        searchQuery: String? = nil
+    ) {
+        let normalizedQuery = searchQuery?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let route = ChannelRoute(
+            channel: channel,
+            tab: tab,
+            searchQuery: normalizedQuery?.isEmpty == true ? nil : normalizedQuery
+        )
+
+        if currentRoute == .channel(route) {
+            refreshCurrentRoute()
+            return
+        }
+
+        navigate(to: .channel(route))
     }
 
     func showVideo(
@@ -309,6 +340,8 @@ final class AppNavigationModel: ObservableObject {
             default:
                 break
             }
+        } else if case .channel = currentRoute {
+            return
         }
     }
 
@@ -355,6 +388,8 @@ final class AppNavigationModel: ObservableObject {
             case .userPlaylist:
                 selectedSidebarItem = .playlists
             }
+        case .channel:
+            break
         case .video:
             break
         }

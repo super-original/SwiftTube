@@ -16,6 +16,22 @@ final class BackendClient {
         try await backend.fetchChannelAvatar(channelID: channelID)
     }
 
+    func fetchChannelPage(
+        channelID: String,
+        tab: ChannelTabKind,
+        searchQuery: String? = nil
+    ) async throws -> ChannelPageResponse {
+        try await backend.fetchChannelPage(channelID: channelID, tab: tab, searchQuery: searchQuery)
+    }
+
+    func fetchChannelContinuation(token: String) async throws -> ChannelPageContinuationResponse {
+        try await backend.fetchChannelContinuation(token: token)
+    }
+
+    func fetchChannelAbout(token: String) async throws -> ChannelAboutResponse {
+        try await backend.fetchChannelAbout(token: token)
+    }
+
     func fetchSearch(query: String, continuation: String? = nil) async throws -> SearchResponse {
         try await backend.fetchSearch(query: query, continuation: continuation)
     }

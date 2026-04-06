@@ -423,7 +423,11 @@ private extension PlayerScreen {
             ChannelSummary(
                 avatarURL: playback?.channelAvatarURL,
                 channel: displayChannel,
-                subscriberCount: playback?.subscription?.subscriberCountText ?? playback?.subscriberCountText
+                subscriberCount: playback?.subscription?.subscriberCountText ?? playback?.subscriberCountText,
+                onOpenChannel: {
+                    guard let channel = playback?.channelReference else { return }
+                    navigation.showChannel(channel)
+                }
             )
 
             subscribeButton
@@ -1364,12 +1368,17 @@ private extension PlayerScreen {
             } else {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(recommendations, id: \.id) { relatedVideo in
-                        Button {
+                        RecommendationRow(
+                            video: relatedVideo,
+                            onOpenChannel: {
+                                guard let channel = relatedVideo.channelReference else { return }
+                                navigation.showChannel(channel)
+                            }
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 14))
+                        .onTapGesture {
                             navigation.showVideo(relatedVideo)
-                        } label: {
-                            RecommendationRow(video: relatedVideo)
                         }
-                        .buttonStyle(.plain)
                         .contextMenu {
                             VideoContextMenuContent(
                                 video: relatedVideo,
@@ -2719,8 +2728,22 @@ private struct ChannelSummary: View {
     let avatarURL: URL?
     let channel: String?
     let subscriberCount: String?
+    let onOpenChannel: (() -> Void)?
 
     var body: some View {
+        Group {
+            if let onOpenChannel {
+                Button(action: onOpenChannel) {
+                    label
+                }
+                .buttonStyle(.plain)
+            } else {
+                label
+            }
+        }
+    }
+
+    private var label: some View {
         HStack(spacing: 10) {
             CachedAsyncImage(url: avatarURL, maxPixelSize: 128) {
                 Circle()
@@ -2865,6 +2888,7 @@ private struct CommentRow: View {
 private struct RecommendationRow: View {
     @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
+    let onOpenChannel: (() -> Void)?
     @State private var isHovered = false
 
     var body: some View {
@@ -2909,7 +2933,8 @@ private struct RecommendationRow: View {
                     channelID: video.channelId,
                     channel: video.channel,
                     avatarSize: 20,
-                    font: .system(size: 12.5, weight: .medium)
+                    font: .system(size: 12.5, weight: .medium),
+                    onOpenChannel: onOpenChannel
                 )
 
                 VideoStatsMetadataLine(

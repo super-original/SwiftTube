@@ -230,6 +230,7 @@ final class SearchViewModel: ObservableObject {
     enum Scope: Equatable {
         case global
         case history
+        case channel(ChannelReference)
     }
 
     struct ParsedVideoLink: Equatable {
@@ -262,6 +263,7 @@ final class SearchViewModel: ObservableObject {
     enum SubmitOutcome {
         case none
         case search
+        case channelSearch
         case openedVideoLink
     }
 
@@ -285,9 +287,16 @@ final class SearchViewModel: ObservableObject {
             return .openedVideoLink
         }
 
-        guard scope == .global else { return .none }
-        performSearch(query: trimmed, reset: true)
-        return .search
+        switch scope {
+        case .global:
+            performSearch(query: trimmed, reset: true)
+            return .search
+        case .channel(let channel):
+            navigation.showChannel(channel, tab: .search, searchQuery: trimmed)
+            return .channelSearch
+        case .history:
+            return .none
+        }
     }
 
     func clear() {
@@ -572,6 +581,164 @@ final class SearchViewModel: ObservableObject {
 
         let totalSeconds = (component(at: 1) * 3600) + (component(at: 2) * 60) + component(at: 3)
         return totalSeconds > 0 ? totalSeconds : nil
+    }
+}
+
+@MainActor
+final class ChannelPageViewModel: ObservableObject {
+    @Published private(set) var header: ChannelHeader? = nil
+    @Published private(set) var tabs: [ChannelTabSummary] = []
+    @Published private(set) var items: [ChannelContentItem] = []
+    @Published private(set) var sortOptions: [ChannelSortOption] = []
+    @Published private(set) var about: ChannelAbout? = nil
+    @Published var isLoading = false
+    @Published var isLoadingMore = false
+    @Published var isLoadingAbout = false
+    @Published var errorMessage: String? = nil
+    @Published var aboutErrorMessage: String? = nil
+
+    private var continuation: String? = nil
+    private var currentRoute: ChannelRoute?
+
+    func load(route: ChannelRoute) {
+        guard currentRoute != route || header == nil else { return }
+        Task { await fetchInitial(route: route) }
+    }
+
+    func reload(route: ChannelRoute) {
+        Task { await fetchInitial(route: route, force: true) }
+    }
+
+    func loadMoreIfNeeded(currentItem: ChannelContentItem) {
+        guard let last = items.last, last.id == currentItem.id else { return }
+        guard let continuation, !continuation.isEmpty, !isLoadingMore else { return }
+        Task { await fetchContinuation(token: continuation) }
+    }
+
+    func selectSortOption(_ option: ChannelSortOption) {
+        guard !option.isSelected, !option.continuationToken.isEmpty, !isLoading else { return }
+        Task { await fetchSorted(token: option.continuationToken) }
+    }
+
+    func loadAboutIfNeeded() {
+        guard about == nil,
+              let token = header?.aboutContinuationToken,
+              !token.isEmpty,
+              !isLoadingAbout else {
+            return
+        }
+        isLoadingAbout = true
+        aboutErrorMessage = nil
+
+        Task {
+            defer { isLoadingAbout = false }
+            do {
+                about = try await BackendClient.shared.fetchChannelAbout(token: token).about
+            } catch {
+                aboutErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func fetchInitial(route: ChannelRoute, force: Bool = false) async {
+        if force == false, currentRoute == route, header != nil {
+            return
+        }
+
+        currentRoute = route
+        isLoading = true
+        errorMessage = nil
+        continuation = nil
+        items = []
+        sortOptions = []
+        about = nil
+        aboutErrorMessage = nil
+
+        defer { isLoading = false }
+
+        do {
+            let response = try await BackendClient.shared.fetchChannelPage(
+                channelID: route.channel.channelId,
+                tab: route.tab,
+                searchQuery: route.searchQuery
+            )
+            header = response.header
+            tabs = response.tabs
+            items = applyChannelDefaults(to: response.items, header: response.header)
+            sortOptions = response.sortOptions
+            continuation = response.continuation
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func fetchSorted(token: String) async {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
+        do {
+            let response = try await BackendClient.shared.fetchChannelContinuation(token: token)
+            items = applyChannelDefaults(to: response.items, header: header)
+            sortOptions = response.sortOptions
+            continuation = response.continuation
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func fetchContinuation(token: String) async {
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+
+        do {
+            let response = try await BackendClient.shared.fetchChannelContinuation(token: token)
+            let normalizedIncoming = applyChannelDefaults(to: response.items, header: header)
+            let mergeResult = appendUniqueItems(existing: items, incoming: normalizedIncoming, id: \.id)
+            items = mergeResult.items
+            if !response.sortOptions.isEmpty {
+                sortOptions = response.sortOptions
+            }
+            continuation = response.continuation
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func applyChannelDefaults(
+        to items: [ChannelContentItem],
+        header: ChannelHeader?
+    ) -> [ChannelContentItem] {
+        guard let header else { return items }
+        return items.map { item in
+            switch item {
+            case .video(var video):
+                if video.channel == nil {
+                    video = VideoItem(
+                        id: video.id,
+                        title: video.title,
+                        channel: header.channel.title,
+                        channelId: video.channelId ?? header.channel.channelId,
+                        channelAvatarUrl: video.channelAvatarUrl ?? header.avatarUrl,
+                        viewCountText: video.viewCountText,
+                        publishedTimeText: video.publishedTimeText,
+                        durationText: video.durationText,
+                        thumbnails: video.thumbnails,
+                        playlistSetVideoId: video.playlistSetVideoId,
+                        playlistIndexText: video.playlistIndexText,
+                        playlistSelected: video.playlistSelected,
+                        playlistCanRemove: video.playlistCanRemove,
+                        playlistCanMoveToTop: video.playlistCanMoveToTop,
+                        playlistCanMoveToBottom: video.playlistCanMoveToBottom,
+                        progress: video.progress
+                    )
+                }
+                return .video(video)
+            default:
+                return item
+            }
+        }
     }
 }
 

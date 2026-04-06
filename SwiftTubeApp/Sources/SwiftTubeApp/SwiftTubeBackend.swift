@@ -245,6 +245,49 @@ actor SwiftTubeBackend {
         return ChannelAvatarResponse(channelId: channelID, avatarUrl: url)
     }
 
+    func fetchChannelPage(
+        channelID: String,
+        tab: ChannelTabKind,
+        searchQuery: String? = nil
+    ) async throws -> ChannelPageResponse {
+        let data = try await loadChannelInitialData(
+            channelID: channelID,
+            tab: tab,
+            searchQuery: searchQuery
+        )
+
+        guard let header = extractChannelHeader(from: data) else {
+            throw BackendClientError(message: "Couldn’t load that channel page.")
+        }
+
+        return ChannelPageResponse(
+            header: header,
+            tabs: extractChannelTabs(from: data),
+            selectedTab: extractSelectedChannelTab(from: data) ?? tab,
+            items: await mergeStoredProgress(into: extractChannelContentItems(from: data)),
+            sortOptions: extractChannelSortOptions(from: data),
+            continuation: extractChannelContentContinuationToken(from: data),
+            searchQuery: searchQuery?.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    func fetchChannelContinuation(token: String) async throws -> ChannelPageContinuationResponse {
+        let data = try await loadBrowseContinuationData(token: token)
+        return ChannelPageContinuationResponse(
+            items: await mergeStoredProgress(into: extractChannelContentItems(from: data)),
+            sortOptions: extractChannelSortOptions(from: data),
+            continuation: extractChannelContentContinuationToken(from: data)
+        )
+    }
+
+    func fetchChannelAbout(token: String) async throws -> ChannelAboutResponse {
+        let data = try await loadBrowseContinuationData(token: token)
+        guard let about = extractChannelAbout(from: data) else {
+            throw BackendClientError(message: "Couldn’t load this channel’s details.")
+        }
+        return ChannelAboutResponse(about: about)
+    }
+
     func fetchVideo(id videoID: String) async throws -> VideoPlayback {
         let usingAuth = await authManager.currentMaterial() != nil
 
@@ -704,6 +747,99 @@ actor SwiftTubeBackend {
         return (watchData, extractWatchMetadata(from: watchData))
     }
 
+    private func loadChannelInitialData(
+        channelID: String,
+        tab: ChannelTabKind,
+        searchQuery: String?
+    ) async throws -> JSONDictionary {
+        let usingAuth = await authManager.currentMaterial() != nil
+
+        if usingAuth {
+            do {
+                return try await loadChannelInitialData(
+                    channelID: channelID,
+                    tab: tab,
+                    searchQuery: searchQuery,
+                    authenticated: true
+                )
+            } catch {
+                _ = try? await authManager.clear()
+            }
+        }
+
+        return try await loadChannelInitialData(
+            channelID: channelID,
+            tab: tab,
+            searchQuery: searchQuery,
+            authenticated: false
+        )
+    }
+
+    private func loadChannelInitialData(
+        channelID: String,
+        tab: ChannelTabKind,
+        searchQuery: String?,
+        authenticated: Bool
+    ) async throws -> JSONDictionary {
+        switch tab {
+        case .videos:
+            return try await api.browse(
+                browseID: channelID,
+                params: "EgZ2aWRlb3PyBgQKAjoA",
+                authenticated: authenticated
+            )
+        case .shorts:
+            return try await api.browse(
+                browseID: channelID,
+                params: "EgZzaG9ydHPyBgUKA5oBAA==",
+                authenticated: authenticated
+            )
+        case .live:
+            return try await api.browse(
+                browseID: channelID,
+                params: "EgdzdHJlYW1z8gYECgJ6AA==",
+                authenticated: authenticated
+            )
+        case .playlists:
+            return try await api.browse(
+                browseID: channelID,
+                params: "EglwbGF5bGlzdHPyBgQKAkIA",
+                authenticated: authenticated
+            )
+        case .posts:
+            return try await api.browse(
+                browseID: channelID,
+                params: "EgVwb3N0c_IGBAoCSgA=",
+                authenticated: authenticated
+            )
+        case .search:
+            let trimmedQuery = searchQuery?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard trimmedQuery.isEmpty == false else {
+                throw BackendClientError(message: "Enter something to search this channel.")
+            }
+            return try await api.browse(
+                browseID: channelID,
+                query: trimmedQuery,
+                params: "EgZzZWFyY2jyBgQKAloA",
+                authenticated: authenticated
+            )
+        }
+    }
+
+    private func loadBrowseContinuationData(token: String) async throws -> JSONDictionary {
+        let usingAuth = await authManager.currentMaterial() != nil
+
+        if usingAuth {
+            do {
+                return try await api.browse(continuation: token, authenticated: true)
+            } catch {
+                _ = try? await authManager.clear()
+            }
+        }
+
+        return try await api.browse(continuation: token, authenticated: false)
+    }
+
     private func requireAuthenticatedMaterial() async throws -> AuthMaterial {
         guard let material = await authManager.currentMaterial() else {
             throw BackendClientError(message: "Sign in to YouTube to use this action.")
@@ -815,6 +951,30 @@ actor SwiftTubeBackend {
                 durationSeconds: durationSeconds
             )
             return updated
+        }
+    }
+
+    private func mergeStoredProgress(into items: [ChannelContentItem]) async -> [ChannelContentItem] {
+        let videos = items.compactMap { item -> VideoItem? in
+            if case .video(let video) = item {
+                return video
+            }
+            return nil
+        }
+        guard !videos.isEmpty else { return items }
+
+        let mergedVideos = await mergeStoredProgress(into: videos)
+        var mergedByID: [String: VideoItem] = [:]
+        for video in mergedVideos {
+            mergedByID[video.id] = video
+        }
+
+        return items.map { item in
+            guard case .video(let video) = item,
+                  let merged = mergedByID[video.id] else {
+                return item
+            }
+            return .video(merged)
         }
     }
 
@@ -1298,6 +1458,395 @@ private func parseStandardVideoItem(_ renderer: JSONDictionary) -> VideoItem? {
             durationText: durationText
         )
     )
+}
+
+private func extractChannelHeader(from data: Any) -> ChannelHeader? {
+    let metadataRenderer = ((data as? JSONDictionary)?["metadata"] as? JSONDictionary)?["channelMetadataRenderer"] as? JSONDictionary
+    let pageHeader = (((((data as? JSONDictionary)?["header"] as? JSONDictionary)?["pageHeaderRenderer"] as? JSONDictionary)?["content"] as? JSONDictionary)?["pageHeaderViewModel"] as? JSONDictionary)
+
+    let metadataRows = ((((pageHeader?["metadata"] as? JSONDictionary)?["contentMetadataViewModel"] as? JSONDictionary)?["metadataRows"] as? [Any])) ?? []
+    let handleText = metadataRows.indices.contains(0) ? rowTextParts(metadataRows[0]).first : nil
+    let metrics = metadataRows.indices.contains(1) ? rowTextParts(metadataRows[1]) : []
+
+    let channelID = (metadataRenderer?["externalId"] as? String)
+        ?? channelID(from: metadataRenderer)
+        ?? channelID(from: pageHeader)
+    let title = contentTextValue(from: (((pageHeader?["title"] as? JSONDictionary)?["dynamicTextViewModel"] as? JSONDictionary)?["text"]))
+        ?? (metadataRenderer?["title"] as? String)
+    guard let channelID, let title else {
+        return nil
+    }
+
+    let avatarImage =
+        ((((pageHeader?["image"] as? JSONDictionary)?["decoratedAvatarViewModel"] as? JSONDictionary)?["avatar"] as? JSONDictionary)?["avatarViewModel"] as? JSONDictionary)?["image"]
+    let bannerImage = ((pageHeader?["banner"] as? JSONDictionary)?["imageBannerViewModel"] as? JSONDictionary)?["image"]
+    let descriptionPreview = contentTextValue(from: ((pageHeader?["description"] as? JSONDictionary)?["descriptionPreviewViewModel"] as? JSONDictionary)?["description"])
+        ?? (metadataRenderer?["description"] as? String)
+    let canonicalBaseURL =
+        normalizeURL((metadataRenderer?["vanityChannelUrl"] as? String))
+        ?? normalizeURL((metadataRenderer?["ownerUrls"] as? [String])?.first)
+        ?? normalizeURL((metadataRenderer?["channelUrl"] as? String))
+
+    return ChannelHeader(
+        channel: ChannelReference(
+            channelId: channelID,
+            title: title,
+            canonicalBaseUrl: canonicalBaseURL
+        ),
+        handleText: handleText,
+        avatarUrl: firstThumbnailURL(sourceThumbnails(from: avatarImage))
+            ?? firstThumbnailURL(thumbnails(from: metadataRenderer?["avatar"])),
+        bannerUrl: firstThumbnailURL(sourceThumbnails(from: bannerImage)),
+        descriptionPreview: descriptionPreview,
+        subscriberCountText: metrics.first,
+        videoCountText: metrics.count > 1 ? metrics[1] : nil,
+        aboutContinuationToken: extractChannelAboutContinuationToken(from: pageHeader)
+    )
+}
+
+private func extractChannelTabs(from data: Any) -> [ChannelTabSummary] {
+    guard let tabs = (((data as? JSONDictionary)?["contents"] as? JSONDictionary)?["twoColumnBrowseResultsRenderer"] as? JSONDictionary)?["tabs"] as? [Any] else {
+        return []
+    }
+
+    return tabs.compactMap { value in
+        guard let container = value as? JSONDictionary else { return nil }
+        let renderer = (container["tabRenderer"] as? JSONDictionary) ?? (container["expandableTabRenderer"] as? JSONDictionary)
+        guard let renderer,
+              let kind = parseChannelTabKind(from: renderer) else {
+            return nil
+        }
+        return ChannelTabSummary(kind: kind, title: renderer["title"] as? String ?? kind.title)
+    }
+}
+
+private func extractSelectedChannelTab(from data: Any) -> ChannelTabKind? {
+    guard let tabs = (((data as? JSONDictionary)?["contents"] as? JSONDictionary)?["twoColumnBrowseResultsRenderer"] as? JSONDictionary)?["tabs"] as? [Any] else {
+        return nil
+    }
+
+    for value in tabs {
+        guard let container = value as? JSONDictionary else { continue }
+        let renderer = (container["tabRenderer"] as? JSONDictionary) ?? (container["expandableTabRenderer"] as? JSONDictionary)
+        guard let renderer, renderer["selected"] as? Bool == true else { continue }
+        return parseChannelTabKind(from: renderer)
+    }
+
+    return nil
+}
+
+private func extractChannelSortOptions(from data: Any) -> [ChannelSortOption] {
+    var options: [ChannelSortOption] = []
+    var seen = Set<String>()
+
+    visitJSONObjects(in: data) { node in
+        guard let viewModel = node["chipViewModel"] as? JSONDictionary else { return .continue }
+        guard let title = viewModel["text"] as? String, !title.isEmpty else { return .continue }
+        guard let command = ((viewModel["tapCommand"] as? JSONDictionary)?["innertubeCommand"] as? JSONDictionary),
+              let token = ((command["continuationCommand"] as? JSONDictionary)?["token"] as? String),
+              !token.isEmpty else {
+            return .continue
+        }
+        guard seen.insert(title).inserted else { return .continue }
+
+        options.append(
+            ChannelSortOption(
+                title: title,
+                continuationToken: token,
+                isSelected: viewModel["selected"] as? Bool ?? false
+            )
+        )
+        return .continue
+    }
+
+    return options
+}
+
+private func extractChannelContentItems(from data: Any) -> [ChannelContentItem] {
+    let entries = flattenedChannelContentEntries(from: data)
+    var items: [ChannelContentItem] = []
+    var seen = Set<String>()
+
+    for entry in entries {
+        guard let item = parseChannelContentItem(from: entry) else { continue }
+        guard seen.insert(item.id).inserted else { continue }
+        items.append(item)
+    }
+
+    return items
+}
+
+private func extractChannelContentContinuationToken(from data: Any) -> String? {
+    for list in channelContentLists(from: data) {
+        var payloadCount = 0
+        var pendingToken: String?
+
+        for entry in flattenedChannelContentEntries(list) {
+            if parseChannelContentItem(from: entry) != nil {
+                payloadCount += 1
+            } else if let token = continuationToken(in: entry), !token.isEmpty {
+                pendingToken = token
+            }
+        }
+
+        if payloadCount > 0, let pendingToken {
+            return pendingToken
+        }
+    }
+
+    return nil
+}
+
+private func extractChannelAbout(from data: Any) -> ChannelAbout? {
+    var about: ChannelAbout?
+
+    visitJSONObjects(in: data) { node in
+        guard let renderer = node["aboutChannelRenderer"] as? JSONDictionary else { return .continue }
+        guard let viewModel = ((renderer["metadata"] as? JSONDictionary)?["aboutChannelViewModel"] as? JSONDictionary) else {
+            return .continue
+        }
+
+        about = ChannelAbout(
+            description: viewModel["description"] as? String,
+            canonicalChannelUrl: viewModel["canonicalChannelUrl"] as? String,
+            displayCanonicalChannelUrl: viewModel["displayCanonicalChannelUrl"] as? String,
+            joinedDateText: contentTextValue(from: viewModel["joinedDateText"]),
+            subscriberCountText: viewModel["subscriberCountText"] as? String,
+            videoCountText: viewModel["videoCountText"] as? String,
+            viewCountText: viewModel["viewCountText"] as? String
+        )
+        return .stop
+    }
+
+    return about
+}
+
+private func parseChannelContentItem(from value: Any) -> ChannelContentItem? {
+    guard let node = value as? JSONDictionary else { return nil }
+
+    if let lockup = node["lockupViewModel"] as? JSONDictionary {
+        if let video = parseLockupVideoItem(lockup) {
+            return .video(video)
+        }
+        if let playlist = parseLockupPlaylistItem(lockup) {
+            return .playlist(playlist)
+        }
+    }
+
+    if let shorts = node["shortsLockupViewModel"] as? JSONDictionary,
+       let video = parseShortsVideoItem(shorts) {
+        return .video(video)
+    }
+
+    if let postThread = node["backstagePostThreadRenderer"] as? JSONDictionary,
+       let post = parseBackstagePost(postThread) {
+        return .post(post)
+    }
+
+    if let playlistRenderer = node["playlistRenderer"] as? JSONDictionary,
+       let playlist = parsePlaylistRendererItem(playlistRenderer) {
+        return .playlist(playlist)
+    }
+
+    let renderer = (node["videoRenderer"] as? JSONDictionary)
+        ?? (node["gridVideoRenderer"] as? JSONDictionary)
+        ?? (node["videoCardRenderer"] as? JSONDictionary)
+        ?? (node["compactVideoRenderer"] as? JSONDictionary)
+    if let renderer, let video = parseStandardVideoItem(renderer) {
+        return .video(video)
+    }
+
+    return nil
+}
+
+private func parseShortsVideoItem(_ renderer: JSONDictionary) -> VideoItem? {
+    let command = ((renderer["onTap"] as? JSONDictionary)?["innertubeCommand"] as? JSONDictionary)
+    let reelEndpoint = command?["reelWatchEndpoint"] as? JSONDictionary
+    guard let videoID = reelEndpoint?["videoId"] as? String, !videoID.isEmpty else {
+        return nil
+    }
+
+    return VideoItem(
+        id: videoID,
+        title: contentTextValue(from: (renderer["overlayMetadata"] as? JSONDictionary)?["primaryText"]) ?? "Short",
+        channel: nil,
+        channelId: nil,
+        channelAvatarUrl: nil,
+        viewCountText: contentTextValue(from: (renderer["overlayMetadata"] as? JSONDictionary)?["secondaryText"]),
+        publishedTimeText: nil,
+        durationText: nil,
+        thumbnails: thumbnails(from: reelEndpoint?["thumbnail"])
+    )
+}
+
+private func parsePlaylistRendererItem(_ renderer: JSONDictionary) -> PlaylistSummary? {
+    guard let playlistID = renderer["playlistId"] as? String, !playlistID.isEmpty else {
+        return nil
+    }
+
+    return PlaylistSummary(
+        playlistId: playlistID,
+        title: textValue(from: renderer["title"]) ?? "Playlist",
+        privacy: nil,
+        itemCountText: textValue(from: renderer["videoCountText"]) ?? (renderer["videoCount"] as? String).map { "\($0) videos" },
+        updatedText: nil,
+        thumbnails: thumbnails(from: (renderer["thumbnails"] as? [Any])?.first)
+    )
+}
+
+private func parseBackstagePost(_ thread: JSONDictionary) -> ChannelPost? {
+    guard let renderer = ((thread["post"] as? JSONDictionary)?["backstagePostRenderer"] as? JSONDictionary),
+          let postID = renderer["postId"] as? String,
+          !postID.isEmpty,
+          let content = textValue(from: renderer["contentText"]) else {
+        return nil
+    }
+
+    let actionButtons = (renderer["actionButtons"] as? JSONDictionary)?["commentActionButtonsRenderer"] as? JSONDictionary
+    let attachedVideoRenderer = ((renderer["backstageAttachment"] as? JSONDictionary)?["videoRenderer"] as? JSONDictionary)
+
+    return ChannelPost(
+        id: postID,
+        author: textValue(from: renderer["authorText"]) ?? "Unknown channel",
+        authorChannelId: channelID(from: renderer["authorEndpoint"]),
+        authorAvatarUrl: firstThumbnailURL(thumbnails(from: renderer["authorThumbnail"])),
+        content: content,
+        publishedTimeText: textValue(from: renderer["publishedTimeText"]),
+        likeCountText: textValue(from: renderer["voteCount"]),
+        commentCountText: textValue(from: ((actionButtons?["replyButton"] as? JSONDictionary)?["buttonRenderer"] as? JSONDictionary)?["text"]),
+        attachedVideo: attachedVideoRenderer.flatMap(parseStandardVideoItem)
+    )
+}
+
+private func parseChannelTabKind(from renderer: JSONDictionary) -> ChannelTabKind? {
+    let browseEndpoint = (renderer["endpoint"] as? JSONDictionary)?["browseEndpoint"] as? JSONDictionary
+    let params = (browseEndpoint?["params"] as? String) ?? ""
+
+    if params.hasPrefix("EgZ2aWRlb3M") {
+        return .videos
+    }
+    if params.hasPrefix("EgZzaG9ydHM") || params.hasPrefix("EgZzaG9ydHP") {
+        return .shorts
+    }
+    if params.hasPrefix("EgdzdHJlYW1z") {
+        return .live
+    }
+    if params.hasPrefix("EglwbGF5bGlzdHM") || params.hasPrefix("EglwbGF5bGlzdHP") {
+        return .playlists
+    }
+    if params.hasPrefix("EgVwb3N0cw") || params.hasPrefix("EgVwb3N0c") {
+        return .posts
+    }
+    if params.hasPrefix("EgZzZWFyY2g") {
+        return .search
+    }
+
+    let title = (renderer["title"] as? String)?.lowercased() ?? ""
+    switch title {
+    case "videos":
+        return .videos
+    case "shorts":
+        return .shorts
+    case "live":
+        return .live
+    case "playlists":
+        return .playlists
+    case "posts":
+        return .posts
+    case "search":
+        return .search
+    default:
+        return nil
+    }
+}
+
+private func extractChannelAboutContinuationToken(from pageHeader: JSONDictionary?) -> String? {
+    let descriptionPreview = ((pageHeader?["description"] as? JSONDictionary)?["descriptionPreviewViewModel"] as? JSONDictionary)
+    let rendererContext = (descriptionPreview?["rendererContext"] as? JSONDictionary)
+    let commandContext = (rendererContext?["commandContext"] as? JSONDictionary)
+
+    guard let onTap = commandContext?["onTap"] as? JSONDictionary,
+          let innerTubeCommand = onTap["innertubeCommand"] as? JSONDictionary else {
+        return nil
+    }
+
+    return (((((((innerTubeCommand["showEngagementPanelEndpoint"] as? JSONDictionary)?["engagementPanel"] as? JSONDictionary)?["engagementPanelSectionListRenderer"] as? JSONDictionary)?["content"] as? JSONDictionary)?["sectionListRenderer"] as? JSONDictionary)?["contents"] as? [Any])?.first as? JSONDictionary)
+        .flatMap { (($0["itemSectionRenderer"] as? JSONDictionary)?["contents"] as? [Any])?.first }
+        .flatMap(continuationToken(in:))
+}
+
+private func selectedChannelTabContentRoot(from data: Any) -> JSONDictionary? {
+    guard let tabs = (((data as? JSONDictionary)?["contents"] as? JSONDictionary)?["twoColumnBrowseResultsRenderer"] as? JSONDictionary)?["tabs"] as? [Any] else {
+        return nil
+    }
+
+    for value in tabs {
+        guard let container = value as? JSONDictionary else { continue }
+        let renderer = (container["tabRenderer"] as? JSONDictionary) ?? (container["expandableTabRenderer"] as? JSONDictionary)
+        guard let renderer,
+              renderer["selected"] as? Bool == true,
+              let content = renderer["content"] as? JSONDictionary else {
+            continue
+        }
+        return content
+    }
+
+    return nil
+}
+
+private func channelContentLists(from data: Any) -> [[Any]] {
+    var lists: [[Any]] = []
+
+    if let root = selectedChannelTabContentRoot(from: data) {
+        if let contents = ((root["richGridRenderer"] as? JSONDictionary)?["contents"] as? [Any]) {
+            lists.append(contents)
+        }
+        if let contents = ((root["sectionListRenderer"] as? JSONDictionary)?["contents"] as? [Any]) {
+            lists.append(contents)
+        }
+    }
+
+    visitJSONObjects(in: data) { node in
+        let listsToAppend = continuationLists(from: node)
+        if !listsToAppend.isEmpty {
+            lists.append(contentsOf: listsToAppend)
+        }
+        return .continue
+    }
+
+    return lists
+}
+
+private func flattenedChannelContentEntries(from data: Any) -> [Any] {
+    channelContentLists(from: data).flatMap(flattenedChannelContentEntries)
+}
+
+private func flattenedChannelContentEntries(_ entries: [Any]) -> [Any] {
+    var flattened: [Any] = []
+
+    for entry in entries {
+        guard let object = entry as? JSONDictionary else { continue }
+
+        if let itemSection = object["itemSectionRenderer"] as? JSONDictionary,
+           let contents = itemSection["contents"] as? [Any] {
+            flattened.append(contentsOf: flattenedChannelContentEntries(contents))
+            continue
+        }
+
+        if let richItem = object["richItemRenderer"] as? JSONDictionary,
+           let content = richItem["content"] {
+            flattened.append(content)
+            continue
+        }
+
+        if object["chipBarViewModel"] != nil {
+            continue
+        }
+
+        flattened.append(object)
+    }
+
+    return flattened
 }
 
 private func extractVideoItems(from data: Any, limit: Int = 120) -> [VideoItem] {
