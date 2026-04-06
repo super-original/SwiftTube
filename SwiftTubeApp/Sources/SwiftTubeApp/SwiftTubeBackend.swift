@@ -796,7 +796,7 @@ actor SwiftTubeBackend {
                     authenticated: true
                 )
             } catch {
-                _ = try? await authManager.clear()
+                // Channel browse requests can fail for reasons unrelated to auth.
             }
         }
 
@@ -872,7 +872,7 @@ actor SwiftTubeBackend {
             do {
                 return try await api.browse(continuation: token, authenticated: true)
             } catch {
-                _ = try? await authManager.clear()
+                // Continuation browse failures should not implicitly sign the user out.
             }
         }
 

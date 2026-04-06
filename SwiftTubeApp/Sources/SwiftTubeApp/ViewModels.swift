@@ -657,10 +657,11 @@ final class ChannelPageViewModel: ObservableObject {
             subscriberCountText: header.subscriberCountText
         )
         let previousSubscription = self.subscription
+        let targetSubscribed = !subscription.subscribed
         let optimisticSubscription = SubscriptionState(
             channelId: subscription.channelId,
             buttonText: subscription.subscribed ? "Subscribe" : "Subscribed",
-            subscribed: !subscription.subscribed,
+            subscribed: targetSubscribed,
             enabled: subscription.enabled,
             subscriberCountText: subscription.subscriberCountText
         )
@@ -720,7 +721,12 @@ final class ChannelPageViewModel: ObservableObject {
                 )
             },
             applySuccess: { [weak self] response in
-                self?.subscription = response.subscription ?? optimisticSubscription
+                self?.subscription = self?.resolvedSubscriptionState(
+                    incoming: response.subscription,
+                    previous: previousSubscription,
+                    optimistic: optimisticSubscription,
+                    targetSubscribed: targetSubscribed
+                ) ?? optimisticSubscription
             }
         )
     }
@@ -777,7 +783,10 @@ final class ChannelPageViewModel: ObservableObject {
             sortOptions = response.sortOptions
             filterOptions = response.filterOptions
             continuation = response.continuation
-            subscription = response.subscription
+            subscription = resolvedFetchedSubscriptionState(
+                incoming: response.subscription,
+                previous: channelChanged ? nil : subscription
+            )
             subscriptionCommands = response.subscriptionCommands
             errorMessage = nil
 
@@ -838,6 +847,60 @@ final class ChannelPageViewModel: ObservableObject {
             }
         }
         return nil
+    }
+
+    private func resolvedSubscriptionState(
+        incoming: SubscriptionState?,
+        previous: SubscriptionState?,
+        optimistic: SubscriptionState,
+        targetSubscribed: Bool
+    ) -> SubscriptionState {
+        guard let incoming else {
+            return optimistic
+        }
+
+        guard incoming.subscribed == targetSubscribed else {
+            if let previous, incoming.enabled == false, previous.channelId == optimistic.channelId {
+                return SubscriptionState(
+                    channelId: previous.channelId,
+                    buttonText: optimistic.buttonText,
+                    subscribed: targetSubscribed,
+                    enabled: true,
+                    subscriberCountText: incoming.subscriberCountText ?? previous.subscriberCountText
+                )
+            }
+            return optimistic
+        }
+
+        return SubscriptionState(
+            channelId: incoming.channelId,
+            buttonText: incoming.buttonText ?? optimistic.buttonText,
+            subscribed: incoming.subscribed,
+            enabled: incoming.enabled || optimistic.enabled,
+            subscriberCountText: incoming.subscriberCountText ?? optimistic.subscriberCountText
+        )
+    }
+
+    private func resolvedFetchedSubscriptionState(
+        incoming: SubscriptionState?,
+        previous: SubscriptionState?
+    ) -> SubscriptionState? {
+        guard let incoming else { return previous }
+
+        if let previous,
+           previous.channelId == incoming.channelId,
+           previous.enabled,
+           incoming.enabled == false {
+            return SubscriptionState(
+                channelId: previous.channelId,
+                buttonText: previous.buttonText ?? incoming.buttonText,
+                subscribed: previous.subscribed,
+                enabled: true,
+                subscriberCountText: incoming.subscriberCountText ?? previous.subscriberCountText
+            )
+        }
+
+        return incoming
     }
 
     private func applyChannelDefaults(
