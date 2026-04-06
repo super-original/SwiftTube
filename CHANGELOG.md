@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.31
+
+- Lowered the sponsor segment strip inside the scrubber to match the native track position more closely, and lifted the compact skip banner so it clears the player controls.
+
 ## 0.12.30
 
 - Removed the extra scrubber-track clipping left over from the later layout refactor so sponsor markers can sit like they did in `2e64f5b`, and redesigned the manual skip prompt into a compact bottom-right glass banner inspired by SponsorBlock.

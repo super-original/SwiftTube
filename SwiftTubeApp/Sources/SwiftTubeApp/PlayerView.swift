@@ -1632,6 +1632,7 @@ private struct SponsorBlockTimelineOverlay: View {
     let duration: Double
 
     private let trackHeight: CGFloat = 5
+    private let trackVerticalOffset: CGFloat = 3
 
     var body: some View {
         GeometryReader { proxy in
@@ -1652,6 +1653,7 @@ private struct SponsorBlockTimelineOverlay: View {
             }
         }
         .frame(height: trackHeight)
+        .offset(y: trackVerticalOffset)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -1661,8 +1663,6 @@ private struct SponsorBlockManualSkipOverlay: View {
     let skip: () -> Void
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.locale) private var locale
-
     var body: some View {
         Button(action: skip) {
             HStack(spacing: 14) {
@@ -1699,13 +1699,13 @@ private struct SponsorBlockManualSkipOverlay: View {
             shape: RoundedRectangle(cornerRadius: 18, style: .continuous)
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        .padding(.bottom, 84)
+        .padding(.bottom, 118)
         .allowsHitTesting(true)
         .animation(.snappy(duration: 0.2, extraBounce: 0), value: segment.id)
     }
 
     private var returnKeyTitle: String {
-        locale.identifier.hasPrefix("en_US") ? "Return" : "Enter"
+        "Enter"
     }
 }
 
