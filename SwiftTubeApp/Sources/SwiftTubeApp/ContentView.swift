@@ -12,6 +12,29 @@ private enum SearchAssistState: Equatable {
     }
 }
 
+private enum ChannelContentLayoutMode: String {
+    case grid
+    case list
+
+    var symbolName: String {
+        switch self {
+        case .grid:
+            return "square.grid.2x2"
+        case .list:
+            return "list.bullet"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .grid:
+            return "Grid View"
+        case .list:
+            return "List View"
+        }
+    }
+}
+
 struct ContentView: View {
     @StateObject private var viewModel = HomeViewModel()
     @StateObject private var historyViewModel = WatchHistoryViewModel()
@@ -260,8 +283,7 @@ private extension ContentView {
                     .id("\(playlist.id)-\(navigation.routeRefreshID.uuidString)")
             case .channel(let route):
                 ChannelPageScreen(
-                    route: route,
-                    columns: columns
+                    route: route
                 )
                     .environmentObject(navigation)
                     .id("\(route.channel.channelId)-\(navigation.routeRefreshID.uuidString)")
@@ -853,9 +875,10 @@ private extension ContentView {
 
 private struct ChannelPageScreen: View {
     let route: ChannelRoute
-    let columns: [GridItem]
 
     @StateObject private var viewModel = ChannelPageViewModel()
+    @AppStorage("channelContentLayoutMode") private var contentLayoutModeRaw = ChannelContentLayoutMode.grid.rawValue
+    @ObservedObject private var settings = AppSettings.shared
 
     @EnvironmentObject private var navigation: AppNavigationModel
 
@@ -871,11 +894,15 @@ private struct ChannelPageScreen: View {
                         filterOptions: viewModel.filterOptions,
                         sortOptions: viewModel.sortOptions,
                         subscription: viewModel.subscription,
+                        contentLayoutMode: contentLayoutMode,
                         onSelectTab: { tab in
                             navigation.showChannel(route.channel, tab: tab)
                         },
                         onSelectControl: { option in
                             viewModel.selectSortOption(option)
+                        },
+                        onChangeLayoutMode: { mode in
+                            contentLayoutModeRaw = mode.rawValue
                         },
                         onToggleSubscription: {
                             viewModel.toggleSubscription()
@@ -894,7 +921,7 @@ private struct ChannelPageScreen: View {
                     )
                 } else if viewModel.items.isEmpty {
                     if viewModel.isLoading {
-                        PlaceholderCardGrid(columns: columns)
+                        PlaceholderCardGrid(columns: gridColumns)
                     } else if let error = viewModel.errorMessage {
                         EmptyStateView(
                             title: "Couldn’t load channel",
@@ -913,81 +940,13 @@ private struct ChannelPageScreen: View {
                         }
                     }
                 } else if route.tab == .posts {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(viewModel.items, id: \.id) { item in
-                            if case .post(let post) = item {
-                                ChannelPostCard(
-                                    post: post,
-                                    channelHeader: viewModel.header,
-                                    onOpenVideo: { video in
-                                        navigation.showVideo(video)
-                                    },
-                                    onOpenChannel: {
-                                        navigation.showChannel(route.channel)
-                                    }
-                                )
-                                .onAppear {
-                                    viewModel.loadMoreIfNeeded(currentItem: item)
-                                }
-                            }
-                        }
-
-                        if viewModel.isLoadingMore {
-                            ProgressView("Loading more posts...")
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.top, 8)
-                        }
-                    }
+                    channelPostsContent
                 } else {
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                        ForEach(viewModel.items, id: \.id) { item in
-                            switch item {
-                            case .video(let video):
-                                VideoCard(
-                                    video: video,
-                                    onOpenChannel: {
-                                        guard let channel = video.channelReference else { return }
-                                        navigation.showChannel(channel)
-                                    }
-                                )
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(RoundedRectangle(cornerRadius: 16))
-                                .onTapGesture {
-                                    navigation.showVideo(video)
-                                }
-                                .onAppear {
-                                    viewModel.loadMoreIfNeeded(currentItem: item)
-                                }
-                            case .playlist(let playlist):
-                                PlaylistCard(playlist: playlist)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(RoundedRectangle(cornerRadius: 18))
-                                    .onTapGesture {
-                                        navigation.showPlaylist(
-                                            PlaylistReference(
-                                                playlistId: playlist.playlistId,
-                                                title: playlist.title,
-                                                kind: .userPlaylist
-                                            )
-                                        )
-                                    }
-                                    .onAppear {
-                                        viewModel.loadMoreIfNeeded(currentItem: item)
-                                    }
-                            case .post:
-                                EmptyView()
-                            }
-                        }
-                    }
-
-                    if viewModel.isLoadingMore {
-                        ProgressView("Loading more...")
-                            .padding(.top, 12)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                    }
+                    channelBrowseContent
                 }
             }
             .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: route.id) {
             viewModel.load(route: route)
@@ -999,6 +958,162 @@ private struct ChannelPageScreen: View {
         guard viewModel.header?.aboutContinuationToken != nil else { return baseTabs }
         guard baseTabs.contains(where: { $0.kind == .about }) == false else { return baseTabs }
         return baseTabs + [ChannelTabSummary(kind: .about, title: ChannelTabKind.about.title)]
+    }
+
+    private var contentLayoutMode: ChannelContentLayoutMode {
+        ChannelContentLayoutMode(rawValue: contentLayoutModeRaw) ?? .grid
+    }
+
+    private var gridColumns: [GridItem] {
+        [
+            GridItem(
+                .adaptive(minimum: min(CGFloat(settings.browseVideoCardWidth), 320), maximum: 420),
+                spacing: 20,
+                alignment: .top
+            )
+        ]
+    }
+
+    @ViewBuilder
+    private var channelBrowseContent: some View {
+        if contentLayoutMode == .grid {
+            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 20) {
+                ForEach(viewModel.items, id: \.id) { item in
+                    switch item {
+                    case .video(let video):
+                        VideoCard(
+                            video: video,
+                            onOpenChannel: {
+                                guard let channel = video.channelReference else { return }
+                                navigation.showChannel(channel)
+                            }
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(RoundedRectangle(cornerRadius: 16))
+                        .onTapGesture {
+                            navigation.showVideo(video)
+                        }
+                        .onAppear {
+                            viewModel.loadMoreIfNeeded(currentItem: item)
+                        }
+                    case .playlist(let playlist):
+                        PlaylistCard(playlist: playlist)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(RoundedRectangle(cornerRadius: 18))
+                            .onTapGesture {
+                                navigation.showPlaylist(
+                                    PlaylistReference(
+                                        playlistId: playlist.playlistId,
+                                        title: playlist.title,
+                                        kind: .userPlaylist
+                                    )
+                                )
+                            }
+                            .onAppear {
+                                viewModel.loadMoreIfNeeded(currentItem: item)
+                            }
+                    case .post:
+                        EmptyView()
+                    }
+                }
+            }
+        } else {
+            LazyVStack(alignment: .leading, spacing: 14) {
+                ForEach(viewModel.items, id: \.id) { item in
+                    switch item {
+                    case .video(let video):
+                        ChannelVideoRow(
+                            video: video,
+                            onOpen: {
+                                navigation.showVideo(video)
+                            },
+                            onOpenChannel: {
+                                guard let channel = video.channelReference else { return }
+                                navigation.showChannel(channel)
+                            }
+                        )
+                        .onAppear {
+                            viewModel.loadMoreIfNeeded(currentItem: item)
+                        }
+                    case .playlist(let playlist):
+                        ChannelPlaylistRow(
+                            playlist: playlist,
+                            onOpen: {
+                                navigation.showPlaylist(
+                                    PlaylistReference(
+                                        playlistId: playlist.playlistId,
+                                        title: playlist.title,
+                                        kind: .userPlaylist
+                                    )
+                                )
+                            }
+                        )
+                        .onAppear {
+                            viewModel.loadMoreIfNeeded(currentItem: item)
+                        }
+                    case .post:
+                        EmptyView()
+                    }
+                }
+            }
+        }
+
+        if viewModel.isLoadingMore {
+            ProgressView("Loading more...")
+                .padding(.top, 12)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+
+    @ViewBuilder
+    private var channelPostsContent: some View {
+        if contentLayoutMode == .grid {
+            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 20) {
+                ForEach(viewModel.items, id: \.id) { item in
+                    if case .post(let post) = item {
+                        ChannelPostCard(
+                            post: post,
+                            channelHeader: viewModel.header,
+                            onOpenVideo: { video in
+                                navigation.showVideo(video)
+                            },
+                            onOpenChannel: {
+                                navigation.showChannel(route.channel)
+                            }
+                        )
+                        .onAppear {
+                            viewModel.loadMoreIfNeeded(currentItem: item)
+                        }
+                    }
+                }
+            }
+        } else {
+            LazyVStack(alignment: .leading, spacing: 16) {
+                ForEach(viewModel.items, id: \.id) { item in
+                    if case .post(let post) = item {
+                        ChannelPostCard(
+                            post: post,
+                            channelHeader: viewModel.header,
+                            onOpenVideo: { video in
+                                navigation.showVideo(video)
+                            },
+                            onOpenChannel: {
+                                navigation.showChannel(route.channel)
+                            }
+                        )
+                        .onAppear {
+                            viewModel.loadMoreIfNeeded(currentItem: item)
+                        }
+                    }
+                }
+            }
+        }
+
+        if viewModel.isLoadingMore {
+            ProgressView("Loading more posts...")
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 8)
+        }
     }
 
     private var emptyStateTitle: String {
@@ -1043,8 +1158,10 @@ private struct ChannelHeaderView: View {
     let filterOptions: [ChannelSortOption]
     let sortOptions: [ChannelSortOption]
     let subscription: SubscriptionState?
+    let contentLayoutMode: ChannelContentLayoutMode
     let onSelectTab: (ChannelTabKind) -> Void
     let onSelectControl: (ChannelSortOption) -> Void
+    let onChangeLayoutMode: (ChannelContentLayoutMode) -> Void
     let onToggleSubscription: () -> Void
 
     var body: some View {
@@ -1053,65 +1170,29 @@ private struct ChannelHeaderView: View {
                 ChannelBannerView(url: bannerURL)
             }
 
-            HStack(alignment: .top, spacing: 24) {
-                CachedAsyncImage(url: header.avatarURL, maxPixelSize: 960, contentMode: .fill) {
-                    Circle()
-                        .fill(Color.gray.opacity(0.22))
-                        .overlay(
-                            Image(systemName: "person.fill")
-                                .font(.system(size: 40, weight: .semibold))
-                                .foregroundStyle(.secondary)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 24) {
+                    channelAvatar(size: 160, iconSize: 40)
+                    headerTextBlock(
+                        titleSize: 44,
+                        subtitleFont: .title3.weight(.semibold),
+                        descriptionFont: .title3
+                    )
+                    Spacer(minLength: 0)
+                }
+
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(alignment: .top, spacing: 18) {
+                        channelAvatar(size: 116, iconSize: 28)
+                        headerTextBlock(
+                            titleSize: 34,
+                            subtitleFont: .headline.weight(.semibold),
+                            descriptionFont: .headline
                         )
+                    }
                 }
-                .frame(width: 160, height: 160)
-                .clipShape(Circle())
-
-                VStack(alignment: .leading, spacing: 14) {
-                    Text(header.channel.title ?? "Channel")
-                        .font(.system(size: 44, weight: .bold))
-                        .lineLimit(2)
-
-                    if !identityLine.isEmpty {
-                        Text(identityLine)
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if let preview = header.descriptionPreview, !preview.isEmpty {
-                        Text(preview)
-                            .font(.title3)
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Button {
-                        if authSession.status.authenticated == false {
-                            authSession.isSheetPresented = true
-                        } else {
-                            onToggleSubscription()
-                        }
-                    } label: {
-                        Text(subscribeButtonTitle)
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(isSubscribed ? Color.primary : Color.black)
-                            .padding(.horizontal, 22)
-                            .frame(height: 46)
-                            .background(
-                                Capsule()
-                                    .fill(isSubscribed ? Color.white.opacity(0.14) : Color.white)
-                            )
-                            .overlay(
-                                Capsule()
-                                    .stroke(isSubscribed ? Color.white.opacity(0.16) : Color.white.opacity(0.72), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(authSession.status.authenticated ? "Subscribe to this channel" : "Sign in to subscribe")
-                }
-
-                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if !tabs.isEmpty {
                 ChannelTabStrip(
@@ -1126,14 +1207,17 @@ private struct ChannelHeaderView: View {
                     .font(.title3.weight(.semibold))
             }
 
-            if selectedTab != .about, (!filterOptions.isEmpty || !sortOptions.isEmpty) {
+            if selectedTab != .about {
                 ChannelSortToolbar(
                     filterOptions: filterOptions,
                     options: sortOptions,
-                    onSelect: onSelectControl
+                    contentLayoutMode: contentLayoutMode,
+                    onSelect: onSelectControl,
+                    onChangeLayoutMode: onChangeLayoutMode
                 )
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var identityLine: String {
@@ -1153,6 +1237,70 @@ private struct ChannelHeaderView: View {
 
     private var isSubscribed: Bool {
         subscription?.subscribed ?? subscribeButtonTitle.lowercased().contains("subscribed")
+    }
+
+    @ViewBuilder
+    private func channelAvatar(size: CGFloat, iconSize: CGFloat) -> some View {
+        CachedAsyncImage(url: header.avatarURL, maxPixelSize: 960, contentMode: .fill) {
+            Circle()
+                .fill(Color.gray.opacity(0.22))
+                .overlay(
+                    Image(systemName: "person.fill")
+                        .font(.system(size: iconSize, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                )
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+    }
+
+    @ViewBuilder
+    private func headerTextBlock(titleSize: CGFloat, subtitleFont: Font, descriptionFont: Font) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(header.channel.title ?? "Channel")
+                .font(.system(size: titleSize, weight: .bold))
+                .lineLimit(2)
+
+            if !identityLine.isEmpty {
+                Text(identityLine)
+                    .font(subtitleFont)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            if let preview = header.descriptionPreview, !preview.isEmpty {
+                Text(preview)
+                    .font(descriptionFont)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+
+            Button {
+                if authSession.status.authenticated == false {
+                    authSession.isSheetPresented = true
+                } else {
+                    onToggleSubscription()
+                }
+            } label: {
+                Text(subscribeButtonTitle)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(isSubscribed ? Color.primary : Color.black)
+                    .padding(.horizontal, 22)
+                    .frame(height: 46)
+                    .background(
+                        Capsule()
+                            .fill(isSubscribed ? Color.white.opacity(0.14) : Color.white)
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(isSubscribed ? Color.white.opacity(0.16) : Color.white.opacity(0.72), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help(authSession.status.authenticated ? "Subscribe to this channel" : "Sign in to subscribe")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1222,48 +1370,29 @@ private struct ChannelTabStrip: View {
 private struct ChannelSortToolbar: View {
     let filterOptions: [ChannelSortOption]
     let options: [ChannelSortOption]
+    let contentLayoutMode: ChannelContentLayoutMode
     let onSelect: (ChannelSortOption) -> Void
+    let onChangeLayoutMode: (ChannelContentLayoutMode) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 14) {
-                if let selectedOption = selectedOption {
-                    Menu {
-                        ForEach(options) { option in
-                            Button {
-                                onSelect(option)
-                            } label: {
-                                if option.isSelected {
-                                    Label(option.title, systemImage: "checkmark")
-                                } else {
-                                    Text(option.title)
-                                }
-                            }
-                            .disabled(option.isSelected)
-                        }
-                    } label: {
-                        HStack(spacing: 10) {
-                            Text(selectedOption.title)
-                                .font(.title3.weight(.semibold))
-                            Image(systemName: "chevron.down")
-                                .font(.headline.weight(.semibold))
-                        }
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, 18)
-                        .frame(height: 48)
-                        .background(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(Color.white.opacity(0.10))
-                        )
+                ForEach(options) { option in
+                    Button(option.title) {
+                        onSelect(option)
                     }
-                    .menuStyle(.borderlessButton)
                     .buttonStyle(.plain)
+                    .padding(.horizontal, 16)
+                    .frame(height: 48)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(option.isSelected ? Color.white : Color.white.opacity(0.10))
+                    )
+                    .foregroundStyle(option.isSelected ? Color.black : Color.primary)
                 }
 
                 if !filterOptions.isEmpty && !options.isEmpty {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.12))
-                        .frame(width: 1, height: 30)
+                    divider
                 }
 
                 ForEach(filterOptions) { option in
@@ -1279,12 +1408,53 @@ private struct ChannelSortToolbar: View {
                     )
                     .foregroundStyle(option.isSelected ? Color.black : Color.primary)
                 }
+
+                if !options.isEmpty || !filterOptions.isEmpty {
+                    divider
+                }
+
+                ChannelLayoutModeButton(
+                    mode: .grid,
+                    currentMode: contentLayoutMode,
+                    onSelect: onChangeLayoutMode
+                )
+
+                ChannelLayoutModeButton(
+                    mode: .list,
+                    currentMode: contentLayoutMode,
+                    onSelect: onChangeLayoutMode
+                )
             }
         }
     }
 
-    private var selectedOption: ChannelSortOption? {
-        options.first(where: \.isSelected) ?? options.first
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.12))
+            .frame(width: 1, height: 30)
+    }
+}
+
+private struct ChannelLayoutModeButton: View {
+    let mode: ChannelContentLayoutMode
+    let currentMode: ChannelContentLayoutMode
+    let onSelect: (ChannelContentLayoutMode) -> Void
+
+    var body: some View {
+        Button {
+            onSelect(mode)
+        } label: {
+            Image(systemName: mode.symbolName)
+                .font(.title3.weight(.semibold))
+                .frame(width: 48, height: 48)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(currentMode == mode ? Color.white : Color.white.opacity(0.10))
+                )
+                .foregroundStyle(currentMode == mode ? Color.black : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .help(mode.accessibilityLabel)
     }
 }
 
@@ -3196,6 +3366,197 @@ private struct HistoryActionButton: View {
                 isHovered = hovering
             }
         }
+    }
+}
+
+private struct ChannelVideoRow: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let video: VideoItem
+    let onOpen: () -> Void
+    let onOpenChannel: (() -> Void)?
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            HistoryVideoThumbnail(video: video)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(video.title)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                VideoChannelIdentityLine(
+                    avatarURL: video.channelAvatarURL,
+                    channelID: video.channelId,
+                    channel: video.channel,
+                    avatarSize: 20,
+                    font: .system(size: 14, weight: .medium),
+                    onOpenChannel: onOpenChannel
+                )
+
+                if metadataChips.isEmpty == false {
+                    FlexibleChipRow(items: metadataChips)
+                }
+            }
+            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22)
+                .fill(isHovered ? settings.hoverCardBackgroundColor : .clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22)
+                .stroke(Color.white.opacity(isHovered ? (settings.preferredColorScheme == .dark ? 0.10 : 0.18) : 0), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(isHovered ? 0.10 : 0), radius: isHovered ? 14 : 0, y: isHovered ? 8 : 0)
+        .scaleEffect(isHovered ? 1.004 : 1)
+        .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.16), value: isHovered)
+        .onTapGesture(perform: onOpen)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+
+    private var metadataChips: [String] {
+        [video.viewCountText, video.publishedTimeText]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+    }
+}
+
+private struct ChannelPlaylistRow: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let playlist: PlaylistSummary
+    let onOpen: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            ChannelPlaylistThumbnail(playlist: playlist)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(playlist.title)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                if metadataChips.isEmpty == false {
+                    FlexibleChipRow(items: metadataChips)
+                }
+            }
+            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22)
+                .fill(isHovered ? settings.hoverCardBackgroundColor : .clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22)
+                .stroke(Color.white.opacity(isHovered ? (settings.preferredColorScheme == .dark ? 0.10 : 0.18) : 0), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(isHovered ? 0.10 : 0), radius: isHovered ? 14 : 0, y: isHovered ? 8 : 0)
+        .scaleEffect(isHovered ? 1.004 : 1)
+        .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.16), value: isHovered)
+        .onTapGesture(perform: onOpen)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+
+    private var metadataChips: [String] {
+        [playlist.itemCountText, playlist.privacy, playlist.updatedText]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+    }
+}
+
+private struct ChannelPlaylistThumbnail: View {
+    let playlist: PlaylistSummary
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 22)
+                .fill(Color.gray.opacity(0.16))
+                .overlay {
+                    ZStack {
+                        if playlist.referenceKind == .userPlaylist {
+                            CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: 640, contentMode: .fill) {
+                                RoundedRectangle(cornerRadius: 22)
+                                    .fill(Color.gray.opacity(0.22))
+                                    .overlay(
+                                        Image(systemName: "music.note.list")
+                                            .font(.system(size: 26))
+                                            .foregroundStyle(.secondary)
+                                    )
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .clipped()
+                        } else {
+                            LinearGradient(
+                                colors: playlist.referenceKind == .watchLater
+                                    ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
+                                    : [Color(red: 0.92, green: 0.40, blue: 0.48), Color(red: 0.38, green: 0.11, blue: 0.23)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                            .overlay {
+                                VStack(spacing: 10) {
+                                    Image(systemName: playlist.referenceKind == .watchLater ? "clock.fill" : "hand.thumbsup.fill")
+                                        .font(.system(size: 30, weight: .bold))
+                                    Text(playlist.title)
+                                        .font(.headline.weight(.bold))
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal, 14)
+                                        .lineLimit(2)
+                                }
+                                .foregroundStyle(.white)
+                            }
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 22))
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22)
+                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                )
+
+            if let count = playlist.itemCountText, !count.isEmpty {
+                Text(count)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(10)
+            }
+        }
+        .frame(width: 228, height: 128)
     }
 }
 

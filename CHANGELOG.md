@@ -8,15 +8,21 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
-## 0.12.38
+## 0.12.40
 
-- Stopped channel-page browse fallbacks from clearing the saved YouTube auth session, which fixes the channel subscribe flow randomly logging you out after a button press.
-- Hardened the channel subscribe button state so a successful channel subscribe no longer snaps back to the unsubscribed look when a weaker follow-up payload comes back from YouTube.
+- Replaced the channel sort dropdown with YouTube-style pill chips again, kept the official filter chips separate with dividers, and added persistent grid or list layout toggles for channel content tabs.
+- Added list-row presentations for channel videos and playlists so tab content can switch between card grids and history-style rows without leaving the channel page.
+- Tightened channel-page width behavior by giving the header a responsive compact layout and using channel-local adaptive grid sizing, which prevents the page from sliding offscreen when the sidebar opens.
 
 ## 0.12.39
 
 - Switched channel-page subscription parsing over to YouTube’s real signed-in `subscribeButtonViewModel` plus `subscriptionStateEntity` payload, so refreshed channel pages now reflect the actual subscribed state from the channel header.
 - Wired channel-page subscribe and unsubscribe command extraction directly from that header model, including the authenticated unsubscribe confirm flow exposed on YouTube’s own channel page.
+
+## 0.12.38
+
+- Stopped channel-page browse fallbacks from clearing the saved YouTube auth session, which fixes the channel subscribe flow randomly logging you out after a button press.
+- Hardened the channel subscribe button state so a successful channel subscribe no longer snaps back to the unsubscribed look when a weaker follow-up payload comes back from YouTube.
 
 ## 0.12.37
 
