@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.41
+
+- Restyled the channel sort and filter controls to match the player’s pill buttons, so the browse chrome now feels consistent with the watch page actions.
+- Capped community post cards to a fixed grid height, added compact attached-video previews, and moved full post reading into a dedicated “More” sheet to keep channel post grids aligned.
+- Properly constrained channel pages to the split-view detail width and added an extra compact header fallback, which fixes the sidebar and window-resize clipping that was still pushing channel content offscreen.
+
 ## 0.12.40
 
 - Replaced the channel sort dropdown with YouTube-style pill chips again, kept the official filter chips separate with dividers, and added persistent grid or list layout toggles for channel content tabs.

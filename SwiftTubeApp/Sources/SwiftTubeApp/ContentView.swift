@@ -195,6 +195,7 @@ private extension ContentView {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .animation(.snappy(duration: 0.2, extraBounce: 0), value: searchAssistState)
     }
 
@@ -883,70 +884,75 @@ private struct ChannelPageScreen: View {
     @EnvironmentObject private var navigation: AppNavigationModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if let header = viewModel.header {
-                    ChannelHeaderView(
-                        header: header,
-                        selectedTab: route.tab,
-                        tabs: visibleTabs,
-                        searchQuery: route.searchQuery,
-                        filterOptions: viewModel.filterOptions,
-                        sortOptions: viewModel.sortOptions,
-                        subscription: viewModel.subscription,
-                        contentLayoutMode: contentLayoutMode,
-                        onSelectTab: { tab in
-                            navigation.showChannel(route.channel, tab: tab)
-                        },
-                        onSelectControl: { option in
-                            viewModel.selectSortOption(option)
-                        },
-                        onChangeLayoutMode: { mode in
-                            contentLayoutModeRaw = mode.rawValue
-                        },
-                        onToggleSubscription: {
-                            viewModel.toggleSubscription()
-                        }
-                    )
-                }
+        GeometryReader { proxy in
+            let contentWidth = max(proxy.size.width - 48, 0)
 
-                if route.tab == .about {
-                    ChannelAboutTabContent(
-                        about: viewModel.about,
-                        isLoading: viewModel.isLoadingAbout,
-                        errorMessage: viewModel.aboutErrorMessage,
-                        onRetry: {
-                            viewModel.reload(route: route)
-                        }
-                    )
-                } else if viewModel.items.isEmpty {
-                    if viewModel.isLoading {
-                        PlaceholderCardGrid(columns: gridColumns)
-                    } else if let error = viewModel.errorMessage {
-                        EmptyStateView(
-                            title: "Couldn’t load channel",
-                            message: error,
-                            actionTitle: "Try Again"
-                        ) {
-                            viewModel.reload(route: route)
-                        }
-                    } else {
-                        EmptyStateView(
-                            title: emptyStateTitle,
-                            message: emptyStateMessage,
-                            actionTitle: route.tab == .search ? "Search Again" : "Refresh"
-                        ) {
-                            viewModel.reload(route: route)
-                        }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    if let header = viewModel.header {
+                        ChannelHeaderView(
+                            header: header,
+                            selectedTab: route.tab,
+                            tabs: visibleTabs,
+                            searchQuery: route.searchQuery,
+                            filterOptions: viewModel.filterOptions,
+                            sortOptions: viewModel.sortOptions,
+                            subscription: viewModel.subscription,
+                            contentLayoutMode: contentLayoutMode,
+                            onSelectTab: { tab in
+                                navigation.showChannel(route.channel, tab: tab)
+                            },
+                            onSelectControl: { option in
+                                viewModel.selectSortOption(option)
+                            },
+                            onChangeLayoutMode: { mode in
+                                contentLayoutModeRaw = mode.rawValue
+                            },
+                            onToggleSubscription: {
+                                viewModel.toggleSubscription()
+                            }
+                        )
                     }
-                } else if route.tab == .posts {
-                    channelPostsContent
-                } else {
-                    channelBrowseContent
+
+                    if route.tab == .about {
+                        ChannelAboutTabContent(
+                            about: viewModel.about,
+                            isLoading: viewModel.isLoadingAbout,
+                            errorMessage: viewModel.aboutErrorMessage,
+                            onRetry: {
+                                viewModel.reload(route: route)
+                            }
+                        )
+                    } else if viewModel.items.isEmpty {
+                        if viewModel.isLoading {
+                            PlaceholderCardGrid(columns: gridColumns(for: contentWidth))
+                        } else if let error = viewModel.errorMessage {
+                            EmptyStateView(
+                                title: "Couldn’t load channel",
+                                message: error,
+                                actionTitle: "Try Again"
+                            ) {
+                                viewModel.reload(route: route)
+                            }
+                        } else {
+                            EmptyStateView(
+                                title: emptyStateTitle,
+                                message: emptyStateMessage,
+                                actionTitle: route.tab == .search ? "Search Again" : "Refresh"
+                            ) {
+                                viewModel.reload(route: route)
+                            }
+                        }
+                    } else if route.tab == .posts {
+                        channelPostsContent(for: contentWidth)
+                    } else {
+                        channelBrowseContent(for: contentWidth)
+                    }
                 }
+                .frame(width: contentWidth, alignment: .leading)
+                .padding(24)
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .task(id: route.id) {
             viewModel.load(route: route)
@@ -964,10 +970,14 @@ private struct ChannelPageScreen: View {
         ChannelContentLayoutMode(rawValue: contentLayoutModeRaw) ?? .grid
     }
 
-    private var gridColumns: [GridItem] {
-        [
+    private func gridColumns(for availableWidth: CGFloat) -> [GridItem] {
+        let resolvedMinimum = max(
+            220,
+            min(CGFloat(settings.browseVideoCardWidth), max(availableWidth - 20, 220), 320)
+        )
+        return [
             GridItem(
-                .adaptive(minimum: min(CGFloat(settings.browseVideoCardWidth), 320), maximum: 420),
+                .adaptive(minimum: resolvedMinimum, maximum: 420),
                 spacing: 20,
                 alignment: .top
             )
@@ -975,9 +985,9 @@ private struct ChannelPageScreen: View {
     }
 
     @ViewBuilder
-    private var channelBrowseContent: some View {
+    private func channelBrowseContent(for contentWidth: CGFloat) -> some View {
         if contentLayoutMode == .grid {
-            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 20) {
+            LazyVGrid(columns: gridColumns(for: contentWidth), alignment: .leading, spacing: 20) {
                 ForEach(viewModel.items, id: \.id) { item in
                     switch item {
                     case .video(let video):
@@ -1066,14 +1076,15 @@ private struct ChannelPageScreen: View {
     }
 
     @ViewBuilder
-    private var channelPostsContent: some View {
+    private func channelPostsContent(for contentWidth: CGFloat) -> some View {
         if contentLayoutMode == .grid {
-            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 20) {
+            LazyVGrid(columns: gridColumns(for: contentWidth), alignment: .leading, spacing: 20) {
                 ForEach(viewModel.items, id: \.id) { item in
                     if case .post(let post) = item {
                         ChannelPostCard(
                             post: post,
                             channelHeader: viewModel.header,
+                            displayMode: .grid,
                             onOpenVideo: { video in
                                 navigation.showVideo(video)
                             },
@@ -1094,6 +1105,7 @@ private struct ChannelPageScreen: View {
                         ChannelPostCard(
                             post: post,
                             channelHeader: viewModel.header,
+                            displayMode: .list,
                             onOpenVideo: { video in
                                 navigation.showVideo(video)
                             },
@@ -1190,6 +1202,15 @@ private struct ChannelHeaderView: View {
                             descriptionFont: .headline
                         )
                     }
+                }
+
+                VStack(alignment: .leading, spacing: 18) {
+                    channelAvatar(size: 96, iconSize: 24)
+                    headerTextBlock(
+                        titleSize: 30,
+                        subtitleFont: .subheadline.weight(.semibold),
+                        descriptionFont: .subheadline
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1378,17 +1399,11 @@ private struct ChannelSortToolbar: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 14) {
                 ForEach(options) { option in
-                    Button(option.title) {
-                        onSelect(option)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 16)
-                    .frame(height: 48)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(option.isSelected ? Color.white : Color.white.opacity(0.10))
+                    ChannelToolbarTextButton(
+                        title: option.title,
+                        isSelected: option.isSelected,
+                        action: { onSelect(option) }
                     )
-                    .foregroundStyle(option.isSelected ? Color.black : Color.primary)
                 }
 
                 if !filterOptions.isEmpty && !options.isEmpty {
@@ -1396,17 +1411,11 @@ private struct ChannelSortToolbar: View {
                 }
 
                 ForEach(filterOptions) { option in
-                    Button(option.title) {
-                        onSelect(option)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 16)
-                    .frame(height: 48)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(option.isSelected ? Color.white : Color.white.opacity(0.10))
+                    ChannelToolbarTextButton(
+                        title: option.title,
+                        isSelected: option.isSelected,
+                        action: { onSelect(option) }
                     )
-                    .foregroundStyle(option.isSelected ? Color.black : Color.primary)
                 }
 
                 if !options.isEmpty || !filterOptions.isEmpty {
@@ -1441,20 +1450,67 @@ private struct ChannelLayoutModeButton: View {
     let onSelect: (ChannelContentLayoutMode) -> Void
 
     var body: some View {
-        Button {
-            onSelect(mode)
-        } label: {
-            Image(systemName: mode.symbolName)
-                .font(.title3.weight(.semibold))
-                .frame(width: 48, height: 48)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(currentMode == mode ? Color.white : Color.white.opacity(0.10))
-                )
-                .foregroundStyle(currentMode == mode ? Color.black : Color.primary)
+        ChannelToolbarIconButton(
+            symbolName: mode.symbolName,
+            isSelected: currentMode == mode,
+            accessibilityLabel: mode.accessibilityLabel,
+            action: { onSelect(mode) }
+        )
+    }
+}
+
+private struct ChannelToolbarTextButton: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .lineLimit(1)
         }
-        .buttonStyle(.plain)
-        .help(mode.accessibilityLabel)
+        .buttonStyle(ChannelToolbarPillButtonStyle(isSelected: isSelected))
+    }
+}
+
+private struct ChannelToolbarIconButton: View {
+    let symbolName: String
+    let isSelected: Bool
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbolName)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 18, height: 18)
+        }
+        .buttonStyle(ChannelToolbarPillButtonStyle(isSelected: isSelected, horizontalPadding: 12))
+        .help(accessibilityLabel)
+    }
+}
+
+private struct ChannelToolbarPillButtonStyle: ButtonStyle {
+    let isSelected: Bool
+    var horizontalPadding: CGFloat = 14
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(isSelected ? Color.blue : Color.white)
+            .padding(.horizontal, horizontalPadding)
+            .frame(height: 36)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(isSelected ? 0.13 : 0.08))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
+            .opacity(configuration.isPressed ? 0.84 : 1)
+            .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -1495,11 +1551,19 @@ private func makeLinkifiedAttributedString(_ value: String) -> AttributedString 
     return attributed
 }
 
+private enum ChannelPostDisplayMode {
+    case grid
+    case list
+}
+
 private struct ChannelPostCard: View {
     let post: ChannelPost
     let channelHeader: ChannelHeader?
+    let displayMode: ChannelPostDisplayMode
     let onOpenVideo: (VideoItem) -> Void
     let onOpenChannel: () -> Void
+
+    @State private var isDetailPresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1538,32 +1602,54 @@ private struct ChannelPostCard: View {
 
             Text(post.content)
                 .font(.body)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(displayMode == .grid ? compactTextLineLimit : nil)
+                .fixedSize(horizontal: false, vertical: displayMode == .list)
 
             if let attachedVideo = post.attachedVideo {
-                VideoCard(video: attachedVideo, onOpenChannel: nil)
-                    .frame(maxWidth: 460, alignment: .leading)
-                    .contentShape(RoundedRectangle(cornerRadius: 16))
-                    .onTapGesture {
-                        onOpenVideo(attachedVideo)
-                    }
+                if displayMode == .grid {
+                    CompactChannelPostVideoPreview(video: attachedVideo, onOpenVideo: onOpenVideo)
+                } else {
+                    VideoCard(video: attachedVideo, onOpenChannel: nil)
+                        .frame(maxWidth: 460, alignment: .leading)
+                        .contentShape(RoundedRectangle(cornerRadius: 16))
+                        .onTapGesture {
+                            onOpenVideo(attachedVideo)
+                        }
+                }
             }
 
-            let metrics = [post.likeCountText, post.commentCountText]
-                .compactMap { $0 }
-                .filter { !$0.isEmpty }
-            if !metrics.isEmpty {
-                HStack(spacing: 10) {
-                    ForEach(metrics, id: \.self) { metric in
-                        Text(metric)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
+            Spacer(minLength: displayMode == .grid ? 0 : nil)
+
+            HStack(alignment: .center, spacing: 12) {
+                let metrics = [post.likeCountText, post.commentCountText]
+                    .compactMap { $0 }
+                    .filter { !$0.isEmpty }
+
+                if !metrics.isEmpty {
+                    HStack(spacing: 10) {
+                        ForEach(metrics, id: \.self) { metric in
+                            Text(metric)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                }
+
+                Spacer(minLength: 0)
+
+                if displayMode == .grid {
+                    Button("More") {
+                        isDetailPresented = true
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.blue)
                 }
             }
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: displayMode == .grid ? 348 : nil, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 24)
                 .fill(Color.white.opacity(0.05))
@@ -1572,6 +1658,180 @@ private struct ChannelPostCard: View {
             RoundedRectangle(cornerRadius: 24)
                 .stroke(Color.white.opacity(0.06), lineWidth: 1)
         )
+        .sheet(isPresented: $isDetailPresented) {
+            ChannelPostDetailSheet(
+                post: post,
+                channelHeader: channelHeader,
+                onOpenVideo: onOpenVideo,
+                onOpenChannel: onOpenChannel
+            )
+        }
+    }
+
+    private var compactTextLineLimit: Int {
+        post.attachedVideo == nil ? 8 : 4
+    }
+}
+
+private struct CompactChannelPostVideoPreview: View {
+    let video: VideoItem
+    let onOpenVideo: (VideoItem) -> Void
+
+    var body: some View {
+        Button {
+            onOpenVideo(video)
+        } label: {
+            HStack(spacing: 12) {
+                ZStack(alignment: .bottomTrailing) {
+                    CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 640, contentMode: .fill) {
+                        RoundedRectangle(cornerRadius: 18)
+                            .fill(Color.gray.opacity(0.18))
+                            .overlay(
+                                Image(systemName: "play.rectangle.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundStyle(.secondary)
+                            )
+                    }
+                    .frame(width: 156, height: 88)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+
+                    if let duration = video.durationText {
+                        Text(duration)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(Color.black.opacity(0.74)))
+                            .foregroundStyle(.white)
+                            .padding(8)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(video.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+
+                    let metadata = [video.channel, video.viewCountText, video.publishedTimeText]
+                        .compactMap { value in
+                            guard let value, !value.isEmpty else { return nil }
+                            return value
+                        }
+                        .joined(separator: " • ")
+
+                    if !metadata.isEmpty {
+                        Text(metadata)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color.white.opacity(0.04))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct ChannelPostDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let post: ChannelPost
+    let channelHeader: ChannelHeader?
+    let onOpenVideo: (VideoItem) -> Void
+    let onOpenChannel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top) {
+                Text(post.author)
+                    .font(.largeTitle.weight(.bold))
+
+                Spacer(minLength: 0)
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.title2.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Button(action: onOpenChannel) {
+                            CachedAsyncImage(url: post.authorAvatarURL ?? channelHeader?.avatarURL, maxPixelSize: 240, contentMode: .fill) {
+                                Circle()
+                                    .fill(Color.gray.opacity(0.2))
+                                    .overlay(
+                                        Image(systemName: "person.fill")
+                                            .foregroundStyle(.secondary)
+                                    )
+                            }
+                            .frame(width: 56, height: 56)
+                            .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Button(action: onOpenChannel) {
+                                Text(post.author)
+                                    .font(.title3.weight(.bold))
+                                    .foregroundStyle(.primary)
+                            }
+                            .buttonStyle(.plain)
+
+                            if let published = post.publishedTimeText, !published.isEmpty {
+                                Text(published)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    Text(post.content)
+                        .font(.body)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let attachedVideo = post.attachedVideo {
+                        VideoCard(video: attachedVideo, onOpenChannel: nil)
+                            .frame(maxWidth: 520, alignment: .leading)
+                            .contentShape(RoundedRectangle(cornerRadius: 16))
+                            .onTapGesture {
+                                onOpenVideo(attachedVideo)
+                            }
+                    }
+
+                    let metrics = [post.likeCountText, post.commentCountText]
+                        .compactMap { $0 }
+                        .filter { !$0.isEmpty }
+                    if !metrics.isEmpty {
+                        HStack(spacing: 12) {
+                            ForEach(metrics, id: \.self) { metric in
+                                Text(metric)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 560, minHeight: 440, alignment: .topLeading)
     }
 }
 
