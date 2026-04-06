@@ -1632,7 +1632,6 @@ private struct SponsorBlockTimelineOverlay: View {
     let duration: Double
 
     private let trackHeight: CGFloat = 5
-    private let trackVerticalOffset: CGFloat = 3
 
     var body: some View {
         GeometryReader { proxy in
@@ -1653,7 +1652,6 @@ private struct SponsorBlockTimelineOverlay: View {
             }
         }
         .frame(height: trackHeight)
-        .offset(y: trackVerticalOffset)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -1699,7 +1697,7 @@ private struct SponsorBlockManualSkipOverlay: View {
             shape: RoundedRectangle(cornerRadius: 18, style: .continuous)
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        .padding(.bottom, 118)
+        .padding(.bottom, 140)
         .allowsHitTesting(true)
         .animation(.snappy(duration: 0.2, extraBounce: 0), value: segment.id)
     }
@@ -1981,6 +1979,13 @@ private struct PlayerControlBar: View {
             // Keep this row structure aligned with the pre-refactor scrubber so
             // the sponsor overlay shares the same native slider geometry.
             ZStack {
+                SponsorBlockTimelineOverlay(
+                    segments: coordinator.visibleSponsorSegments,
+                    duration: coordinator.duration
+                )
+                .padding(.horizontal, 10)
+                .allowsHitTesting(false)
+
                 Slider(
                     value: Binding(
                         get: { coordinator.scrubPosition },
@@ -1997,16 +2002,7 @@ private struct PlayerControlBar: View {
                 )
                 .disabled(coordinator.duration <= 0)
                 .accessibilityLabel("Playback position")
-
-                SponsorBlockTimelineOverlay(
-                    segments: coordinator.visibleSponsorSegments,
-                    duration: coordinator.duration
-                )
-                .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .allowsHitTesting(false)
             }
-            .frame(maxWidth: .infinity)
             // Measure the ZStack width (= Slider width) without affecting layout.
             .background(
                 GeometryReader { geo in

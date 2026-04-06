@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.32
+
+- Restored the original simple SponsorBlock scrubber layering from the first SponsorBlock release by drawing the marker strip behind the native slider inside the same `ZStack`, and lifted the compact skip banner further above the control row.
+
 ## 0.12.31
 
 - Lowered the sponsor segment strip inside the scrubber to match the native track position more closely, and lifted the compact skip banner so it clears the player controls.
