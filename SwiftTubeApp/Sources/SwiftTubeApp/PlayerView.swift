@@ -1661,56 +1661,51 @@ private struct SponsorBlockManualSkipOverlay: View {
     let skip: () -> Void
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.locale) private var locale
 
     var body: some View {
-        HStack {
-            Spacer(minLength: 0)
+        Button(action: skip) {
+            HStack(spacing: 14) {
+                Image(systemName: "forward.end.alt.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(segment.categoryTint)
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Image(systemName: "forward.end.alt.fill")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(segment.categoryTint)
-
-                    Text("Skip \(segment.categoryShortTitle)")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.white)
-                }
-
-                Text("Press Return or click to jump ahead.")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.72))
-
-                Button(action: skip) {
-                    HStack(spacing: 8) {
-                        Text("Skip now")
-                        Text("Return")
-                            .font(.caption.bold())
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.white.opacity(0.12), in: Capsule())
-                    }
-                    .font(.subheadline.weight(.semibold))
+                Text("Skip \(segment.categoryShortTitle)?")
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(segment.categoryTint.opacity(0.88), in: Capsule())
-                }
-                .buttonStyle(.plain)
+
+                Rectangle()
+                    .fill(.white.opacity(0.18))
+                    .frame(width: 1, height: 18)
+
+                Text("Skip")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.96))
+
+                Text(returnKeyTitle)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .frame(maxWidth: 270, alignment: .leading)
-            .playerControlSurface(
-                reduceTransparency: reduceTransparency,
-                glass: .regular,
-                shape: RoundedRectangle(cornerRadius: 22, style: .continuous)
-            )
+            .padding(.vertical, 12)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-        .padding(.vertical, 24)
+        .buttonStyle(.plain)
+        .playerControlSurface(
+            reduceTransparency: reduceTransparency,
+            glass: .regular,
+            shape: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+        .padding(.bottom, 84)
         .allowsHitTesting(true)
         .animation(.snappy(duration: 0.2, extraBounce: 0), value: segment.id)
+    }
+
+    private var returnKeyTitle: String {
+        locale.identifier.hasPrefix("en_US") ? "Return" : "Enter"
     }
 }
 
@@ -2012,7 +2007,6 @@ private struct PlayerControlBar: View {
                 .allowsHitTesting(false)
             }
             .frame(maxWidth: .infinity)
-            .clipped()
             // Measure the ZStack width (= Slider width) without affecting layout.
             .background(
                 GeometryReader { geo in

@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.30
+
+- Removed the extra scrubber-track clipping left over from the later layout refactor so sponsor markers can sit like they did in `2e64f5b`, and redesigned the manual skip prompt into a compact bottom-right glass banner inspired by SponsorBlock.
+
 ## 0.12.29
 
 - Restored the full scrubber row structure from `2e64f5b` so the sponsor overlay uses the same slider geometry as the version that rendered correctly, while preserving the separate ultrawide scrub-overlay fix.
