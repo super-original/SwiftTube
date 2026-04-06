@@ -877,9 +877,6 @@ private struct ChannelPageScreen: View {
                         onSelectControl: { option in
                             viewModel.selectSortOption(option)
                         },
-                        onShowAbout: {
-                            navigation.showChannel(route.channel, tab: .about)
-                        },
                         onToggleSubscription: {
                             viewModel.toggleSubscription()
                         }
@@ -1048,7 +1045,6 @@ private struct ChannelHeaderView: View {
     let subscription: SubscriptionState?
     let onSelectTab: (ChannelTabKind) -> Void
     let onSelectControl: (ChannelSortOption) -> Void
-    let onShowAbout: () -> Void
     let onToggleSubscription: () -> Void
 
     var body: some View {
@@ -1082,61 +1078,36 @@ private struct ChannelHeaderView: View {
                     }
 
                     if let preview = header.descriptionPreview, !preview.isEmpty {
-                        Button(action: onShowAbout) {
-                            Text(preview + (header.aboutContinuationToken == nil ? "" : " ...more"))
+                        Text(preview)
                             .font(.title3)
                             .foregroundStyle(.primary)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
-                        }
-                        .buttonStyle(.plain)
                     }
 
-                    HStack(spacing: 12) {
-                        Button {
-                            if authSession.status.authenticated == false {
-                                authSession.isSheetPresented = true
-                            } else {
-                                onToggleSubscription()
-                            }
-                        } label: {
-                            Text(subscribeButtonTitle)
-                                .font(.title3.weight(.bold))
-                                .foregroundStyle(isSubscribed ? Color.primary : Color.black)
-                                .padding(.horizontal, 22)
-                                .frame(height: 46)
-                                .background(
-                                    Capsule()
-                                        .fill(isSubscribed ? Color.white.opacity(0.14) : Color.white)
-                                )
-                                .overlay(
-                                    Capsule()
-                                        .stroke(isSubscribed ? Color.white.opacity(0.16) : Color.white.opacity(0.72), lineWidth: 1)
-                                )
+                    Button {
+                        if authSession.status.authenticated == false {
+                            authSession.isSheetPresented = true
+                        } else {
+                            onToggleSubscription()
                         }
-                        .buttonStyle(.plain)
-                        .disabled(authSession.status.authenticated && subscription?.enabled != true)
-                        .help(authSession.status.authenticated ? "Subscribe to this channel" : "Sign in to subscribe")
-
-                        if header.aboutContinuationToken != nil {
-                            Button(action: onShowAbout) {
-                                Text("More info")
-                                    .font(.headline.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                    .padding(.horizontal, 18)
-                                    .frame(height: 42)
-                                    .background(
-                                        Capsule()
-                                            .fill(Color.white.opacity(0.08))
-                                    )
-                                    .overlay(
-                                        Capsule()
-                                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
+                    } label: {
+                        Text(subscribeButtonTitle)
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(isSubscribed ? Color.primary : Color.black)
+                            .padding(.horizontal, 22)
+                            .frame(height: 46)
+                            .background(
+                                Capsule()
+                                    .fill(isSubscribed ? Color.white.opacity(0.14) : Color.white)
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(isSubscribed ? Color.white.opacity(0.16) : Color.white.opacity(0.72), lineWidth: 1)
+                            )
                     }
+                    .buttonStyle(.plain)
+                    .help(authSession.status.authenticated ? "Subscribe to this channel" : "Sign in to subscribe")
                 }
 
                 Spacer(minLength: 0)
@@ -1155,28 +1126,9 @@ private struct ChannelHeaderView: View {
                     .font(.title3.weight(.semibold))
             }
 
-            if selectedTab != .about, !filterOptions.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(filterOptions) { option in
-                            Button(option.title) {
-                                onSelectControl(option)
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                Capsule()
-                                    .fill(option.isSelected ? Color.white : Color.white.opacity(0.08))
-                            )
-                            .foregroundStyle(option.isSelected ? Color.black : Color.primary)
-                        }
-                    }
-                }
-            }
-
-            if selectedTab != .about, !sortOptions.isEmpty {
+            if selectedTab != .about, (!filterOptions.isEmpty || !sortOptions.isEmpty) {
                 ChannelSortToolbar(
+                    filterOptions: filterOptions,
                     options: sortOptions,
                     onSelect: onSelectControl
                 )
@@ -1268,34 +1220,109 @@ private struct ChannelTabStrip: View {
 }
 
 private struct ChannelSortToolbar: View {
+    let filterOptions: [ChannelSortOption]
     let options: [ChannelSortOption]
     let onSelect: (ChannelSortOption) -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(options) { option in
-                        Button(option.title) {
-                            onSelect(option)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                if let selectedOption = selectedOption {
+                    Menu {
+                        ForEach(options) { option in
+                            Button {
+                                onSelect(option)
+                            } label: {
+                                if option.isSelected {
+                                    Label(option.title, systemImage: "checkmark")
+                                } else {
+                                    Text(option.title)
+                                }
+                            }
+                            .disabled(option.isSelected)
                         }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 16)
-                        .frame(height: 44)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Text(selectedOption.title)
+                                .font(.title3.weight(.semibold))
+                            Image(systemName: "chevron.down")
+                                .font(.headline.weight(.semibold))
+                        }
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 18)
+                        .frame(height: 48)
                         .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(option.isSelected ? Color.white : Color.white.opacity(0.10))
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color.white.opacity(0.10))
                         )
-                        .foregroundStyle(option.isSelected ? Color.black : Color.primary)
                     }
+                    .menuStyle(.borderlessButton)
+                    .buttonStyle(.plain)
+                }
+
+                if !filterOptions.isEmpty && !options.isEmpty {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.12))
+                        .frame(width: 1, height: 30)
+                }
+
+                ForEach(filterOptions) { option in
+                    Button(option.title) {
+                        onSelect(option)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 16)
+                    .frame(height: 48)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(option.isSelected ? Color.white : Color.white.opacity(0.10))
+                    )
+                    .foregroundStyle(option.isSelected ? Color.black : Color.primary)
                 }
             }
-
-            Rectangle()
-                .fill(Color.white.opacity(0.12))
-                .frame(width: 1, height: 28)
         }
     }
+
+    private var selectedOption: ChannelSortOption? {
+        options.first(where: \.isSelected) ?? options.first
+    }
+}
+
+private struct ChannelDescriptionText: View {
+    let text: String
+    let font: Font
+
+    var body: some View {
+        Text(linkifiedText)
+            .font(font)
+            .foregroundStyle(.primary)
+            .tint(.blue)
+            .textSelection(.enabled)
+    }
+
+    private var linkifiedText: AttributedString {
+        makeLinkifiedAttributedString(text)
+    }
+}
+
+private func makeLinkifiedAttributedString(_ value: String) -> AttributedString {
+    var attributed = AttributedString(value)
+    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+        return attributed
+    }
+
+    let range = NSRange(value.startIndex..., in: value)
+    for match in detector.matches(in: value, options: [], range: range) {
+        guard let matchRange = Range(match.range, in: value),
+              let attributedRange = Range(matchRange, in: attributed) else {
+            continue
+        }
+
+        attributed[attributedRange].link = match.url
+        attributed[attributedRange].foregroundColor = .blue
+    }
+
+    return attributed
 }
 
 private struct ChannelPostCard: View {
@@ -1403,26 +1430,20 @@ private struct ChannelAboutTabContent: View {
                     onRetry()
                 }
             } else if let about {
-                GeometryReader { proxy in
-                    let wideLayout = proxy.size.width >= 920
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 56) {
+                        aboutPrimaryColumn(about)
+                        aboutDetailsColumn(about)
+                            .frame(width: 360, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Group {
-                        if wideLayout {
-                            HStack(alignment: .top, spacing: 56) {
-                                aboutPrimaryColumn(about)
-                                aboutDetailsColumn(about)
-                                    .frame(width: min(360, proxy.size.width * 0.34), alignment: .leading)
-                            }
-                        } else {
-                            VStack(alignment: .leading, spacing: 36) {
-                                aboutPrimaryColumn(about)
-                                aboutDetailsColumn(about)
-                            }
-                        }
+                    VStack(alignment: .leading, spacing: 36) {
+                        aboutPrimaryColumn(about)
+                        aboutDetailsColumn(about)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(minHeight: 320)
             } else {
                 Text("No details available.")
                     .foregroundStyle(.secondary)
@@ -1439,8 +1460,7 @@ private struct ChannelAboutTabContent: View {
                     Text("Description")
                         .font(.title2.weight(.bold))
 
-                    Text(description)
-                        .font(.title3)
+                    ChannelDescriptionText(text: description, font: .title3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

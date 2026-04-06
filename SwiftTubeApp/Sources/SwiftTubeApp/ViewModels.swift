@@ -645,12 +645,17 @@ final class ChannelPageViewModel: ObservableObject {
     }
 
     func toggleSubscription() {
-        guard let header,
-              let subscription,
-              subscription.enabled else {
+        guard let header else {
             return
         }
 
+        let subscription = subscription ?? SubscriptionState(
+            channelId: header.channel.channelId,
+            buttonText: header.subscribeButtonTitle ?? "Subscribe",
+            subscribed: (header.subscribeButtonTitle ?? "").lowercased().contains("subscribed"),
+            enabled: true,
+            subscriberCountText: header.subscriberCountText
+        )
         let previousSubscription = self.subscription
         let optimisticSubscription = SubscriptionState(
             channelId: subscription.channelId,
@@ -659,6 +664,8 @@ final class ChannelPageViewModel: ObservableObject {
             enabled: subscription.enabled,
             subscriberCountText: subscription.subscriberCountText
         )
+        let commandSnapshot = subscriptionCommands
+        let fallbackVideoIDSnapshot = firstChannelVideoID
         self.subscription = optimisticSubscription
 
         mutationCenter.submit(
@@ -682,10 +689,34 @@ final class ChannelPageViewModel: ObservableObject {
                 self?.subscription = previousSubscription
             },
             execute: {
-                try await BackendClient.shared.updateChannelSubscription(
-                    channelID: header.channel.channelId,
-                    subscribed: !subscription.subscribed,
-                    commands: self.subscriptionCommands
+                if commandSnapshot.values.compactMap({ $0 }).isEmpty == false {
+                    return try await BackendClient.shared.updateChannelSubscription(
+                        channelID: header.channel.channelId,
+                        subscribed: !subscription.subscribed,
+                        commands: commandSnapshot
+                    )
+                }
+
+                var fallbackVideoID = fallbackVideoIDSnapshot
+                if fallbackVideoID == nil {
+                    let page = try await BackendClient.shared.fetchChannelPage(
+                        channelID: header.channel.channelId,
+                        tab: .videos
+                    )
+                    fallbackVideoID = page.items.lazy.compactMap { item -> String? in
+                        if case .video(let video) = item {
+                            return video.id
+                        }
+                        return nil
+                    }.first
+                }
+                guard let fallbackVideoID else {
+                    throw BackendClientError(message: "This channel doesn’t expose a subscribe action right now.")
+                }
+
+                return try await BackendClient.shared.updateSubscription(
+                    id: fallbackVideoID,
+                    subscribed: !subscription.subscribed
                 )
             },
             applySuccess: { [weak self] response in
@@ -798,6 +829,15 @@ final class ChannelPageViewModel: ObservableObject {
     private func normalizedContentRoute(for route: ChannelRoute) -> ChannelRoute {
         guard route.tab == .about else { return route }
         return ChannelRoute(channel: route.channel, tab: .videos, searchQuery: nil)
+    }
+
+    private var firstChannelVideoID: String? {
+        for item in items {
+            if case .video(let video) = item {
+                return video.id
+            }
+        }
+        return nil
     }
 
     private func applyChannelDefaults(

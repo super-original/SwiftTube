@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.36
+
+- Removed the redundant channel header “more” affordances, turned channel sorting into a YouTube-style dropdown with separate filter chips, and kept the subscribe button actionable even when the page does not expose direct channel subscribe commands.
+- Fixed the About tab layout so it scrolls naturally, and made raw links inside channel descriptions highlighted and clickable in the app.
+- Restored playlist tab parsing for channels whose playlists are delivered through section-list grid renderers, which also preserves real playlist results for channels like Phoenix SC.
+
 ## 0.12.35
 
 - Kept channel page headers alive while switching tabs so only the content area reloads, added a real About tab in the channel tab strip, and moved channel details out of the modal sheet.

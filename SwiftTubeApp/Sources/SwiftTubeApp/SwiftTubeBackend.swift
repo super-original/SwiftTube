@@ -1655,8 +1655,10 @@ private func extractSelectedChannelTab(from data: Any) -> ChannelTabKind? {
 }
 
 private func extractChannelBrowseControls(from data: Any) -> (sortOptions: [ChannelSortOption], filterOptions: [ChannelSortOption]) {
-    var controlGroups: [[ChannelSortOption]] = []
-    var seenGroupSignatures = Set<String>()
+    var sortOptions: [ChannelSortOption] = []
+    var filterGroups: [[ChannelSortOption]] = []
+    var seenSortTitles = Set<String>()
+    var seenFilterSignatures = Set<String>()
 
     visitJSONObjects(in: data) { node in
         guard let bar = node["chipBarViewModel"] as? JSONDictionary,
@@ -1664,50 +1666,95 @@ private func extractChannelBrowseControls(from data: Any) -> (sortOptions: [Chan
             return .continue
         }
 
-        let options = chips.compactMap { value -> ChannelSortOption? in
-            guard let viewModel = (value as? JSONDictionary)?["chipViewModel"] as? JSONDictionary else { return nil }
-            guard let title = viewModel["text"] as? String, !title.isEmpty else { return nil }
+        var regularOptions: [ChannelSortOption] = []
+        var barHasDropdownSort = false
+
+        for value in chips {
+            guard let viewModel = (value as? JSONDictionary)?["chipViewModel"] as? JSONDictionary else { continue }
+
+            let dropdownOptions = extractChannelDropdownSortOptions(from: viewModel)
+            if dropdownOptions.isEmpty == false {
+                barHasDropdownSort = true
+                for option in dropdownOptions where seenSortTitles.insert(option.title).inserted {
+                    sortOptions.append(option)
+                }
+                continue
+            }
+
+            guard let title = viewModel["text"] as? String, !title.isEmpty else { continue }
             guard let command = ((viewModel["tapCommand"] as? JSONDictionary)?["innertubeCommand"] as? JSONDictionary),
                   let token = ((command["continuationCommand"] as? JSONDictionary)?["token"] as? String),
                   !token.isEmpty else {
-                return nil
+                continue
             }
 
-            return ChannelSortOption(
+            regularOptions.append(ChannelSortOption(
                 title: title,
                 continuationToken: token,
                 isSelected: viewModel["selected"] as? Bool ?? false
-            )
+            ))
         }
 
-        guard options.isEmpty == false else { return .continue }
-        let signature = options.map(\.title).joined(separator: "|")
-        guard seenGroupSignatures.insert(signature).inserted else { return .continue }
-        controlGroups.append(options)
+        guard regularOptions.isEmpty == false else { return .continue }
+        let signature = regularOptions.map(\.title).joined(separator: "|")
+        guard seenFilterSignatures.insert(signature).inserted else { return .continue }
+
+        if barHasDropdownSort {
+            filterGroups.append(regularOptions)
+        } else {
+            switch classifyChannelControlGroup(regularOptions) {
+            case .sort:
+                for option in regularOptions where seenSortTitles.insert(option.title).inserted {
+                    sortOptions.append(option)
+                }
+            case .filter:
+                filterGroups.append(regularOptions)
+            }
+        }
         return .continue
     }
 
-    var sortOptions: [ChannelSortOption] = []
     var filterOptions: [ChannelSortOption] = []
-
-    for group in controlGroups {
-        switch classifyChannelControlGroup(group) {
-        case .sort:
-            sortOptions.append(contentsOf: group)
-        case .filter:
-            filterOptions.append(contentsOf: group)
-        }
-    }
-
-    if sortOptions.isEmpty, filterOptions.isEmpty == false, controlGroups.count == 1 {
-        let onlyGroup = controlGroups[0]
-        if onlyGroup.count >= 3 {
-            sortOptions = onlyGroup
-            filterOptions = []
+    for group in filterGroups {
+        for option in group where filterOptions.contains(where: { $0.title == option.title }) == false {
+            filterOptions.append(option)
         }
     }
 
     return (sortOptions, filterOptions)
+}
+
+private func extractChannelDropdownSortOptions(from viewModel: JSONDictionary) -> [ChannelSortOption] {
+    guard (viewModel["displayType"] as? String) == "CHIP_VIEW_MODEL_DISPLAY_TYPE_DROP_DOWN",
+          let listItems = ((((((viewModel["tapCommand"] as? JSONDictionary)?["innertubeCommand"] as? JSONDictionary)?["showSheetCommand"] as? JSONDictionary)?["panelLoadingStrategy"] as? JSONDictionary)?["inlineContent"] as? JSONDictionary)?["sheetViewModel"] as? JSONDictionary)?["content"] as? JSONDictionary,
+          let entries = (listItems["listViewModel"] as? JSONDictionary)?["listItems"] as? [Any] else {
+        return []
+    }
+
+    return entries.compactMap { value in
+        guard let item = (value as? JSONDictionary)?["listItemViewModel"] as? JSONDictionary else { return nil }
+        guard let title = contentTextValue(from: item["title"]) ?? textValue(from: item["title"]), !title.isEmpty else { return nil }
+        let commands = ((((item["rendererContext"] as? JSONDictionary)?["commandContext"] as? JSONDictionary)?["onTap"] as? JSONDictionary)?["innertubeCommand"] as? JSONDictionary)?["commandExecutorCommand"] as? JSONDictionary
+        let token = extractContinuationTokenFromCommandExecutor(commands)
+        guard let token, !token.isEmpty else { return nil }
+
+        return ChannelSortOption(
+            title: title,
+            continuationToken: token,
+            isSelected: item["isSelected"] as? Bool ?? false
+        )
+    }
+}
+
+private func extractContinuationTokenFromCommandExecutor(_ value: JSONDictionary?) -> String? {
+    guard let commands = value?["commands"] as? [Any] else { return nil }
+    for command in commands {
+        guard let command = command as? JSONDictionary else { continue }
+        if let token = ((command["continuationCommand"] as? JSONDictionary)?["token"] as? String), !token.isEmpty {
+            return token
+        }
+    }
+    return nil
 }
 
 private enum ChannelControlGroupKind {
@@ -2113,6 +2160,28 @@ private func flattenedChannelContentEntries(_ entries: [Any]) -> [Any] {
         if let itemSection = object["itemSectionRenderer"] as? JSONDictionary,
            let contents = itemSection["contents"] as? [Any] {
             flattened.append(contentsOf: flattenedChannelContentEntries(contents))
+            continue
+        }
+
+        if let gridRenderer = object["gridRenderer"] as? JSONDictionary {
+            if let items = gridRenderer["items"] as? [Any] {
+                flattened.append(contentsOf: flattenedChannelContentEntries(items))
+            }
+            if let continuations = gridRenderer["continuations"] as? [Any] {
+                flattened.append(contentsOf: continuations)
+            }
+            continue
+        }
+
+        if let horizontalList = object["horizontalListRenderer"] as? JSONDictionary,
+           let items = horizontalList["items"] as? [Any] {
+            flattened.append(contentsOf: flattenedChannelContentEntries(items))
+            continue
+        }
+
+        if let shelfRenderer = object["shelfRenderer"] as? JSONDictionary,
+           let content = shelfRenderer["content"] {
+            flattened.append(contentsOf: flattenedChannelContentEntries([content]))
             continue
         }
 
