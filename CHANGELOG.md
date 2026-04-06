@@ -12,6 +12,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 
 - Switched channel banners back to a fixed YouTube-style `16:9` aspect ratio and width-based scaling, so full-width pages no longer show side gaps and narrower windows no longer introduce top or bottom bands.
 
+## 0.12.45
+
+- Corrected channel banners to use the desktop-visible banner ratio `2560x338` instead of a video ratio, so channel headers stay banner-sized instead of expanding to a large hero block.
+
 ## 0.12.43
 
 - Restored video tags in channel list view rows by switching that layout over to the shared tag-aware metadata chip renderer.

@@ -1331,6 +1331,8 @@ private struct ChannelHeaderView: View {
 }
 
 private struct ChannelBannerView: View {
+    private static let desktopBannerAspectRatio: CGFloat = 2560.0 / 338.0
+
     let url: URL
 
     var body: some View {
@@ -1352,7 +1354,7 @@ private struct ChannelBannerView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .aspectRatio(16 / 9, contentMode: .fit)
+        .aspectRatio(Self.desktopBannerAspectRatio, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 26))
         .overlay(
             RoundedRectangle(cornerRadius: 26)
