@@ -1334,26 +1334,36 @@ private struct ChannelBannerView: View {
     let url: URL
 
     var body: some View {
-        CachedAsyncImage(url: url, maxPixelSize: 4096, contentMode: .fill) {
-            RoundedRectangle(cornerRadius: 26)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.18, green: 0.24, blue: 0.34),
-                            Color(red: 0.11, green: 0.14, blue: 0.20)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+        GeometryReader { proxy in
+            let height = min(max(proxy.size.width * 0.18, 116), 210)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 26)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.18, green: 0.24, blue: 0.34),
+                                Color(red: 0.11, green: 0.14, blue: 0.20)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                )
+
+                CachedAsyncImage(url: url, maxPixelSize: 4096, contentMode: .fit) {
+                    Color.clear
+                }
+                .frame(width: proxy.size.width, height: height)
+            }
+            .frame(width: proxy.size.width, height: height)
+            .clipShape(RoundedRectangle(cornerRadius: 26))
+            .overlay(
+                RoundedRectangle(cornerRadius: 26)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 210)
-        .clipShape(RoundedRectangle(cornerRadius: 26))
-        .overlay(
-            RoundedRectangle(cornerRadius: 26)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
+        .aspectRatio(5.5 / 1, contentMode: .fit)
     }
 }
 
@@ -3696,8 +3706,8 @@ private struct ChannelVideoRow: View {
                     onOpenChannel: onOpenChannel
                 )
 
-                if metadataChips.isEmpty == false {
-                    FlexibleChipRow(items: metadataChips)
+                if !video.tags.isEmpty || metadataChips.isEmpty == false {
+                    VideoMetadataChipRow(tags: video.tags, items: metadataChips)
                 }
             }
             .padding(.vertical, 3)

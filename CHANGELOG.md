@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.43
+
+- Restored video tags in channel list view rows by switching that layout over to the shared tag-aware metadata chip renderer.
+- Made channel banners scale responsively to the available detail width with fit-style rendering, which stops the banner itself from being cut off when the sidebar opens or the window narrows.
+
 ## 0.12.42
 
 - Tightened the channel control bar by bringing button spacing closer within each group, flipping selected chips to the white subscribe-style state, and adding an `All` pseudo-filter that clears the member/public filter group back to its default state.
