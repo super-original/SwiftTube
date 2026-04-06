@@ -1528,16 +1528,8 @@ private struct PlayerStageSurface: View {
                         .onTapGesture {}
                 }
 
-                if coordinator.keyboardLocked {
-                    Label("Keyboard locked", systemImage: "keyboard.badge.ellipsis")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(.black.opacity(0.72)))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .padding(.top, 16)
-                        .allowsHitTesting(false)
+                if coordinator.keyboardLocked || coordinator.isSpacebarHoldSpeedActive {
+                    PlayerTopStatusOverlay(coordinator: coordinator, edgeToEdge: immersive)
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -1836,9 +1828,6 @@ private struct PlayerChromeOverlay: View {
 
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
-                    PlayerStatusPill(text: coordinator.playbackBadgeText)
-                    PlayerStatusPill(text: coordinator.effectivePlaybackSpeedText)
-
                     if coordinator.selectedSubtitleOptionID != SubtitleOption.offID,
                        coordinator.hasSubtitleOptions {
                         PlayerStatusPill(text: coordinator.subtitleControlText)
@@ -1879,6 +1868,32 @@ private struct PlayerChromeOverlay: View {
         .opacity(coordinator.controlsVisible ? 1 : 0)
         .allowsHitTesting(coordinator.controlsVisible)
         .animation(.linear(duration: 0.1), value: coordinator.controlsVisible)
+    }
+}
+
+private struct PlayerTopStatusOverlay: View {
+    @ObservedObject var coordinator: PlayerPlaybackCoordinator
+    let edgeToEdge: Bool
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if coordinator.keyboardLocked {
+                PlayerStatusPill(
+                    text: "Keyboard locked",
+                    systemImage: "lock.fill"
+                )
+            }
+
+            if coordinator.isSpacebarHoldSpeedActive {
+                PlayerStatusPill(
+                    text: coordinator.spacebarHoldSpeedIndicatorText,
+                    systemImage: "hare.fill"
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.top, edgeToEdge ? 20 : 18)
+        .allowsHitTesting(false)
     }
 }
 
@@ -2541,18 +2556,33 @@ private struct PlayerControlBar: View {
 
 private struct PlayerStatusPill: View {
     let text: String
+    let systemImage: String?
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
+    init(text: String, systemImage: String? = nil) {
+        self.text = text
+        self.systemImage = systemImage
+    }
+
     var body: some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .playerControlSurface(
-                reduceTransparency: reduceTransparency,
-                glass: .regular,
-                shape: Capsule()
-            )
+        HStack(spacing: 7) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.caption.weight(.bold))
+            }
+
+            Text(text)
+        }
+        .font(.caption.weight(.semibold))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .foregroundStyle(.white)
+        .fixedSize(horizontal: true, vertical: false)
+        .playerControlSurface(
+            reduceTransparency: reduceTransparency,
+            glass: .regular,
+            shape: Capsule()
+        )
     }
 }
 

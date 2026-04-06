@@ -537,6 +537,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         AppSettings.playbackSpeedLabel(effectivePlaybackSpeed)
     }
 
+    var isSpacebarHoldSpeedActive: Bool {
+        temporaryPlaybackSpeedOverride != nil && didActivateSpacebarHoldSpeed
+    }
+
+    var spacebarHoldSpeedIndicatorText: String {
+        "Hold speed \(AppSettings.playbackSpeedLabel(temporaryPlaybackSpeedOverride ?? effectivePlaybackSpeed))"
+    }
+
     func configure(with playback: VideoPlayback) {
         prepareTask?.cancel()
         prepareTask = Task { [weak self] in

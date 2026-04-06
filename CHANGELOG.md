@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.37
+
+- Removed the redundant top-left playback quality and speed badges from the player overlay.
+- Restyled the keyboard lock indicator into a glass pill with a lock icon, and added a matching hold-speed pill that appears while spacebar speed boost is active.
+
 ## 0.12.36
 
 - Removed the redundant channel header “more” affordances, turned channel sorting into a YouTube-style dropdown with separate filter chips, and kept the subscribe button actionable even when the page does not expose direct channel subscribe commands.
