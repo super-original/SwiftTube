@@ -1570,6 +1570,31 @@ private func extractChannelSubscribeButtonTitle(from pageHeader: JSONDictionary?
 }
 
 private func extractChannelSubscriptionState(from data: Any, header: ChannelHeader?) -> SubscriptionState? {
+    if let buttonViewModel = firstChannelSubscribeButtonViewModel(from: data) {
+        let stateKey = buttonViewModel["stateEntityStoreKey"] as? String
+        let subscribed = stateKey.flatMap { channelSubscriptionStateValue(in: data, key: $0) }
+            ?? ((buttonViewModel["unsubscribeButtonContent"] as? JSONDictionary)?["subscribeState"] as? JSONDictionary)?["subscribed"] as? Bool
+            ?? ((buttonViewModel["subscribeButtonContent"] as? JSONDictionary)?["subscribeState"] as? JSONDictionary)?["subscribed"] as? Bool
+            ?? false
+        let activeContent = currentChannelSubscribeContent(from: buttonViewModel, subscribed: subscribed)
+        let buttonText = (activeContent?["buttonText"] as? String)
+            ?? (subscribed ? "Subscribed" : "Subscribe")
+        let channelID = channelID(from: channelSubscriptionCommandSource(from: activeContent))
+            ?? channelID(from: channelSubscriptionCommandSource(from: (buttonViewModel["subscribeButtonContent"] as? JSONDictionary)))
+            ?? channelID(from: channelSubscriptionCommandSource(from: (buttonViewModel["unsubscribeButtonContent"] as? JSONDictionary)))
+            ?? header?.channel.channelId
+
+        guard let channelID else { return nil }
+
+        return SubscriptionState(
+            channelId: channelID,
+            buttonText: buttonText,
+            subscribed: subscribed,
+            enabled: !((buttonViewModel["disableSubscribeButton"] as? Bool) ?? false),
+            subscriberCountText: header?.subscriberCountText
+        )
+    }
+
     let pageHeader = (((((data as? JSONDictionary)?["header"] as? JSONDictionary)?["pageHeaderRenderer"] as? JSONDictionary)?["content"] as? JSONDictionary)?["pageHeaderViewModel"] as? JSONDictionary)
     let commands = extractChannelSubscriptionCommands(from: data)
     let title = extractChannelSubscribeButtonTitle(from: pageHeader) ?? header?.subscribeButtonTitle
@@ -1604,6 +1629,14 @@ private func extractChannelSubscriptionCommands(from data: Any) -> [String: Inne
         "unsubscribe": nil,
     ]
 
+    if let buttonViewModel = firstChannelSubscribeButtonViewModel(from: data) {
+        result["subscribe"] = channelSubscribeCommand(from: buttonViewModel)
+        result["unsubscribe"] = channelUnsubscribeCommand(from: buttonViewModel)
+        if result["subscribe"] != nil || result["unsubscribe"] != nil {
+            return result
+        }
+    }
+
     guard let actions else { return result }
 
     visitJSONObjects(in: actions) { node in
@@ -1621,6 +1654,88 @@ private func extractChannelSubscriptionCommands(from data: Any) -> [String: Inne
     }
 
     return result
+}
+
+private func firstChannelSubscribeButtonViewModel(from data: Any) -> JSONDictionary? {
+    var result: JSONDictionary?
+
+    visitJSONObjects(in: data) { node in
+        guard let buttonViewModel = node["subscribeButtonViewModel"] as? JSONDictionary else {
+            return .continue
+        }
+
+        result = buttonViewModel
+        return .stop
+    }
+
+    return result
+}
+
+private func channelSubscriptionStateValue(in data: Any, key: String) -> Bool? {
+    let mutations = ((((data as? JSONDictionary)?["frameworkUpdates"] as? JSONDictionary)?["entityBatchUpdate"] as? JSONDictionary)?["mutations"] as? [Any]) ?? []
+
+    for mutation in mutations {
+        guard let mutation = mutation as? JSONDictionary,
+              (mutation["entityKey"] as? String) == key,
+              let payload = mutation["payload"] as? JSONDictionary,
+              let entity = payload["subscriptionStateEntity"] as? JSONDictionary,
+              let subscribed = entity["subscribed"] as? Bool else {
+            continue
+        }
+        return subscribed
+    }
+
+    return nil
+}
+
+private func currentChannelSubscribeContent(from buttonViewModel: JSONDictionary, subscribed: Bool) -> JSONDictionary? {
+    let key = subscribed ? "unsubscribeButtonContent" : "subscribeButtonContent"
+    return buttonViewModel[key] as? JSONDictionary
+}
+
+private func channelSubscriptionCommandSource(from content: JSONDictionary?) -> Any? {
+    (((content?["onTapCommand"] as? JSONDictionary)?["innertubeCommand"] as? JSONDictionary))
+}
+
+private func channelSubscribeCommand(from buttonViewModel: JSONDictionary) -> InnerTubeCommand? {
+    normalizeSubscribeEndpoint(
+        channelSubscriptionCommandSource(from: buttonViewModel["subscribeButtonContent"] as? JSONDictionary),
+        unsubscribe: false
+    )
+}
+
+private func channelUnsubscribeCommand(from buttonViewModel: JSONDictionary) -> InnerTubeCommand? {
+    let content = buttonViewModel["unsubscribeButtonContent"] as? JSONDictionary
+    let command = channelSubscriptionCommandSource(from: content)
+
+    if let direct = normalizeSubscribeEndpoint(command, unsubscribe: true) {
+        return direct
+    }
+
+    let actions = ((((command as? JSONDictionary)?["signalServiceEndpoint"] as? JSONDictionary)?["actions"] as? [Any]) ?? [])
+    for action in actions {
+        if let command = normalizeSubscribeEndpoint(popupConfirmServiceEndpoint(from: action), unsubscribe: true) {
+            return command
+        }
+    }
+
+    let listItems = (((((((buttonViewModel["onShowSubscriptionOptions"] as? JSONDictionary)?["innertubeCommand"] as? JSONDictionary)?["showSheetCommand"] as? JSONDictionary)?["panelLoadingStrategy"] as? JSONDictionary)?["inlineContent"] as? JSONDictionary)?["sheetViewModel"] as? JSONDictionary)?["content"] as? JSONDictionary)
+    let entries = ((listItems?["listViewModel"] as? JSONDictionary)?["listItems"] as? [Any]) ?? []
+    for value in entries {
+        guard let item = (value as? JSONDictionary)?["listItemViewModel"] as? JSONDictionary else { continue }
+        let command = ((((item["rendererContext"] as? JSONDictionary)?["commandContext"] as? JSONDictionary)?["onTap"] as? JSONDictionary)?["innertubeCommand"])
+        if let normalized = normalizeSubscribeEndpoint(command, unsubscribe: true) {
+            return normalized
+        }
+        let actions = ((((command as? JSONDictionary)?["signalServiceEndpoint"] as? JSONDictionary)?["actions"] as? [Any]) ?? [])
+        for action in actions {
+            if let normalized = normalizeSubscribeEndpoint(popupConfirmServiceEndpoint(from: action), unsubscribe: true) {
+                return normalized
+            }
+        }
+    }
+
+    return nil
 }
 
 private func extractChannelTabs(from data: Any) -> [ChannelTabSummary] {
