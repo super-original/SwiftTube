@@ -264,7 +264,7 @@ private extension ContentView {
                     columns: columns
                 )
                     .environmentObject(navigation)
-                    .id("\(route.id)-\(navigation.routeRefreshID.uuidString)")
+                    .id("\(route.channel.channelId)-\(navigation.routeRefreshID.uuidString)")
             case .video(let video):
                 PlayerScreen(
                     video: video,
@@ -856,7 +856,6 @@ private struct ChannelPageScreen: View {
     let columns: [GridItem]
 
     @StateObject private var viewModel = ChannelPageViewModel()
-    @State private var isShowingAboutSheet = false
 
     @EnvironmentObject private var navigation: AppNavigationModel
 
@@ -869,21 +868,34 @@ private struct ChannelPageScreen: View {
                         selectedTab: route.tab,
                         tabs: visibleTabs,
                         searchQuery: route.searchQuery,
+                        filterOptions: viewModel.filterOptions,
                         sortOptions: viewModel.sortOptions,
+                        subscription: viewModel.subscription,
                         onSelectTab: { tab in
                             navigation.showChannel(route.channel, tab: tab)
                         },
-                        onSelectSort: { option in
+                        onSelectControl: { option in
                             viewModel.selectSortOption(option)
                         },
                         onShowAbout: {
-                            isShowingAboutSheet = true
-                            viewModel.loadAboutIfNeeded()
+                            navigation.showChannel(route.channel, tab: .about)
+                        },
+                        onToggleSubscription: {
+                            viewModel.toggleSubscription()
                         }
                     )
                 }
 
-                if viewModel.items.isEmpty {
+                if route.tab == .about {
+                    ChannelAboutTabContent(
+                        about: viewModel.about,
+                        isLoading: viewModel.isLoadingAbout,
+                        errorMessage: viewModel.aboutErrorMessage,
+                        onRetry: {
+                            viewModel.reload(route: route)
+                        }
+                    )
+                } else if viewModel.items.isEmpty {
                     if viewModel.isLoading {
                         PlaceholderCardGrid(columns: columns)
                     } else if let error = viewModel.errorMessage {
@@ -983,23 +995,19 @@ private struct ChannelPageScreen: View {
         .task(id: route.id) {
             viewModel.load(route: route)
         }
-        .sheet(isPresented: $isShowingAboutSheet) {
-            ChannelAboutSheet(
-                title: viewModel.header?.channel.title ?? route.channel.title ?? "Channel",
-                about: viewModel.about,
-                isLoading: viewModel.isLoadingAbout,
-                errorMessage: viewModel.aboutErrorMessage
-            )
-            .frame(minWidth: 520, minHeight: 420)
-        }
     }
 
     private var visibleTabs: [ChannelTabSummary] {
-        viewModel.tabs.filter { $0.kind != .search }
+        let baseTabs = viewModel.tabs.filter { $0.kind != .search }
+        guard viewModel.header?.aboutContinuationToken != nil else { return baseTabs }
+        guard baseTabs.contains(where: { $0.kind == .about }) == false else { return baseTabs }
+        return baseTabs + [ChannelTabSummary(kind: .about, title: ChannelTabKind.about.title)]
     }
 
     private var emptyStateTitle: String {
         switch route.tab {
+        case .about:
+            return "No channel details"
         case .search:
             return "No results"
         case .playlists:
@@ -1013,6 +1021,8 @@ private struct ChannelPageScreen: View {
 
     private var emptyStateMessage: String {
         switch route.tab {
+        case .about:
+            return "YouTube didn’t return this channel’s About details."
         case .search:
             let query = route.searchQuery ?? ""
             return "This channel didn’t return anything for \"\(query)\"."
@@ -1033,10 +1043,13 @@ private struct ChannelHeaderView: View {
     let selectedTab: ChannelTabKind
     let tabs: [ChannelTabSummary]
     let searchQuery: String?
+    let filterOptions: [ChannelSortOption]
     let sortOptions: [ChannelSortOption]
+    let subscription: SubscriptionState?
     let onSelectTab: (ChannelTabKind) -> Void
-    let onSelectSort: (ChannelSortOption) -> Void
+    let onSelectControl: (ChannelSortOption) -> Void
     let onShowAbout: () -> Void
+    let onToggleSubscription: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -1083,6 +1096,8 @@ private struct ChannelHeaderView: View {
                         Button {
                             if authSession.status.authenticated == false {
                                 authSession.isSheetPresented = true
+                            } else {
+                                onToggleSubscription()
                             }
                         } label: {
                             Text(subscribeButtonTitle)
@@ -1100,7 +1115,8 @@ private struct ChannelHeaderView: View {
                                 )
                         }
                         .buttonStyle(.plain)
-                        .help(authSession.status.authenticated ? "Channel subscription controls" : "Sign in to subscribe")
+                        .disabled(authSession.status.authenticated && subscription?.enabled != true)
+                        .help(authSession.status.authenticated ? "Subscribe to this channel" : "Sign in to subscribe")
 
                         if header.aboutContinuationToken != nil {
                             Button(action: onShowAbout) {
@@ -1139,12 +1155,12 @@ private struct ChannelHeaderView: View {
                     .font(.title3.weight(.semibold))
             }
 
-            if !sortOptions.isEmpty {
+            if selectedTab != .about, !filterOptions.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
-                        ForEach(sortOptions) { option in
+                        ForEach(filterOptions) { option in
                             Button(option.title) {
-                                onSelectSort(option)
+                                onSelectControl(option)
                             }
                             .buttonStyle(.plain)
                             .padding(.horizontal, 14)
@@ -1157,6 +1173,13 @@ private struct ChannelHeaderView: View {
                         }
                     }
                 }
+            }
+
+            if selectedTab != .about, !sortOptions.isEmpty {
+                ChannelSortToolbar(
+                    options: sortOptions,
+                    onSelect: onSelectControl
+                )
             }
         }
     }
@@ -1171,12 +1194,13 @@ private struct ChannelHeaderView: View {
     }
 
     private var subscribeButtonTitle: String {
-        let title = header.subscribeButtonTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = subscription?.buttonText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? header.subscribeButtonTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (title?.isEmpty == false ? title : nil) ?? "Subscribe"
     }
 
     private var isSubscribed: Bool {
-        subscribeButtonTitle.lowercased().contains("subscribed")
+        subscription?.subscribed ?? subscribeButtonTitle.lowercased().contains("subscribed")
     }
 }
 
@@ -1239,6 +1263,37 @@ private struct ChannelTabStrip: View {
             Rectangle()
                 .fill(Color.white.opacity(0.1))
                 .frame(height: 1)
+        }
+    }
+}
+
+private struct ChannelSortToolbar: View {
+    let options: [ChannelSortOption]
+    let onSelect: (ChannelSortOption) -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(options) { option in
+                        Button(option.title) {
+                            onSelect(option)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 16)
+                        .frame(height: 44)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(option.isSelected ? Color.white : Color.white.opacity(0.10))
+                        )
+                        .foregroundStyle(option.isSelected ? Color.black : Color.primary)
+                    }
+                }
+            }
+
+            Rectangle()
+                .fill(Color.white.opacity(0.12))
+                .frame(width: 1, height: 28)
         }
     }
 }
@@ -1320,6 +1375,137 @@ private struct ChannelPostCard: View {
             RoundedRectangle(cornerRadius: 24)
                 .stroke(Color.white.opacity(0.06), lineWidth: 1)
         )
+    }
+}
+
+private struct ChannelAboutTabContent: View {
+    let about: ChannelAbout?
+    let isLoading: Bool
+    let errorMessage: String?
+    let onRetry: () -> Void
+
+    var body: some View {
+        Group {
+            if isLoading && about == nil {
+                VStack(spacing: 18) {
+                    ProgressView("Loading channel details...")
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(Color.white.opacity(0.04))
+                        .frame(height: 240)
+                }
+                .frame(maxWidth: .infinity, minHeight: 320, alignment: .center)
+            } else if let errorMessage {
+                EmptyStateView(
+                    title: "Couldn’t load channel details",
+                    message: errorMessage,
+                    actionTitle: "Try Again"
+                ) {
+                    onRetry()
+                }
+            } else if let about {
+                GeometryReader { proxy in
+                    let wideLayout = proxy.size.width >= 920
+
+                    Group {
+                        if wideLayout {
+                            HStack(alignment: .top, spacing: 56) {
+                                aboutPrimaryColumn(about)
+                                aboutDetailsColumn(about)
+                                    .frame(width: min(360, proxy.size.width * 0.34), alignment: .leading)
+                            }
+                        } else {
+                            VStack(alignment: .leading, spacing: 36) {
+                                aboutPrimaryColumn(about)
+                                aboutDetailsColumn(about)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(minHeight: 320)
+            } else {
+                Text("No details available.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func aboutPrimaryColumn(_ about: ChannelAbout) -> some View {
+        VStack(alignment: .leading, spacing: 32) {
+            if let description = about.description, !description.isEmpty {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Description")
+                        .font(.title2.weight(.bold))
+
+                    Text(description)
+                        .font(.title3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if !about.links.isEmpty {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(about.linksLabel ?? "Links")
+                        .font(.title2.weight(.bold))
+
+                    ForEach(about.links) { link in
+                        ChannelAboutLinkRow(link: link)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func aboutDetailsColumn(_ about: ChannelAbout) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Channel Details")
+                .font(.title2.weight(.bold))
+
+            if let businessEmailPrompt = about.businessEmailPrompt,
+               let businessEmailURL = normalizedSheetURL(about.businessEmailURL) {
+                Button {
+                    NSWorkspace.shared.open(businessEmailURL)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "envelope")
+                        Text(businessEmailPrompt)
+                            .font(.headline.weight(.semibold))
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 18)
+                    .frame(height: 42)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.08))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let url = about.displayCanonicalChannelUrl ?? about.canonicalChannelUrl {
+                ChannelAboutMetricRow(symbol: "link", text: url)
+            }
+            if let viewCountText = about.viewCountText {
+                ChannelAboutMetricRow(symbol: "eye", text: viewCountText)
+            }
+            if let joinedDateText = about.joinedDateText {
+                ChannelAboutMetricRow(symbol: "info.circle", text: joinedDateText)
+            }
+            if let country = about.country, !country.isEmpty {
+                ChannelAboutMetricRow(symbol: "globe", text: country)
+            }
+            if let subscriberCountText = about.subscriberCountText {
+                ChannelAboutMetricRow(symbol: "person.2.wave.2", text: subscriberCountText)
+            }
+            if let videoCountText = about.videoCountText {
+                ChannelAboutMetricRow(symbol: "film", text: videoCountText)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1470,11 +1656,13 @@ private struct ChannelAboutLinkRow: View {
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
+                        .lineLimit(2)
 
                     Text(link.displayURL)
                         .font(.body)
                         .foregroundStyle(Color.blue)
                         .multilineTextAlignment(.leading)
+                        .lineLimit(1)
                 }
 
                 Spacer(minLength: 0)

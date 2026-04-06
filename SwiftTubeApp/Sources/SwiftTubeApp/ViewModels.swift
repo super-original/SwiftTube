@@ -590,7 +590,9 @@ final class ChannelPageViewModel: ObservableObject {
     @Published private(set) var tabs: [ChannelTabSummary] = []
     @Published private(set) var items: [ChannelContentItem] = []
     @Published private(set) var sortOptions: [ChannelSortOption] = []
+    @Published private(set) var filterOptions: [ChannelSortOption] = []
     @Published private(set) var about: ChannelAbout? = nil
+    @Published private(set) var subscription: SubscriptionState? = nil
     @Published var isLoading = false
     @Published var isLoadingMore = false
     @Published var isLoadingAbout = false
@@ -599,9 +601,11 @@ final class ChannelPageViewModel: ObservableObject {
 
     private var continuation: String? = nil
     private var currentRoute: ChannelRoute?
+    private var currentChannelID: String? = nil
+    private var subscriptionCommands: [String: InnerTubeCommand?] = [:]
+    private let mutationCenter = AppMutationCenter.shared
 
     func load(route: ChannelRoute) {
-        guard currentRoute != route || header == nil else { return }
         Task { await fetchInitial(route: route) }
     }
 
@@ -640,34 +644,115 @@ final class ChannelPageViewModel: ObservableObject {
         }
     }
 
-    private func fetchInitial(route: ChannelRoute, force: Bool = false) async {
-        if force == false, currentRoute == route, header != nil {
+    func toggleSubscription() {
+        guard let header,
+              let subscription,
+              subscription.enabled else {
             return
         }
 
-        currentRoute = route
+        let previousSubscription = self.subscription
+        let optimisticSubscription = SubscriptionState(
+            channelId: subscription.channelId,
+            buttonText: subscription.subscribed ? "Subscribe" : "Subscribed",
+            subscribed: !subscription.subscribed,
+            enabled: subscription.enabled,
+            subscriberCountText: subscription.subscriberCountText
+        )
+        self.subscription = optimisticSubscription
+
+        mutationCenter.submit(
+            key: MutationQueueKey.subscription(videoID: header.channel.channelId),
+            successNotice: MutationNotice(
+                title: optimisticSubscription.subscribed ? "Subscribed" : "Unsubscribed",
+                message: nil,
+                symbol: optimisticSubscription.subscribed ? "person.badge.plus" : "person.badge.minus",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t update subscription",
+                    message: error.localizedDescription,
+                    symbol: "person.badge.plus",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            rollback: { [weak self] _ in
+                self?.subscription = previousSubscription
+            },
+            execute: {
+                try await BackendClient.shared.updateChannelSubscription(
+                    channelID: header.channel.channelId,
+                    subscribed: !subscription.subscribed,
+                    commands: self.subscriptionCommands
+                )
+            },
+            applySuccess: { [weak self] response in
+                self?.subscription = response.subscription ?? optimisticSubscription
+            }
+        )
+    }
+
+    private func fetchInitial(route: ChannelRoute, force: Bool = false) async {
+        let requestedRoute = normalizedContentRoute(for: route)
+        let channelChanged = currentChannelID != route.channel.channelId
+
+        if route.tab == .about, channelChanged == false, header != nil {
+            if about == nil || channelChanged {
+                loadAboutIfNeeded()
+            }
+            return
+        }
+
+        if route.tab == .about {
+            if about == nil || channelChanged {
+                loadAboutIfNeeded()
+            }
+        }
+
+        if force == false, currentRoute == requestedRoute, header != nil {
+            if route.tab == .about, about == nil {
+                loadAboutIfNeeded()
+            }
+            return
+        }
+
+        currentChannelID = route.channel.channelId
+        currentRoute = requestedRoute
         isLoading = true
         errorMessage = nil
         continuation = nil
         items = []
         sortOptions = []
-        about = nil
-        aboutErrorMessage = nil
+        filterOptions = []
+        if channelChanged {
+            about = nil
+            aboutErrorMessage = nil
+            subscription = nil
+        }
 
         defer { isLoading = false }
 
         do {
             let response = try await BackendClient.shared.fetchChannelPage(
-                channelID: route.channel.channelId,
-                tab: route.tab,
-                searchQuery: route.searchQuery
+                channelID: requestedRoute.channel.channelId,
+                tab: requestedRoute.tab,
+                searchQuery: requestedRoute.searchQuery
             )
             header = response.header
             tabs = response.tabs
             items = applyChannelDefaults(to: response.items, header: response.header)
             sortOptions = response.sortOptions
+            filterOptions = response.filterOptions
             continuation = response.continuation
+            subscription = response.subscription
+            subscriptionCommands = response.subscriptionCommands
             errorMessage = nil
+
+            if route.tab == .about {
+                loadAboutIfNeeded()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -682,6 +767,7 @@ final class ChannelPageViewModel: ObservableObject {
             let response = try await BackendClient.shared.fetchChannelContinuation(token: token)
             items = applyChannelDefaults(to: response.items, header: header)
             sortOptions = response.sortOptions
+            filterOptions = response.filterOptions
             continuation = response.continuation
         } catch {
             errorMessage = error.localizedDescription
@@ -700,10 +786,18 @@ final class ChannelPageViewModel: ObservableObject {
             if !response.sortOptions.isEmpty {
                 sortOptions = response.sortOptions
             }
+            if !response.filterOptions.isEmpty {
+                filterOptions = response.filterOptions
+            }
             continuation = response.continuation
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func normalizedContentRoute(for route: ChannelRoute) -> ChannelRoute {
+        guard route.tab == .about else { return route }
+        return ChannelRoute(channel: route.channel, tab: .videos, searchQuery: nil)
     }
 
     private func applyChannelDefaults(

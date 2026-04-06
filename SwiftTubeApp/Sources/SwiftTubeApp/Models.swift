@@ -152,6 +152,7 @@ enum ChannelTabKind: String, CaseIterable, Codable, Hashable, Sendable {
     case live
     case playlists
     case posts
+    case about
     case search
 
     var title: String {
@@ -166,6 +167,8 @@ enum ChannelTabKind: String, CaseIterable, Codable, Hashable, Sendable {
             return "Playlists"
         case .posts:
             return "Posts"
+        case .about:
+            return "About"
         case .search:
             return "Search"
         }
@@ -217,19 +220,43 @@ struct ChannelLink: Codable, Hashable, Identifiable, Sendable {
     var id: String { "\(title)|\(url)" }
 
     var resolvedURL: URL? {
-        URL(string: url)
+        if let direct = URL(string: url), isYouTubeRedirect(direct),
+           let components = URLComponents(url: direct, resolvingAgainstBaseURL: false),
+           let target = components.queryItems?.first(where: { $0.name == "q" })?.value,
+           let decoded = Optional(target.removingPercentEncoding ?? target),
+           let resolved = URL(string: decoded) {
+            return resolved
+        }
+
+        return URL(string: url)
     }
 
     var displayURL: String {
-        url
-            .replacingOccurrences(of: "https://", with: "")
-            .replacingOccurrences(of: "http://", with: "")
-            .replacingOccurrences(of: "mailto:", with: "")
+        guard let resolvedURL else {
+            return url
+                .replacingOccurrences(of: "https://", with: "")
+                .replacingOccurrences(of: "http://", with: "")
+                .replacingOccurrences(of: "mailto:", with: "")
+        }
+
+        if resolvedURL.scheme == "mailto" {
+            return resolvedURL.absoluteString.replacingOccurrences(of: "mailto:", with: "")
+        }
+
+        let host = resolvedURL.host ?? resolvedURL.absoluteString
+        let path = resolvedURL.path == "/" ? "" : resolvedURL.path
+        let condensed = "\(host)\(path)"
+        return condensed.replacingOccurrences(of: "//", with: "/")
     }
 
     var faviconURL: URL? {
         guard let faviconUrl else { return nil }
         return URL(string: faviconUrl)
+    }
+
+    private func isYouTubeRedirect(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host.contains("youtube.com") && url.path == "/redirect"
     }
 }
 
@@ -288,13 +315,17 @@ struct ChannelPageResponse: Sendable {
     let selectedTab: ChannelTabKind
     let items: [ChannelContentItem]
     let sortOptions: [ChannelSortOption]
+    let filterOptions: [ChannelSortOption]
     let continuation: String?
     let searchQuery: String?
+    let subscription: SubscriptionState?
+    let subscriptionCommands: [String: InnerTubeCommand?]
 }
 
 struct ChannelPageContinuationResponse: Sendable {
     let items: [ChannelContentItem]
     let sortOptions: [ChannelSortOption]
+    let filterOptions: [ChannelSortOption]
     let continuation: String?
 }
 

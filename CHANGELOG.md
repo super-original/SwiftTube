@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.12.35
+
+- Kept channel page headers alive while switching tabs so only the content area reloads, added a real About tab in the channel tab strip, and moved channel details out of the modal sheet.
+- Split channel browse controls into separate filter and sort treatments, preserving official chip continuations while restoring the dedicated sort row style for video tabs.
+- Shortened channel external links to their real destination URLs instead of showing YouTube redirect blobs, and wired the channel subscribe button to use authenticated channel-page subscription commands when available.
+
 ## 0.12.34
 
 - Reworked channel headers to feel much closer to YouTube with a real tab strip, separate sort chips, a subscribe button, and banner layouts that no longer leave blank space or blow out the page.

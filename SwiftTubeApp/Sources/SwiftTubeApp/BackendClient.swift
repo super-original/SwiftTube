@@ -76,6 +76,18 @@ final class BackendClient {
         try await backend.updateSubscription(id: id, subscribed: subscribed)
     }
 
+    func updateChannelSubscription(
+        channelID: String,
+        subscribed: Bool,
+        commands: [String: InnerTubeCommand?]
+    ) async throws -> SubscriptionResponse {
+        try await backend.updateChannelSubscription(
+            channelID: channelID,
+            subscribed: subscribed,
+            commands: commands
+        )
+    }
+
     func updateRating(id: String, action: String) async throws -> RatingResponse {
         try await backend.updateRating(id: id, action: action)
     }

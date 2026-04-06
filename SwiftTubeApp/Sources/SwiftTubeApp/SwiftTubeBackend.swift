@@ -260,22 +260,30 @@ actor SwiftTubeBackend {
             throw BackendClientError(message: "Couldn’t load that channel page.")
         }
 
+        let controls = extractChannelBrowseControls(from: data)
+        let subscriptionCommands = extractChannelSubscriptionCommands(from: data)
+
         return ChannelPageResponse(
             header: header,
             tabs: extractChannelTabs(from: data),
             selectedTab: extractSelectedChannelTab(from: data) ?? tab,
             items: await mergeStoredProgress(into: extractChannelContentItems(from: data)),
-            sortOptions: extractChannelSortOptions(from: data),
+            sortOptions: controls.sortOptions,
+            filterOptions: controls.filterOptions,
             continuation: extractChannelContentContinuationToken(from: data),
-            searchQuery: searchQuery?.trimmingCharacters(in: .whitespacesAndNewlines)
+            searchQuery: searchQuery?.trimmingCharacters(in: .whitespacesAndNewlines),
+            subscription: extractChannelSubscriptionState(from: data, header: header),
+            subscriptionCommands: subscriptionCommands
         )
     }
 
     func fetchChannelContinuation(token: String) async throws -> ChannelPageContinuationResponse {
         let data = try await loadBrowseContinuationData(token: token)
+        let controls = extractChannelBrowseControls(from: data)
         return ChannelPageContinuationResponse(
             items: await mergeStoredProgress(into: extractChannelContentItems(from: data)),
-            sortOptions: extractChannelSortOptions(from: data),
+            sortOptions: controls.sortOptions,
+            filterOptions: controls.filterOptions,
             continuation: extractChannelContentContinuationToken(from: data)
         )
     }
@@ -286,6 +294,31 @@ actor SwiftTubeBackend {
             throw BackendClientError(message: "Couldn’t load this channel’s details.")
         }
         return ChannelAboutResponse(about: about)
+    }
+
+    func updateChannelSubscription(
+        channelID: String,
+        subscribed: Bool,
+        commands: [String: InnerTubeCommand?]
+    ) async throws -> SubscriptionResponse {
+        _ = try await requireAuthenticatedMaterial()
+
+        let commandKey = subscribed ? "subscribe" : "unsubscribe"
+        guard let command = commands[commandKey] ?? nil else {
+            throw BackendClientError(message: "This channel subscription action is unavailable right now.")
+        }
+
+        _ = try await api.dispatch(command: command)
+        let latestData = try await loadChannelInitialData(
+            channelID: channelID,
+            tab: .videos,
+            searchQuery: nil,
+            authenticated: true
+        )
+        let latestHeader = extractChannelHeader(from: latestData)
+        return SubscriptionResponse(
+            subscription: extractChannelSubscriptionState(from: latestData, header: latestHeader)
+        )
     }
 
     func fetchVideo(id videoID: String) async throws -> VideoPlayback {
@@ -810,6 +843,12 @@ actor SwiftTubeBackend {
             return try await api.browse(
                 browseID: channelID,
                 params: "EgVwb3N0c_IGBAoCSgA=",
+                authenticated: authenticated
+            )
+        case .about:
+            return try await api.browse(
+                browseID: channelID,
+                params: "EgZ2aWRlb3PyBgQKAjoA",
                 authenticated: authenticated
             )
         case .search:
@@ -1530,6 +1569,60 @@ private func extractChannelSubscribeButtonTitle(from pageHeader: JSONDictionary?
     return title
 }
 
+private func extractChannelSubscriptionState(from data: Any, header: ChannelHeader?) -> SubscriptionState? {
+    let pageHeader = (((((data as? JSONDictionary)?["header"] as? JSONDictionary)?["pageHeaderRenderer"] as? JSONDictionary)?["content"] as? JSONDictionary)?["pageHeaderViewModel"] as? JSONDictionary)
+    let commands = extractChannelSubscriptionCommands(from: data)
+    let title = extractChannelSubscribeButtonTitle(from: pageHeader) ?? header?.subscribeButtonTitle
+    let normalizedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard let channelID = header?.channel.channelId,
+          let normalizedTitle,
+          normalizedTitle.isEmpty == false else {
+        return nil
+    }
+
+    let normalizedKey = normalizedChannelControlTitle(normalizedTitle)
+    let subscribed = normalizedKey.contains("subscribed")
+        || normalizedKey.contains("підписан")
+        || normalizedKey.contains("ви підписані")
+    let enabled = commands["subscribe"] != nil || commands["unsubscribe"] != nil
+
+    return SubscriptionState(
+        channelId: channelID,
+        buttonText: normalizedTitle,
+        subscribed: subscribed,
+        enabled: enabled,
+        subscriberCountText: header?.subscriberCountText
+    )
+}
+
+private func extractChannelSubscriptionCommands(from data: Any) -> [String: InnerTubeCommand?] {
+    let pageHeader = (((((data as? JSONDictionary)?["header"] as? JSONDictionary)?["pageHeaderRenderer"] as? JSONDictionary)?["content"] as? JSONDictionary)?["pageHeaderViewModel"] as? JSONDictionary)
+    let actions = pageHeader?["actions"]
+    var result: [String: InnerTubeCommand?] = [
+        "subscribe": nil,
+        "unsubscribe": nil,
+    ]
+
+    guard let actions else { return result }
+
+    visitJSONObjects(in: actions) { node in
+        if result["subscribe"] == nil,
+           let command = normalizeSubscribeEndpoint(node, unsubscribe: false) {
+            result["subscribe"] = command
+        }
+
+        if result["unsubscribe"] == nil,
+           let command = normalizeSubscribeEndpoint(node, unsubscribe: true) {
+            result["unsubscribe"] = command
+        }
+
+        return (result["subscribe"] != nil && result["unsubscribe"] != nil) ? .stop : .continue
+    }
+
+    return result
+}
+
 private func extractChannelTabs(from data: Any) -> [ChannelTabSummary] {
     guard let tabs = (((data as? JSONDictionary)?["contents"] as? JSONDictionary)?["twoColumnBrowseResultsRenderer"] as? JSONDictionary)?["tabs"] as? [Any] else {
         return []
@@ -1561,31 +1654,99 @@ private func extractSelectedChannelTab(from data: Any) -> ChannelTabKind? {
     return nil
 }
 
-private func extractChannelSortOptions(from data: Any) -> [ChannelSortOption] {
-    var options: [ChannelSortOption] = []
-    var seen = Set<String>()
+private func extractChannelBrowseControls(from data: Any) -> (sortOptions: [ChannelSortOption], filterOptions: [ChannelSortOption]) {
+    var controlGroups: [[ChannelSortOption]] = []
+    var seenGroupSignatures = Set<String>()
 
     visitJSONObjects(in: data) { node in
-        guard let viewModel = node["chipViewModel"] as? JSONDictionary else { return .continue }
-        guard let title = viewModel["text"] as? String, !title.isEmpty else { return .continue }
-        guard let command = ((viewModel["tapCommand"] as? JSONDictionary)?["innertubeCommand"] as? JSONDictionary),
-              let token = ((command["continuationCommand"] as? JSONDictionary)?["token"] as? String),
-              !token.isEmpty else {
+        guard let bar = node["chipBarViewModel"] as? JSONDictionary,
+              let chips = bar["chips"] as? [Any] else {
             return .continue
         }
-        guard seen.insert(title).inserted else { return .continue }
 
-        options.append(
-            ChannelSortOption(
+        let options = chips.compactMap { value -> ChannelSortOption? in
+            guard let viewModel = (value as? JSONDictionary)?["chipViewModel"] as? JSONDictionary else { return nil }
+            guard let title = viewModel["text"] as? String, !title.isEmpty else { return nil }
+            guard let command = ((viewModel["tapCommand"] as? JSONDictionary)?["innertubeCommand"] as? JSONDictionary),
+                  let token = ((command["continuationCommand"] as? JSONDictionary)?["token"] as? String),
+                  !token.isEmpty else {
+                return nil
+            }
+
+            return ChannelSortOption(
                 title: title,
                 continuationToken: token,
                 isSelected: viewModel["selected"] as? Bool ?? false
             )
-        )
+        }
+
+        guard options.isEmpty == false else { return .continue }
+        let signature = options.map(\.title).joined(separator: "|")
+        guard seenGroupSignatures.insert(signature).inserted else { return .continue }
+        controlGroups.append(options)
         return .continue
     }
 
-    return options
+    var sortOptions: [ChannelSortOption] = []
+    var filterOptions: [ChannelSortOption] = []
+
+    for group in controlGroups {
+        switch classifyChannelControlGroup(group) {
+        case .sort:
+            sortOptions.append(contentsOf: group)
+        case .filter:
+            filterOptions.append(contentsOf: group)
+        }
+    }
+
+    if sortOptions.isEmpty, filterOptions.isEmpty == false, controlGroups.count == 1 {
+        let onlyGroup = controlGroups[0]
+        if onlyGroup.count >= 3 {
+            sortOptions = onlyGroup
+            filterOptions = []
+        }
+    }
+
+    return (sortOptions, filterOptions)
+}
+
+private enum ChannelControlGroupKind {
+    case sort
+    case filter
+}
+
+private func classifyChannelControlGroup(_ options: [ChannelSortOption]) -> ChannelControlGroupKind {
+    let normalizedTitles = options.map { normalizedChannelControlTitle($0.title) }
+    let sortMatchCount = normalizedTitles.filter { isKnownChannelSortTitle($0) }.count
+
+    if sortMatchCount == normalizedTitles.count, normalizedTitles.isEmpty == false {
+        return .sort
+    }
+
+    if sortMatchCount >= 2 {
+        return .sort
+    }
+
+    return .filter
+}
+
+private func normalizedChannelControlTitle(_ title: String) -> String {
+    title
+        .folding(options: .diacriticInsensitive, locale: .current)
+        .lowercased()
+        .components(separatedBy: CharacterSet.alphanumerics.inverted)
+        .joined()
+}
+
+private func isKnownChannelSortTitle(_ title: String) -> Bool {
+    [
+        "latest", "newest", "recent", "new",
+        "popular",
+        "oldest", "old",
+        "нові", "новые", "нове", "новеиши", "найновіші",
+        "популярні", "популярные",
+        "найстаріші", "старые", "старі", "наистаріші"
+    ].contains(title)
 }
 
 private func extractChannelContentItems(from data: Any) -> [ChannelContentItem] {
