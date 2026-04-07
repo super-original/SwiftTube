@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.12
+
+- Anchored the standard watch-page live-chat card to the measured player-plus-header height so it stops at the action row again, added hover timestamps to live-chat messages, and tightened live DVR behavior by preferring the DASH live manifest while snapping the scrubber thumb to the live edge when playback is effectively current.
+
 ## 0.13.11
 
 - Pulled the standard watch-page live-chat panel back down to its earlier height, fixed replay parsing so archived livestream chats stop falling into the empty-state message, and re-anchor replay chat when you reopen the tab or finish scrubbing so it follows the playback position instead of staying stuck at the old point.

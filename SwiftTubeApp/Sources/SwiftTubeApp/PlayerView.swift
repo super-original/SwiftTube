@@ -165,6 +165,8 @@ struct PlayerScreen: View {
     @State private var isPlaylistPopoverPresented = false
     @State private var isPlaylistRailExpanded = true
     @State private var selectedSidePanelTab: PlayerSidePanelTab = .suggestions
+    @State private var playerStageHeight: CGFloat = 0
+    @State private var headerSectionHeight: CGFloat = 0
     @ObservedObject private var mutationCenter = AppMutationCenter.shared
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
@@ -389,10 +391,17 @@ private extension PlayerScreen {
     }
 
     var standardLiveChatHeight: CGFloat {
+        let measuredPrimaryHeight = playerStageHeight > 0 && headerSectionHeight > 0
+            ? playerStageHeight + 24 + headerSectionHeight
+            : 0
+        if measuredPrimaryHeight > 0 {
+            return max(measuredPrimaryHeight, 520)
+        }
+
         let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
         let windowHeight = NSApp.keyWindow?.contentLayoutRect.height ?? screenHeight
         let availableHeight = min(screenHeight, windowHeight)
-        return min(max(availableHeight - 110, 680), 1_020)
+        return min(max(availableHeight - 150, 620), 960)
     }
 
     var scrollContent: some View {
@@ -473,6 +482,15 @@ private extension PlayerScreen {
             .fill(Color.clear)
             .frame(maxWidth: .infinity)
             .aspectRatio(16 / 9, contentMode: .fit)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { playerStageHeight = proxy.size.height }
+                        .onChange(of: proxy.size.height) { _, height in
+                            playerStageHeight = height
+                        }
+                }
+            )
             .anchorPreference(key: PlayerSurfaceBoundsKey.self, value: .bounds) { $0 }
     }
 
@@ -492,6 +510,15 @@ private extension PlayerScreen {
 
             channelAndActionsSection
         }
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { headerSectionHeight = proxy.size.height }
+                    .onChange(of: proxy.size.height) { _, height in
+                        headerSectionHeight = height
+                    }
+            }
+        )
     }
 
     var sidePanel: some View {
@@ -1709,6 +1736,7 @@ private struct WatchSecondaryPanel: View {
     let suggestionsContent: AnyView
     let liveChatTitle: String
     let standardLiveChatHeight: CGFloat
+    @State private var tabBarHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1718,8 +1746,14 @@ private struct WatchSecondaryPanel: View {
             }
             .padding(4)
             .background(
-                Capsule(style: .continuous)
-                    .fill(settings.sidebarBackgroundColor.opacity(0.88))
+                GeometryReader { proxy in
+                    Capsule(style: .continuous)
+                        .fill(settings.sidebarBackgroundColor.opacity(0.88))
+                        .onAppear { tabBarHeight = proxy.size.height }
+                        .onChange(of: proxy.size.height) { _, height in
+                            tabBarHeight = height
+                        }
+                }
             )
 
             panelContent
@@ -1749,7 +1783,7 @@ private struct WatchSecondaryPanel: View {
             case .liveChat:
                 VStack(alignment: .leading, spacing: 16) {
                     liveChatCard
-                        .frame(height: standardLiveChatHeight)
+                        .frame(height: max(standardLiveChatHeight - tabBarHeight - 14, 320))
                     suggestionsContent
                 }
             }
@@ -1945,6 +1979,13 @@ private struct LiveChatMessageRow: View {
                 }
             }
             Spacer(minLength: 0)
+            if let hoverTimestampText, isHovered {
+                Text(hoverTimestampText)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 12)
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+            }
         }
         .font(.system(size: 15, weight: .medium))
         .lineSpacing(3)
@@ -1993,6 +2034,23 @@ private struct LiveChatMessageRow: View {
             Text("\(partial)\(styledText(for: fragment))")
         }
     }
+
+    private var hoverTimestampText: String? {
+        guard let timestampUsec = message.timestampUsec,
+              let micros = Double(timestampUsec) else {
+            return nil
+        }
+
+        let date = Date(timeIntervalSince1970: micros / 1_000_000)
+        return Self.timestampFormatter.string(from: date)
+    }
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter
+    }()
 
     private func styledText(for fragment: LiveChatMessageFragment) -> Text {
         if message.kind == .system {
@@ -2685,7 +2743,7 @@ private struct PlayerControlBar: View {
 
                 Slider(
                     value: Binding(
-                        get: { coordinator.scrubPosition },
+                        get: { coordinator.displayedScrubPosition },
                         set: { coordinator.updateScrubPosition($0) }
                     ),
                     in: 0...coordinator.scrubberUpperBound,

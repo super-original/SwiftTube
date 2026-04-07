@@ -4567,12 +4567,12 @@ private func codecScore(_ codec: String?) -> Int {
 
 private func manifestStreamScore(_ stream: StreamInfo) -> (Int, Int, Int, Int, Int, Int) {
     (
+        stream.formatId == "dash-manifest" ? 1 : 0,
         stream.hasAudio ? 1 : 0,
         stream.hasVideo ? 1 : 0,
         stream.height ?? 0,
         stream.fps ?? 0,
-        stream.bitrate ?? 0,
-        codecScore(stream.videoCodec)
+        stream.bitrate ?? 0
     )
 }
 

@@ -515,10 +515,15 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         currentPlayback?.isLive == true
     }
 
+    var liveLatencySeconds: Double {
+        guard isLivePlayback else { return 0 }
+        let t = isScrubbing ? scrubPosition : currentTime
+        return max(duration - t, 0)
+    }
+
     var liveLatencyText: String {
         guard isLivePlayback else { return "" }
-        let t = isScrubbing ? scrubPosition : currentTime
-        let liveLag = max(duration - t, 0)
+        let liveLag = liveLatencySeconds
         guard liveLag > 2 else { return "" }
         return "-\(formatTime(liveLag))"
     }
@@ -541,6 +546,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     var scrubberUpperBound: Double {
         max(duration, 1)
+    }
+
+    var displayedScrubPosition: Double {
+        guard isLivePlayback, !isScrubbing else { return scrubPosition }
+        return liveLatencySeconds <= 20 ? scrubberUpperBound : scrubPosition
     }
 
     var visibleSponsorSegments: [SponsorBlockSegment] {
