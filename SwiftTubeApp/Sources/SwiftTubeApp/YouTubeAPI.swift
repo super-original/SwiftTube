@@ -167,11 +167,12 @@ final class YouTubeAPI: @unchecked Sendable {
 
     func liveChat(
         continuation: String,
+        isReplay: Bool = false,
         authenticated: Bool = false
     ) async throws -> JSONDictionary {
         try await request(
             profile: .web,
-            endpoint: "live_chat/get_live_chat",
+            endpoint: isReplay ? "live_chat/get_live_chat_replay" : "live_chat/get_live_chat",
             body: ["continuation": continuation],
             authenticated: authenticated
         )

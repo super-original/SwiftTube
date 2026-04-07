@@ -2799,7 +2799,7 @@ private struct PlaylistVideoRow: View {
                 .frame(width: 232, height: 130.5)
                 .clipShape(RoundedRectangle(cornerRadius: 18))
                 .overlay(alignment: .bottom) {
-                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 18)
+                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 18, isEnabled: !video.isLive)
                 }
 
                 if let duration = video.durationText {
@@ -3988,6 +3988,7 @@ private struct HistoryVideoRow: View {
     }
 
     private var localProgressLine: String? {
+        guard !video.isLive else { return nil }
         guard let progress = video.progress else { return nil }
         if progress.localCompleted {
             return "SwiftTube tracked this as watched through"
@@ -3999,6 +4000,7 @@ private struct HistoryVideoRow: View {
     }
 
     private var youtubeLine: String? {
+        guard !video.isLive else { return nil }
         guard let progress = video.progress,
               let fraction = progress.normalizedYouTubeFraction,
               fraction > 0 else {
@@ -4042,7 +4044,7 @@ private struct HistoryVideoThumbnail: View {
             .frame(width: 228, height: 128)
             .clipShape(RoundedRectangle(cornerRadius: 22))
             .overlay(alignment: .bottom) {
-                VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 22)
+                VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 22, isEnabled: !video.isLive)
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 22)

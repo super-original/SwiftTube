@@ -404,7 +404,8 @@ actor SwiftTubeBackend {
     func fetchLiveChat(
         id videoID: String,
         mode: LiveChatMode,
-        continuation: String? = nil
+        continuation: String? = nil,
+        isReplay: Bool = false
     ) async throws -> LiveChatResponse {
         let usingAuth = await authManager.currentMaterial() != nil
 
@@ -414,6 +415,7 @@ actor SwiftTubeBackend {
                     videoID: videoID,
                     mode: mode,
                     continuation: continuation,
+                    isReplay: isReplay,
                     authenticated: true
                 )
             } catch {
@@ -425,6 +427,7 @@ actor SwiftTubeBackend {
             videoID: videoID,
             mode: mode,
             continuation: continuation,
+            isReplay: isReplay,
             authenticated: false
         )
     }
@@ -678,10 +681,15 @@ actor SwiftTubeBackend {
         videoID: String,
         mode: LiveChatMode,
         continuation: String?,
+        isReplay: Bool,
         authenticated: Bool
     ) async throws -> LiveChatResponse {
         if let continuation, continuation.isEmpty == false {
-            let data = try await api.liveChat(continuation: continuation, authenticated: authenticated)
+            let data = try await api.liveChat(
+                continuation: continuation,
+                isReplay: isReplay,
+                authenticated: authenticated
+            )
             return extractLiveChatResponse(from: data, requestedMode: mode)
         }
 
@@ -695,7 +703,11 @@ actor SwiftTubeBackend {
             throw BackendClientError(message: "Live chat isn’t available for this mode right now.")
         }
 
-        let bootstrapData = try await api.liveChat(continuation: bootstrapContinuation, authenticated: authenticated)
+        let bootstrapData = try await api.liveChat(
+            continuation: bootstrapContinuation,
+            isReplay: session.isReplay,
+            authenticated: authenticated
+        )
         let bootstrapResponse = extractLiveChatResponse(from: bootstrapData, requestedMode: mode)
         let activeMode = extractLiveChatMode(from: bootstrapData) ?? session.defaultMode
         if activeMode == mode {
@@ -707,7 +719,11 @@ actor SwiftTubeBackend {
             throw BackendClientError(message: "Live chat isn’t available for this mode right now.")
         }
 
-        let modeData = try await api.liveChat(continuation: modeContinuation, authenticated: authenticated)
+        let modeData = try await api.liveChat(
+            continuation: modeContinuation,
+            isReplay: session.isReplay,
+            authenticated: authenticated
+        )
         return extractLiveChatResponse(from: modeData, requestedMode: mode)
     }
 
@@ -839,7 +855,10 @@ actor SwiftTubeBackend {
             durationSeconds: durationSeconds
         )
         let relatedItems = await mergeStoredProgress(into: extractRelatedVideos(from: watchData, currentVideoID: videoID))
-        let isLive = [details, webDetails, mwebDetails].contains { ($0?["isLive"] as? Bool) == true || ($0?["isLiveContent"] as? Bool) == true }
+        let liveBroadcastDetails = [playerData, webPlayerData, mwebPlayerData].compactMap {
+            (($0["microformat"] as? JSONDictionary)?["playerMicroformatRenderer"] as? JSONDictionary)?["liveBroadcastDetails"] as? JSONDictionary
+        }
+        let isLive = liveBroadcastDetails.contains { ($0["isLiveNow"] as? Bool) == true }
         let isUpcoming = [details, webDetails, mwebDetails].contains { ($0?["isUpcoming"] as? Bool) == true }
 
         return VideoPlayback(
@@ -1620,6 +1639,9 @@ private func extractLiveChatSession(from watchData: JSONDictionary) -> LiveChatS
     let initialContinuation = extractLiveChatContinuationToken(from: renderer["continuations"]).token
     let modeContinuations = extractLiveChatModeContinuations(from: renderer)
     let defaultMode = extractLiveChatMode(from: renderer) ?? .top
+    let isReplay = extractLiveChatSubMenuItems(from: renderer).contains { item in
+        ((item["title"] as? String) ?? "").localizedCaseInsensitiveContains("replay")
+    } || extractLiveChatContinuationToken(from: renderer["continuations"]).isReplay
 
     guard initialContinuation != nil || modeContinuations[.top] != nil || modeContinuations[.live] != nil else {
         return nil
@@ -1629,7 +1651,8 @@ private func extractLiveChatSession(from watchData: JSONDictionary) -> LiveChatS
         initialContinuation: initialContinuation,
         topChatContinuation: modeContinuations[.top],
         liveChatContinuation: modeContinuations[.live],
-        defaultMode: defaultMode
+        defaultMode: defaultMode,
+        isReplay: isReplay
     )
 }
 
@@ -1942,7 +1965,7 @@ private func extractLiveChatComposer(
     return nil
 }
 
-private func extractLiveChatContinuationToken(from value: Any?) -> (token: String?, timeoutMs: Int?) {
+private func extractLiveChatContinuationToken(from value: Any?) -> (token: String?, timeoutMs: Int?, isReplay: Bool) {
     let entries: [Any]
     if let list = value as? [Any] {
         entries = list
@@ -1958,29 +1981,33 @@ private func extractLiveChatContinuationToken(from value: Any?) -> (token: Strin
         if let reload = entry["reloadContinuationData"] as? JSONDictionary,
            let continuation = reload["continuation"] as? String,
            continuation.isEmpty == false {
-            return (continuation, intValue(reload["timeoutMs"]))
+            return (continuation, intValue(reload["timeoutMs"]), false)
         }
 
         if let invalidation = entry["invalidationContinuationData"] as? JSONDictionary,
            let continuation = invalidation["continuation"] as? String,
            continuation.isEmpty == false {
-            return (continuation, intValue(invalidation["timeoutMs"]))
+            return (continuation, intValue(invalidation["timeoutMs"]), false)
         }
 
         if let timed = entry["timedContinuationData"] as? JSONDictionary,
            let continuation = timed["continuation"] as? String,
            continuation.isEmpty == false {
-            return (continuation, intValue(timed["timeoutMs"]))
+            return (continuation, intValue(timed["timeoutMs"]), false)
         }
 
         if let replay = entry["liveChatReplayContinuationData"] as? JSONDictionary,
            let continuation = replay["continuation"] as? String,
            continuation.isEmpty == false {
-            return (continuation, intValue(replay["timeoutMs"]))
+            return (
+                continuation,
+                intValue(replay["timeoutMs"]) ?? intValue(replay["timeUntilLastMessageMsec"]),
+                true
+            )
         }
     }
 
-    return (nil, nil)
+    return (nil, nil, false)
 }
 
 private func transcriptURL(for baseURLString: String) -> URL? {
@@ -2257,7 +2284,6 @@ private func matchesLiveBadge(_ text: String) -> Bool {
         || normalized.contains("live_now")
         || normalized.contains("live now")
         || normalized.contains("style_live")
-        || normalized.contains("is live")
 }
 
 private func matchesMembersOnlyBadge(_ text: String) -> Bool {

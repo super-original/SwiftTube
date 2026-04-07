@@ -103,6 +103,10 @@ struct VideoItem: Codable, Identifiable, Hashable, Sendable {
     var isMembersOnly: Bool {
         tags.contains(where: \.isMembersOnly)
     }
+
+    var isLive: Bool {
+        tags.contains(where: \.isLive)
+    }
 }
 
 struct RecommendationsResponse: Codable, Sendable {
@@ -458,6 +462,11 @@ struct LiveChatSession: Codable, Hashable, Sendable {
     let topChatContinuation: String?
     let liveChatContinuation: String?
     let defaultMode: LiveChatMode
+    let isReplay: Bool
+
+    var tabTitle: String {
+        isReplay ? "Live Chat Replay" : "Live Chat"
+    }
 }
 
 enum LiveChatMessageFragmentKind: String, Codable, Hashable, Sendable {

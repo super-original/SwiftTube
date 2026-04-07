@@ -143,12 +143,12 @@ private enum PlayerSidePanelTab: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
+    func title(liveChatTitle: String) -> String {
         switch self {
         case .suggestions:
             return "Suggestions"
         case .liveChat:
-            return "Live Chat"
+            return liveChatTitle
         }
     }
 }
@@ -348,10 +348,12 @@ private extension PlayerScreen {
     }
 
     var displayTags: [VideoTag] {
-        if let playback, playback.tags.isEmpty == false {
-            return playback.tags
+        if let playback {
+            return playback.tags.filter { tag in
+                tag.isLive == false || playback.isLive
+            }
         }
-        return video.tags
+        return video.tags.filter { !$0.isLive }
     }
 
     var playbackAccessIssue: VideoAccessIssue? {
@@ -369,11 +371,15 @@ private extension PlayerScreen {
         playback?.liveChat != nil
     }
 
+    var liveChatTabTitle: String {
+        playback?.liveChat?.tabTitle ?? "Live Chat"
+    }
+
     var standardLiveChatHeight: CGFloat {
         let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
         let windowHeight = NSApp.keyWindow?.contentLayoutRect.height ?? screenHeight
         let availableHeight = min(screenHeight, windowHeight)
-        return min(max(availableHeight - 110, 680), 1_020)
+        return min(max(availableHeight - 32, 760), 1_080)
     }
 
     var scrollContent: some View {
@@ -463,17 +469,7 @@ private extension PlayerScreen {
                 .font(.system(size: 24, weight: .bold))
                 .fixedSize(horizontal: false, vertical: true)
 
-            if !displayTags.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(displayTags) { tag in
-                            VideoTagBadgeView(tag: tag, font: .system(size: 13, weight: .semibold))
-                        }
-                    }
-                }
-            }
-
-            if !statsOverviewItems.isEmpty {
+            if !displayTags.isEmpty || !statsOverviewItems.isEmpty {
                 compactStatsRow
             }
 
@@ -496,6 +492,7 @@ private extension PlayerScreen {
                     ),
                     liveChatContent: AnyView(liveChatPanelContent),
                     suggestionsContent: AnyView(suggestionsPanelContent),
+                    liveChatTitle: liveChatTabTitle,
                     standardLiveChatHeight: standardLiveChatHeight
                 )
             } else {
@@ -740,6 +737,10 @@ private extension PlayerScreen {
     var compactStatsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                ForEach(displayTags) { tag in
+                    VideoTagBadgeView(tag: tag, font: .system(size: 13, weight: .semibold))
+                }
+
                 ForEach(Array(statsOverviewItems.enumerated()), id: \.offset) { _, item in
                     CompactVideoStatPill(title: item.title, value: item.value)
                 }
@@ -1693,6 +1694,7 @@ private struct WatchSecondaryPanel: View {
     @Binding var selectedTab: PlayerSidePanelTab
     let liveChatContent: AnyView
     let suggestionsContent: AnyView
+    let liveChatTitle: String
     let standardLiveChatHeight: CGFloat
 
     var body: some View {
@@ -1767,7 +1769,7 @@ private struct WatchSecondaryPanel: View {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .bold))
                 }
-                Text(tab.title)
+                Text(tab.title(liveChatTitle: liveChatTitle))
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
             }
@@ -3361,7 +3363,7 @@ private struct PlaylistQueueRailRow: View {
                 .frame(width: 120, height: 67.5)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(alignment: .bottom) {
-                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12)
+                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12, isEnabled: !video.isLive)
                 }
 
                 if let duration = video.durationText {
@@ -3616,7 +3618,7 @@ private struct RecommendationRow: View {
                 .frame(width: 160, height: 90)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(alignment: .bottom) {
-                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12)
+                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12, isEnabled: !video.isLive)
                 }
 
                 if let duration = video.durationText {

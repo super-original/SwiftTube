@@ -1514,6 +1514,7 @@ final class PlayerViewModel: ObservableObject {
         duration: Double,
         didFinish: Bool
     ) {
+        guard playback?.isLive != true else { return }
         guard currentTime > 0 || didFinish else { return }
 
         Task {
@@ -1807,7 +1808,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func fetchLiveChat(continuation: String? = nil) async {
-        guard playback?.liveChat != nil else { return }
+        guard let session = playback?.liveChat else { return }
 
         if continuation == nil {
             isLoadingLiveChat = true
@@ -1824,7 +1825,8 @@ final class PlayerViewModel: ObservableObject {
             let response = try await BackendClient.shared.fetchLiveChat(
                 id: video.id,
                 mode: liveChatMode,
-                continuation: continuation
+                continuation: continuation,
+                isReplay: session.isReplay
             )
             guard !Task.isCancelled else { return }
 
@@ -1865,7 +1867,8 @@ final class PlayerViewModel: ObservableObject {
                     let response = try await BackendClient.shared.fetchLiveChat(
                         id: self.video.id,
                         mode: self.liveChatMode,
-                        continuation: activeContinuation
+                        continuation: activeContinuation,
+                        isReplay: self.playback?.liveChat?.isReplay == true
                     )
                     guard !Task.isCancelled else { return }
                     await MainActor.run {

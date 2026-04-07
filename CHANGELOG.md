@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.10
+
+- Moved player-page tags into the stats row so live badges stop shoving the action bar downward, stopped archived livestreams and premieres from using live playback controls by keying off YouTube’s `isLiveNow` flag, disabled active-live watch progress tracking and thumbnail progress bars, and made archived-stream chat use the replay endpoint with a `Live Chat Replay` tab title.
+
 ## 0.13.9
 
 - Expanded live-chat hover targets to the full row width, tightened row spacing, added a reusable red `Live` video tag that can coexist with `Members only`, made the live-player scrubber show stream status instead of meaningless elapsed totals, and extended the standard watch-page live-chat panel closer to a full screen-height block before suggestions begin.

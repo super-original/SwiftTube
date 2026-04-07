@@ -27,7 +27,7 @@ struct VideoCard: View {
                 .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(alignment: .bottom) {
-                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12)
+                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12, isEnabled: !video.isLive)
                 }
 
                 if let duration = video.durationText {
@@ -89,6 +89,7 @@ struct VideoCard: View {
 struct VideoThumbnailProgressBars: View {
     let progress: VideoProgress?
     let cornerRadius: CGFloat
+    let isEnabled: Bool
 
     private let localProgressColor = Color(red: 0.44, green: 0.80, blue: 0.98)
     private let youtubeProgressColor = BrandAssets.youtubeRed
@@ -113,6 +114,8 @@ struct VideoThumbnailProgressBars: View {
     }
 
     private var activeBar: (fraction: Double, fill: Color)? {
+        guard isEnabled else { return nil }
+
         let localFraction = progress?.normalizedLocalFraction ?? 0
         if localFraction > 0 {
             return (localFraction, localProgressColor)
