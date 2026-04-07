@@ -1889,6 +1889,7 @@ final class PlayerViewModel: ObservableObject {
 
         var merged = liveChatMessages
         let pendingMessages = merged.filter(\.isPending)
+        let remoteMessages = response.replacedMessages + response.messages
         merged.removeAll { message in
             response.removedMessageIDs.contains(message.id)
         }
@@ -1909,7 +1910,7 @@ final class PlayerViewModel: ObservableObject {
             }
         }
 
-        let remoteFingerprints = Set(response.messages.map(\.plainText))
+        let remoteFingerprints = Set(remoteMessages.map(\.plainText))
         let retainedPending = pendingMessages.filter { pending in
             remoteFingerprints.contains(pending.plainText) == false
         }

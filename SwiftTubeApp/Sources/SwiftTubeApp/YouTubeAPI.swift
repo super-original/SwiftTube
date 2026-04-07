@@ -192,7 +192,9 @@ final class YouTubeAPI: @unchecked Sendable {
                 "params": params,
                 "richMessage": [
                     "textSegments": [
-                        "text": message,
+                        [
+                            "text": message,
+                        ],
                     ],
                 ],
             ],

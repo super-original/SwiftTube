@@ -1,8 +1,13 @@
 import AppKit
+import SwiftUI
 
 enum BrandAssets {
     private static let logoResource = ("SwiftTube Logo", "svg", "Brand")
     private static let youtubeMarkResource = ("YouTube Mark", "svg", "Brand")
+
+    static let youtubeRed = Color(red: 1, green: 0, blue: 51 / 255)
+    static let youtubeLightRed = Color(red: 1, green: 78 / 255, blue: 69 / 255)
+    static let youtubeDarkRed = Color(red: 204 / 255, green: 0, blue: 0)
 
     static let logo: NSImage? = loadImage(
         named: logoResource.0,

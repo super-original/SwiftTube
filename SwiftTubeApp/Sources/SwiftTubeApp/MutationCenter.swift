@@ -48,7 +48,7 @@ enum AppNotificationAccent: String, Sendable {
         case .green:
             return Color(red: 0.24, green: 0.84, blue: 0.55)
         case .red:
-            return Color(red: 1.0, green: 0.38, blue: 0.44)
+            return BrandAssets.youtubeRed
         case .amber:
             return Color(red: 1.0, green: 0.75, blue: 0.28)
         }

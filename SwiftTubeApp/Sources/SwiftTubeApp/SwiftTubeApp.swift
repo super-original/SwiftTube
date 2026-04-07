@@ -27,5 +27,7 @@ struct SwiftTubeApp: App {
             SettingsView()
                 .preferredColorScheme(settings.preferredColorScheme)
         }
+        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unified(showsTitle: false))
     }
 }

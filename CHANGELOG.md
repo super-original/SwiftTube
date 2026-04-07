@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.2
+
+- Rebuilt the settings window sidebar into a direct row-based shell with proper selection states, matching spacing, and working clicks instead of relying on the broken list selection behavior from the previous hotfix.
+- Simplified the watch side rail to just Suggestions and Live Chat, removed transcript tabs, capped the standard live-chat panel to a screen-height card with suggestions beneath it, and made fullscreen suggestions scrollable so the tab switcher never gets pushed offscreen.
+- Polished live chat with hover interactions, cleaner author labels, highlighted official YouTube system notices, the refreshed `#FF0033` YouTube red token, and a corrected outgoing message payload so chat sends no longer fail immediately client-side.
+
 ## 0.13.1
 
 - Restored the classic suggestions rail for standard videos by removing the new tab strip and card wrapper whenever the watch page only has next-up recommendations to show.

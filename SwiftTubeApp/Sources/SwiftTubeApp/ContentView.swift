@@ -2357,7 +2357,7 @@ private struct PlaylistFeedScreen: View {
                             LinearGradient(
                                 colors: viewModel.playlist.kind == .watchLater
                                     ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
-                                    : [Color(red: 0.92, green: 0.40, blue: 0.48), Color(red: 0.38, green: 0.11, blue: 0.23)],
+                                    : [BrandAssets.youtubeLightRed, BrandAssets.youtubeDarkRed],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -2641,7 +2641,7 @@ private struct PlaylistCard: View {
                                 LinearGradient(
                                     colors: playlist.referenceKind == .watchLater
                                         ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
-                                        : [Color(red: 0.92, green: 0.40, blue: 0.48), Color(red: 0.38, green: 0.11, blue: 0.23)],
+                                        : [BrandAssets.youtubeLightRed, BrandAssets.youtubeDarkRed],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 )
@@ -3828,7 +3828,7 @@ private struct ChannelPlaylistThumbnail: View {
                             LinearGradient(
                                 colors: playlist.referenceKind == .watchLater
                                     ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
-                                    : [Color(red: 0.92, green: 0.40, blue: 0.48), Color(red: 0.38, green: 0.11, blue: 0.23)],
+                                    : [BrandAssets.youtubeLightRed, BrandAssets.youtubeDarkRed],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )

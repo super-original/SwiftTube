@@ -91,7 +91,7 @@ struct VideoThumbnailProgressBars: View {
     let cornerRadius: CGFloat
 
     private let localProgressColor = Color(red: 0.44, green: 0.80, blue: 0.98)
-    private let youtubeProgressColor = Color(red: 0.93, green: 0.13, blue: 0.13)
+    private let youtubeProgressColor = BrandAssets.youtubeRed
 
     var body: some View {
         GeometryReader { proxy in

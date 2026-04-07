@@ -139,7 +139,6 @@ private struct PlayerSurfaceBoundsKey: PreferenceKey {
 
 private enum PlayerSidePanelTab: String, CaseIterable, Identifiable {
     case suggestions
-    case transcripts
     case liveChat
 
     var id: String { rawValue }
@@ -148,8 +147,6 @@ private enum PlayerSidePanelTab: String, CaseIterable, Identifiable {
         switch self {
         case .suggestions:
             return "Suggestions"
-        case .transcripts:
-            return "Transcripts"
         case .liveChat:
             return "Live Chat"
         }
@@ -363,16 +360,18 @@ private extension PlayerScreen {
 
     var effectiveSidePanelTab: PlayerSidePanelTab {
         if selectedSidePanelTab == .liveChat, playback?.liveChat == nil {
-            return viewModel.transcriptSegments.isEmpty ? .suggestions : .transcripts
-        }
-        if selectedSidePanelTab == .transcripts, viewModel.transcriptSegments.isEmpty, viewModel.isLoadingTranscript == false {
-            return playback?.liveChat != nil ? .liveChat : .suggestions
+            return .suggestions
         }
         return selectedSidePanelTab
     }
 
     var usesTabbedSidePanel: Bool {
-        playback?.liveChat != nil || viewModel.isLoadingTranscript || viewModel.transcriptSegments.isEmpty == false
+        playback?.liveChat != nil
+    }
+
+    var standardLiveChatHeight: CGFloat {
+        let visibleHeight = NSScreen.main?.visibleFrame.height ?? 900
+        return min(max(visibleHeight - 280, 420), 760)
     }
 
     var scrollContent: some View {
@@ -488,15 +487,14 @@ private extension PlayerScreen {
         Group {
             if usesTabbedSidePanel {
                 WatchSecondaryPanel(
+                    isFullscreen: layoutState.isFullscreen,
                     selectedTab: Binding(
                         get: { effectiveSidePanelTab },
                         set: { selectedSidePanelTab = $0 }
                     ),
-                    liveChatAvailable: playback?.liveChat != nil,
-                    transcriptAvailable: viewModel.isLoadingTranscript || viewModel.transcriptSegments.isEmpty == false,
                     liveChatContent: AnyView(liveChatPanelContent),
-                    transcriptContent: AnyView(transcriptPanelContent),
-                    suggestionsContent: AnyView(suggestionsPanelContent)
+                    suggestionsContent: AnyView(suggestionsPanelContent),
+                    standardLiveChatHeight: standardLiveChatHeight
                 )
             } else {
                 suggestionsPanelContent
@@ -1463,9 +1461,6 @@ private extension PlayerScreen {
         if playback.liveChat != nil {
             return .liveChat
         }
-        if viewModel.transcriptSegments.isEmpty == false {
-            return .transcripts
-        }
         return .suggestions
     }
 
@@ -1692,19 +1687,17 @@ private final class LiveChatUsernameColorStore: ObservableObject {
 
 private struct WatchSecondaryPanel: View {
     @ObservedObject private var settings = AppSettings.shared
+    let isFullscreen: Bool
     @Binding var selectedTab: PlayerSidePanelTab
-    let liveChatAvailable: Bool
-    let transcriptAvailable: Bool
     let liveChatContent: AnyView
-    let transcriptContent: AnyView
     let suggestionsContent: AnyView
+    let standardLiveChatHeight: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 0) {
                 secondaryPanelTab(.suggestions, enabled: true)
-                secondaryPanelTab(.transcripts, enabled: transcriptAvailable || selectedTab == .transcripts)
-                secondaryPanelTab(.liveChat, enabled: liveChatAvailable || selectedTab == .liveChat)
+                secondaryPanelTab(.liveChat, enabled: true)
             }
             .padding(4)
             .background(
@@ -1712,16 +1705,42 @@ private struct WatchSecondaryPanel: View {
                     .fill(settings.sidebarBackgroundColor.opacity(0.88))
             )
 
-            Group {
-                switch selectedTab {
-                case .suggestions:
+            panelContent
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private var panelContent: some View {
+        if isFullscreen {
+            switch selectedTab {
+            case .suggestions:
+                ScrollView {
                     suggestionsContent
-                case .transcripts:
-                    transcriptContent
-                case .liveChat:
-                    liveChatContent
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(.bottom, 12)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            case .liveChat:
+                liveChatCard
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        } else {
+            switch selectedTab {
+            case .suggestions:
+                suggestionsContent
+            case .liveChat:
+                VStack(alignment: .leading, spacing: 16) {
+                    liveChatCard
+                        .frame(height: standardLiveChatHeight)
+                    suggestionsContent
                 }
             }
+        }
+    }
+
+    private var liveChatCard: some View {
+        liveChatContent
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(16)
             .background(
@@ -1732,8 +1751,6 @@ private struct WatchSecondaryPanel: View {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .stroke(Color.white.opacity(0.06), lineWidth: 1)
             )
-        }
-        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private func secondaryPanelTab(_ tab: PlayerSidePanelTab, enabled: Bool) -> some View {
@@ -1766,6 +1783,7 @@ private struct WatchSecondaryPanel: View {
 }
 
 private struct LiveChatPanel: View {
+    @ObservedObject private var settings = AppSettings.shared
     let messages: [LiveChatMessage]
     let composer: LiveChatComposer?
     let isLoading: Bool
@@ -1822,29 +1840,38 @@ private struct LiveChatPanel: View {
                     .padding(.top, 12)
                     .padding(.bottom, 10)
 
-                HStack(spacing: 10) {
-                    TextField(composer.placeholder ?? "Type to chat...", text: $draft, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .font(.body)
-                        .lineLimit(1...4)
-                        .onSubmit(sendDraft)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        TextField(composer.placeholder ?? "Type to chat...", text: $draft, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.body)
+                            .lineLimit(1...4)
+                            .onSubmit(sendDraft)
 
-                    Button {
-                        NSApp.orderFrontCharacterPalette(nil)
-                    } label: {
-                        Image(systemName: "face.smiling")
-                            .font(.system(size: 16, weight: .semibold))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                        Button {
+                            NSApp.orderFrontCharacterPalette(nil)
+                        } label: {
+                            Image(systemName: "face.smiling")
+                                .font(.system(size: 16, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
 
-                    Button(action: sendDraft) {
-                        Image(systemName: "paperplane.fill")
-                            .font(.system(size: 15, weight: .bold))
+                        Button(action: sendDraft) {
+                            Image(systemName: "paperplane.fill")
+                                .font(.system(size: 15, weight: .bold))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : BrandAssets.youtubeRed)
+                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : Color.accentColor)
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    if let errorMessage, !errorMessage.isEmpty {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(BrandAssets.youtubeRed)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
@@ -1857,15 +1884,19 @@ private struct LiveChatPanel: View {
                     .padding(.top, 12)
                     .padding(.bottom, 10)
 
-                Text(restrictedMessage)
+                Label(restrictedMessage, systemImage: "play.rectangle.fill")
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(BrandAssets.youtubeRed)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .background(
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color.white.opacity(0.04))
+                            .fill(BrandAssets.youtubeRed.opacity(settings.preferredColorScheme == .dark ? 0.14 : 0.10))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(BrandAssets.youtubeRed.opacity(0.26), lineWidth: 1)
                     )
             }
         }
@@ -1881,22 +1912,41 @@ private struct LiveChatPanel: View {
 }
 
 private struct LiveChatMessageRow: View {
+    @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var colorStore = LiveChatUsernameColorStore.shared
     let message: LiveChatMessage
 
+    @State private var isHovered = false
+
     var body: some View {
         Group {
-            if let author = message.author, !author.isEmpty {
+            if let author = displayAuthor, !author.isEmpty {
                 Text("\(authorText(author))\(Text(": ").foregroundColor(.secondary))\(bodyText)")
             } else {
-                bodyText.foregroundColor(.secondary)
+                bodyText.foregroundColor(message.kind == .system ? BrandAssets.youtubeRed : .secondary)
             }
         }
         .font(.system(size: 15, weight: .medium))
         .lineSpacing(4)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(rowBackgroundColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(rowBorderColor, lineWidth: showsBorder ? 1 : 0)
+        )
         .opacity(message.isPending ? 0.68 : 1)
+        .scaleEffect(isHovered && message.kind != .system ? 1.004 : 1)
+        .shadow(color: .black.opacity(isHovered && message.kind != .system ? 0.08 : 0), radius: 12, y: 6)
+        .animation(.easeOut(duration: 0.14), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
+        }
         .task {
             await colorStore.loadColor(for: message.avatarURL, fallbackKey: message.author ?? message.id)
         }
@@ -1924,6 +1974,12 @@ private struct LiveChatMessageRow: View {
     }
 
     private func styledText(for fragment: LiveChatMessageFragment) -> Text {
+        if message.kind == .system {
+            return Text(fragment.text)
+                .foregroundColor(BrandAssets.youtubeRed)
+                .fontWeight(.semibold)
+        }
+
         switch fragment.kind {
         case .mention:
             return Text(fragment.text)
@@ -1943,6 +1999,35 @@ private struct LiveChatMessageRow: View {
 
     private var resolvedAuthorColor: Color {
         colorStore.color(for: message.avatarURL, fallbackKey: message.author ?? message.id)
+    }
+
+    private var displayAuthor: String? {
+        guard let author = message.author?.trimmingCharacters(in: .whitespacesAndNewlines),
+              author.isEmpty == false else {
+            return nil
+        }
+        return author.hasPrefix("@") ? String(author.dropFirst()) : author
+    }
+
+    private var rowBackgroundColor: Color {
+        if message.kind == .system {
+            return BrandAssets.youtubeRed.opacity(settings.preferredColorScheme == .dark ? 0.14 : 0.10)
+        }
+        return isHovered ? settings.hoverCardBackgroundColor : .clear
+    }
+
+    private var rowBorderColor: Color {
+        if message.kind == .system {
+            return BrandAssets.youtubeRed.opacity(0.24)
+        }
+        if isHovered {
+            return Color.white.opacity(settings.preferredColorScheme == .dark ? 0.10 : 0.16)
+        }
+        return .clear
+    }
+
+    private var showsBorder: Bool {
+        message.kind == .system || isHovered
     }
 }
 
