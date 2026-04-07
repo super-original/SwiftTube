@@ -77,6 +77,7 @@ struct SettingsView: View {
             settingsDetail
         }
         .navigationSplitViewStyle(.balanced)
+        .toolbar(removing: .sidebarToggle)
         .frame(width: 980, height: 650)
         .background(settings.windowBackgroundColor.ignoresSafeArea())
         .preferredColorScheme(settings.preferredColorScheme)
@@ -178,13 +179,10 @@ private struct AppearancePane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Appearance",
-                subtitle: "Choose a theme, tidy the browse layout, and keep SwiftTube feeling native."
+                subtitle: "Theme, colors, and grid size."
             )
 
             SettingsCard(title: "Default Themes", icon: "circle.lefthalf.filled") {
-                Text("Dark is now the default, and Midnight is the new true-black option.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
                 ThemeGroup(themes: AppAppearanceMode.defaultThemes)
             }
 
@@ -198,9 +196,6 @@ private struct AppearancePane: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Recommendations and search size")
                                 .font(.headline)
-                            Text("Larger cards reduce the number of columns and give titles more room before truncating.")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
                         }
 
                         Spacer()
@@ -320,14 +315,10 @@ private struct SidebarPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Sidebar",
-                subtitle: "Drag items into the order you want, and toggle off the ones you don't need."
+                subtitle: "Sidebar order and visibility."
             )
 
             SettingsCard(title: "Navigation Items", icon: "sidebar.left") {
-                Text("Drag rows into place and switch off the ones you don’t want. Home stays pinned.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-
                 List {
                     ForEach(settings.sidebarItemOrder) { item in
                         SidebarSettingsListRow(
@@ -405,7 +396,7 @@ private struct NotificationsPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Notifications",
-                subtitle: "Control how background API actions report their progress back into the app."
+                subtitle: "Notification visibility and placement."
             )
 
             SettingsCard(title: "Visibility", icon: "bell.badge") {
@@ -575,7 +566,7 @@ private struct PlaybackPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Playback",
-                subtitle: "Startup quality and playback speed defaults."
+                subtitle: "Default quality and speed."
             )
 
             SettingsCard(title: "Quality", icon: "sparkles.tv") {
@@ -634,7 +625,7 @@ private struct SponsorBlockPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "SponsorBlock",
-                subtitle: "Choose which segments stay visible, prompt manually, or skip automatically."
+                subtitle: "Skip behavior and category settings."
             )
 
             SettingsCard(title: "Global", icon: "switch.2") {
@@ -729,7 +720,7 @@ private struct ChangelogPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Changelog",
-                subtitle: "Release notes and version history for SwiftTube."
+                subtitle: "Version and release history."
             )
 
             SettingsCard(title: "Current Version", icon: "app.badge") {
@@ -815,7 +806,7 @@ private struct SeekingPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Seeking",
-                subtitle: "Set the timing for the three seek categories."
+                subtitle: "Seek step durations."
             )
 
             ForEach(SeekCategory.allCases) { category in
@@ -863,7 +854,7 @@ private struct ShortcutPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Keybinds",
-                subtitle: "Click any binding to record a shortcut. Release the keys to save it, or press Escape while recording to clear it."
+                subtitle: "Keyboard shortcuts."
             )
 
             ShortcutSectionCard(

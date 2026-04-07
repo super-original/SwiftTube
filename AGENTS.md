@@ -84,6 +84,8 @@ There are currently no automated tests.
 - After every version bump, rebuild the packaged app with `cd SwiftTubeApp && zsh build_app.sh`.
 - Keep the About/version metadata in sync with `SwiftTubeApp/VERSION`.
 - Update `CHANGELOG.md` for every shipped version change.
+- When matching an existing app shell element such as a sidebar, titlebar, or settings window, reuse the same implementation pattern already used elsewhere in the app before inventing a custom approximation.
+- In settings and preference UIs, keep copy terse and utilitarian. Do not add marketing-style taglines, cute product copy, or redundant explanatory blurbs. Default to short category descriptions only, and only add extra helper text when it is necessary to explain a non-obvious control.
 
 ## Versioning rules
 

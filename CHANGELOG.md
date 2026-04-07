@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.4
+
+- Moved the settings UI off the macOS `Settings` scene into a normal app window with a custom `Settings...` command so it can use the same hidden-titlebar window shell as the main app.
+- Removed more redundant settings copy, kept category descriptions terse, and added explicit agent guidance against writing marketing-style or redundant settings text again.
+- Increased the standard watch-page live-chat height so suggestions stay below the fold until you scroll.
+
 ## 0.13.3
 
 - Replaced the settings window sidebar implementation with the same native `NavigationSplitView` plus `List(selection:)` sidebar code path used by the main app, removing the custom sidebar rows entirely.

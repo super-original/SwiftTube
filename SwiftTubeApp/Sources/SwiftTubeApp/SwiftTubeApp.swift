@@ -1,5 +1,18 @@
 import SwiftUI
 
+private struct SettingsWindowCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings...") {
+                openWindow(id: "settings")
+            }
+            .keyboardShortcut(",", modifiers: .command)
+        }
+    }
+}
+
 @main
 struct SwiftTubeApp: App {
     @StateObject private var backendManager = BackendManager()
@@ -22,12 +35,16 @@ struct SwiftTubeApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
+        .commands {
+            SettingsWindowCommands()
+        }
 
-        Settings {
+        Window("Settings", id: "settings") {
             SettingsView()
                 .preferredColorScheme(settings.preferredColorScheme)
         }
         .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unified(showsTitle: false))
+        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
+        .windowResizability(.contentSize)
     }
 }
