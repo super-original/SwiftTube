@@ -71,48 +71,49 @@ struct SettingsView: View {
     @Namespace private var settingsScrollTop
 
     var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             settingsSidebar
-                .frame(width: 250)
-                .frame(maxHeight: .infinity)
-                .background(settings.sidebarBackgroundColor)
-
-            Divider()
-                .overlay(settings.separatorColor)
-
+        } detail: {
             settingsDetail
         }
+        .navigationSplitViewStyle(.balanced)
         .frame(width: 980, height: 650)
         .background(settings.windowBackgroundColor.ignoresSafeArea())
         .preferredColorScheme(settings.preferredColorScheme)
     }
 
     private var settingsSidebar: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                SettingsSidebarSection(
-                    title: "App",
-                    panes: SettingsPane.appSection,
-                    selection: $selection
-                )
-
-                SettingsSidebarSection(
-                    title: "Player",
-                    panes: SettingsPane.playbackSection,
-                    selection: $selection
-                )
-
-                SettingsSidebarSection(
-                    title: "About",
-                    panes: SettingsPane.aboutSection,
-                    selection: $selection
-                )
-
-                Spacer(minLength: 0)
+        List(selection: Binding(
+            get: { Optional(selection) },
+            set: {
+                if let pane = $0 {
+                    selection = pane
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 18)
+        )) {
+            Section("App") {
+                ForEach(SettingsPane.appSection) { pane in
+                    Label(pane.title, systemImage: pane.systemImage)
+                        .tag(pane)
+                }
+            }
+
+            Section("Player") {
+                ForEach(SettingsPane.playbackSection) { pane in
+                    Label(pane.title, systemImage: pane.systemImage)
+                        .tag(pane)
+                }
+            }
+
+            Section("About") {
+                ForEach(SettingsPane.aboutSection) { pane in
+                    Label(pane.title, systemImage: pane.systemImage)
+                        .tag(pane)
+                }
+            }
         }
+        .listStyle(.sidebar)
+        .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
@@ -152,100 +153,6 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(settings.windowBackgroundColor)
-    }
-}
-
-private struct SettingsSidebarSection: View {
-    let title: String
-    let panes: [SettingsPane]
-    @Binding var selection: SettingsPane
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(panes) { pane in
-                    SettingsSidebarRow(
-                        pane: pane,
-                        isSelected: selection == pane
-                    ) {
-                        withAnimation(.easeOut(duration: 0.14)) {
-                            selection = pane
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct SettingsSidebarRow: View {
-    @ObservedObject private var settings = AppSettings.shared
-    let pane: SettingsPane
-    let isSelected: Bool
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: pane.systemImage)
-                    .font(.system(size: 20, weight: .medium))
-                    .frame(width: 28)
-                    .foregroundStyle(.primary)
-
-                Text(pane.title)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.primary)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(backgroundColor)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(borderColor, lineWidth: showsBorder ? 1 : 0)
-            )
-            .shadow(color: .black.opacity(isHovered && !isSelected ? 0.08 : 0), radius: 12, y: 6)
-            .scaleEffect(isHovered && !isSelected ? 1.004 : 1)
-        }
-        .buttonStyle(.plain)
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .animation(.easeOut(duration: 0.14), value: isHovered)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-    }
-
-    private var backgroundColor: Color {
-        if isSelected {
-            return settings.cardBackgroundColor
-        }
-        return isHovered ? settings.hoverCardBackgroundColor : .clear
-    }
-
-    private var borderColor: Color {
-        if isSelected {
-            return Color.white.opacity(settings.preferredColorScheme == .dark ? 0.06 : 0.12)
-        }
-        if isHovered {
-            return Color.white.opacity(settings.preferredColorScheme == .dark ? 0.08 : 0.12)
-        }
-        return .clear
-    }
-
-    private var showsBorder: Bool {
-        isSelected || isHovered
     }
 }
 

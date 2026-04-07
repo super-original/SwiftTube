@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.3
+
+- Replaced the settings window sidebar implementation with the same native `NavigationSplitView` plus `List(selection:)` sidebar code path used by the main app, removing the custom sidebar rows entirely.
+
 ## 0.13.2
 
 - Rebuilt the settings window sidebar into a direct row-based shell with proper selection states, matching spacing, and working clicks instead of relying on the broken list selection behavior from the previous hotfix.
