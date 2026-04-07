@@ -2,6 +2,14 @@ import AppKit
 import Foundation
 import Libmpv
 
+struct MPVPlaybackSnapshot {
+    let currentTime: Double
+    let duration: Double
+    let isPlaying: Bool
+    let isBuffering: Bool
+    let liveSeekableRange: ClosedRange<Double>?
+}
+
 @MainActor
 final class MPVPlaybackEngine: NSObject {
     let id = UUID()
@@ -21,6 +29,7 @@ final class MPVPlaybackEngine: NSObject {
     private(set) var isPlaying = false
     private(set) var isBuffering = false
     private(set) var videoAspect: Double = 16.0 / 9.0
+    private(set) var liveSeekableRange: ClosedRange<Double>? = nil
 
     init(request: MPVPlaybackRequest) {
         self.request = request
@@ -63,7 +72,8 @@ final class MPVPlaybackEngine: NSObject {
 
         updateCachedState()
         PlaybackDebugLogger.log(
-            "mpv prepare ready duration=\(duration) currentTime=\(currentTime) isPlaying=\(isPlaying) isBuffering=\(isBuffering)"
+            "mpv prepare ready duration=\(duration) currentTime=\(currentTime) isPlaying=\(isPlaying) " +
+            "isBuffering=\(isBuffering) liveRange=\(debugDescription(for: liveSeekableRange))"
         )
     }
 
@@ -90,7 +100,9 @@ final class MPVPlaybackEngine: NSObject {
         do {
             try command(["seek", String(currentTime), "absolute", "exact"])
             updateCachedState()
-            PlaybackDebugLogger.log("mpv seek applied currentTime=\(currentTime) duration=\(duration)")
+            PlaybackDebugLogger.log(
+                "mpv seek applied currentTime=\(currentTime) duration=\(duration) liveRange=\(debugDescription(for: liveSeekableRange))"
+            )
         } catch {
             return
         }
@@ -109,9 +121,15 @@ final class MPVPlaybackEngine: NSObject {
         mpv_set_property(mpv, MPVProperty.speed, MPV_FORMAT_DOUBLE, &playbackRate)
     }
 
-    func snapshot() -> (currentTime: Double, duration: Double, isPlaying: Bool, isBuffering: Bool) {
+    func snapshot() -> MPVPlaybackSnapshot {
         updateCachedState()
-        return (currentTime, duration, isPlaying, isBuffering)
+        return MPVPlaybackSnapshot(
+            currentTime: currentTime,
+            duration: duration,
+            isPlaying: isPlaying,
+            isBuffering: isBuffering,
+            liveSeekableRange: liveSeekableRange
+        )
     }
 
     func replaceFile(with newRequest: MPVPlaybackRequest, seekTo time: Double) async throws {
@@ -153,7 +171,8 @@ final class MPVPlaybackEngine: NSObject {
 
         updateCachedState()
         PlaybackDebugLogger.log(
-            "mpv replaceFile ready duration=\(duration) currentTime=\(currentTime) isPlaying=\(isPlaying)"
+            "mpv replaceFile ready duration=\(duration) currentTime=\(currentTime) isPlaying=\(isPlaying) " +
+            "liveRange=\(debugDescription(for: liveSeekableRange))"
         )
     }
 
@@ -431,6 +450,8 @@ private extension MPVPlaybackEngine {
         duration = max(doubleProperty(MPVProperty.duration, from: mpv), 0)
         isBuffering = flagProperty(MPVProperty.pausedForCache, from: mpv)
         isPlaying = flagProperty(MPVProperty.pause, from: mpv) == false
+        let seekableRanges = seekableRangesProperty(MPVProperty.demuxerCacheState, from: mpv)
+        liveSeekableRange = Self.resolveSeekableRange(from: seekableRanges, currentTime: currentTime)
         let aspect = doubleProperty("video-params/aspect", from: mpv)
         if aspect > 0 { videoAspect = aspect }
     }
@@ -449,6 +470,33 @@ private extension MPVPlaybackEngine {
         return value != 0
     }
 
+    func seekableRangesProperty(_ name: String, from handle: OpaquePointer) -> [ClosedRange<Double>] {
+        var value = mpv_node()
+        let result = mpv_get_property(handle, name, MPV_FORMAT_NODE, &value)
+        guard result >= 0 else { return [] }
+        defer { mpv_free_node_contents(&value) }
+
+        guard let rangesNode = Self.mapValue(forKey: "seekable-ranges", in: value),
+              rangesNode.format == MPV_FORMAT_NODE_ARRAY,
+              let list = rangesNode.u.list,
+              let values = list.pointee.values else {
+            return []
+        }
+
+        let count = Int(list.pointee.num)
+        guard count > 0 else { return [] }
+
+        var ranges: [ClosedRange<Double>] = []
+        ranges.reserveCapacity(count)
+
+        for index in 0..<count {
+            guard let range = Self.seekableRange(from: values[index]) else { continue }
+            ranges.append(range)
+        }
+
+        return ranges
+    }
+
     nonisolated static func intProperty(_ name: String, from handle: OpaquePointer) -> Int64? {
         var value: Int64 = 0
         let result = mpv_get_property(handle, name, MPV_FORMAT_INT64, &value)
@@ -462,6 +510,74 @@ private extension MPVPlaybackEngine {
         }
         defer { mpv_free(cString) }
         return String(cString: cString)
+    }
+
+    nonisolated static func mapValue(forKey key: String, in node: mpv_node) -> mpv_node? {
+        guard node.format == MPV_FORMAT_NODE_MAP,
+              let list = node.u.list,
+              let keys = list.pointee.keys,
+              let values = list.pointee.values else {
+            return nil
+        }
+
+        let count = Int(list.pointee.num)
+        guard count > 0 else { return nil }
+
+        for index in 0..<count {
+            guard let rawKey = keys[index], String(cString: rawKey) == key else { continue }
+            return values[index]
+        }
+
+        return nil
+    }
+
+    nonisolated static func numericValue(from node: mpv_node) -> Double? {
+        switch node.format {
+        case MPV_FORMAT_DOUBLE:
+            return node.u.double_.isFinite ? node.u.double_ : nil
+        case MPV_FORMAT_INT64:
+            return Double(node.u.int64)
+        default:
+            return nil
+        }
+    }
+
+    nonisolated static func seekableRange(from node: mpv_node) -> ClosedRange<Double>? {
+        guard let startNode = mapValue(forKey: "start", in: node),
+              let endNode = mapValue(forKey: "end", in: node),
+              let start = numericValue(from: startNode),
+              let end = numericValue(from: endNode),
+              start.isFinite,
+              end.isFinite,
+              end > start else {
+            return nil
+        }
+
+        return start...end
+    }
+
+    nonisolated static func resolveSeekableRange(
+        from ranges: [ClosedRange<Double>],
+        currentTime: Double
+    ) -> ClosedRange<Double>? {
+        guard ranges.isEmpty == false else { return nil }
+
+        let matchingRanges = ranges.filter { range in
+            range.contains(currentTime)
+                || abs(range.lowerBound - currentTime) <= 0.5
+                || abs(range.upperBound - currentTime) <= 0.5
+        }
+
+        if let range = matchingRanges.max(by: { $0.upperBound < $1.upperBound }) {
+            return range
+        }
+
+        return ranges.max(by: { $0.upperBound < $1.upperBound })
+    }
+
+    func debugDescription(for range: ClosedRange<Double>?) -> String {
+        guard let range else { return "nil" }
+        return "\(range.lowerBound)...\(range.upperBound)"
     }
 
     func startEventPump(using handle: OpaquePointer) {

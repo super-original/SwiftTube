@@ -387,6 +387,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var storyboard: StoryboardSpec? = nil
     @Published private(set) var sponsorSegments: [SponsorBlockSegment] = []
     @Published private(set) var manualSkipSponsorSegment: SponsorBlockSegment? = nil
+    @Published private(set) var liveSeekableRange: ClosedRange<Double>? = nil
     /// Non-nil while the cursor hovers over the scrubber track (0…1 fraction of track width).
     @Published var scrubHoverFraction: Double? = nil
     @Published var volume: Double = 0.9 {
@@ -531,7 +532,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     var liveLatencySeconds: Double {
         guard isLivePlayback else { return 0 }
         let t = isScrubbing ? scrubPosition : currentTime
-        return max(duration - t, 0)
+        return max(scrubberUpperBound - t, 0)
     }
 
     var isAtLiveEdge: Bool {
@@ -547,9 +548,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var remainingTimeText: String {
-        guard duration > 0 else { return "--:--" }
+        guard scrubberUpperBound > scrubberLowerBound else { return "--:--" }
         let t = isScrubbing ? scrubPosition : currentTime
-        return "-\(formatTime(max(duration - t, 0)))"
+        return "-\(formatTime(max(scrubberUpperBound - t, 0)))"
     }
 
     /// Fraction (0…1) to use for the scrub preview thumbnail.
@@ -558,12 +559,37 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     /// Falls back to the slider value fraction when dragging and no hover is active.
     var scrubPreviewFraction: Double? {
         if let hover = scrubHoverFraction { return hover }
-        if isScrubbing, scrubberUpperBound > 0 { return scrubPosition / scrubberUpperBound }
+        if isScrubbing { return scrubberFraction(for: scrubPosition) }
         return nil
     }
 
+    var scrubberLowerBound: Double {
+        if isLivePlayback, let liveSeekableRange {
+            return liveSeekableRange.lowerBound
+        }
+        return 0
+    }
+
     var scrubberUpperBound: Double {
-        max(duration, 1)
+        if isLivePlayback, let liveSeekableRange {
+            return liveSeekableRange.upperBound
+        }
+        return max(duration, 0)
+    }
+
+    var scrubberRange: ClosedRange<Double> {
+        let lower = scrubberLowerBound
+        let upper = scrubberUpperBound
+        guard upper > lower else { return lower...(lower + 1) }
+        return lower...upper
+    }
+
+    var scrubberSpan: Double {
+        max(scrubberUpperBound - scrubberLowerBound, 0)
+    }
+
+    var hasSeekableTimeline: Bool {
+        scrubberSpan > 0.001
     }
 
     var displayedScrubPosition: Double {
@@ -623,6 +649,19 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         initialStartTime = max(0, seconds)
     }
 
+    func scrubberFraction(for time: Double) -> Double? {
+        let span = scrubberSpan
+        guard span > 0 else { return nil }
+        return max(0, min(1, (clampToScrubberBounds(time) - scrubberLowerBound) / span))
+    }
+
+    func scrubberTime(forFraction fraction: Double) -> Double {
+        let clampedFraction = max(0, min(1, fraction))
+        let span = scrubberSpan
+        guard span > 0 else { return scrubberLowerBound }
+        return scrubberLowerBound + (span * clampedFraction)
+    }
+
     func updateSponsorSegments(_ segments: [SponsorBlockSegment]) {
         sponsorSegments = segments.sorted { lhs, rhs in
             lhs.startTime == rhs.startTime
@@ -669,6 +708,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         storyboard = nil
         sponsorSegments = []
         manualSkipSponsorSegment = nil
+        liveSeekableRange = nil
         scrubHoverFraction = nil
         wasPlayingBeforeScrub = false
         lastInteractionAt = Date()
@@ -762,7 +802,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         noteInteraction()
 
         if isEditing {
-            scrubPosition = currentTime
+            scrubPosition = clampToScrubberBounds(currentTime)
             stopHideMonitor()
             // Pause the video so fast seeks show a held frame rather than
             // briefly playing from each keyframe before the next seek arrives.
@@ -778,7 +818,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     func updateScrubPosition(_ value: Double) {
-        scrubPosition = value
+        scrubPosition = clampToScrubberBounds(value)
         noteInteraction()
     }
 
@@ -934,11 +974,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     func seekRelative(_ seconds: Double) {
-        guard mpvEngine != nil, duration > 0 else { return }
+        guard mpvEngine != nil, hasSeekableTimeline else { return }
         noteInteraction()
         let amount = Int(seconds)
         showFeedback(amount >= 0 ? .seekForward(amount) : .seekBackward(-amount))
-        let target = max(0, min(currentTime + seconds, duration))
+        let target = clampToScrubberBounds(currentTime + seconds)
         scrubPosition = target
         currentTime = target
         Task { [weak self] in
@@ -949,9 +989,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     func seek(to seconds: Double) {
-        guard mpvEngine != nil, duration > 0 else { return }
+        guard mpvEngine != nil, hasSeekableTimeline else { return }
         noteInteraction()
-        let target = max(0, min(seconds, duration))
+        let target = clampToScrubberBounds(seconds)
         scrubPosition = target
         currentTime = target
         didReachPlaybackEnd = false
@@ -1407,7 +1447,15 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private var shouldRestartFromEnd: Bool {
-        didReachPlaybackEnd || (duration > 0 && currentTime >= max(duration - 0.35, 0))
+        guard !isLivePlayback else { return didReachPlaybackEnd }
+        return didReachPlaybackEnd || (duration > 0 && currentTime >= max(duration - 0.35, 0))
+    }
+
+    private func clampToScrubberBounds(_ value: Double) -> Double {
+        let lower = scrubberLowerBound
+        let upper = scrubberUpperBound
+        guard upper > lower else { return max(value, lower) }
+        return min(max(value, lower), upper)
     }
 
     private func seekToScrubPosition() {
@@ -1415,7 +1463,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         didReachPlaybackEnd = false
         Task { [weak self] in
             guard let self, let mpvEngine else { return }
-            let target = min(scrubPosition, scrubberUpperBound)
+            let target = clampToScrubberBounds(scrubPosition)
             suppressSponsorSegmentIfUserSeekedIntoOne(at: target)
             currentTime = target
             scrubPosition = target
@@ -1578,6 +1626,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         if !isScrubbing {
             scrubPosition = currentTime
         }
+        liveSeekableRange = isLivePlayback ? snapshot.liveSeekableRange : nil
         if snapshot.duration > 0 {
             duration = sanitizeSeconds(snapshot.duration)
         }

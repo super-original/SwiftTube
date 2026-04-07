@@ -2744,7 +2744,7 @@ private struct PlayerControlBar: View {
                         get: { coordinator.displayedScrubPosition },
                         set: { coordinator.updateScrubPosition($0) }
                     ),
-                    in: 0...coordinator.scrubberUpperBound,
+                    in: coordinator.scrubberRange,
                     onEditingChanged: { isEditing in
                         coordinator.setScrubbing(isEditing)
                         // Always clear the hover fraction so scrubPreviewFraction falls
@@ -2753,7 +2753,7 @@ private struct PlayerControlBar: View {
                         coordinator.scrubHoverFraction = nil
                     }
                 )
-                .disabled(coordinator.duration <= 0)
+                .disabled(!coordinator.hasSeekableTimeline)
                 .accessibilityLabel("Playback position")
             }
             // Measure the ZStack width (= Slider width) without affecting layout.
@@ -2769,7 +2769,7 @@ private struct PlayerControlBar: View {
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let loc):
-                    guard coordinator.duration > 0, sliderWidth > 0 else { return }
+                    guard coordinator.hasSeekableTimeline, sliderWidth > 0 else { return }
                     let trackInset: CGFloat = 10
                     let trackW = max(1, sliderWidth - trackInset * 2)
                     coordinator.scrubHoverFraction = max(0, min(1, (loc.x - trackInset) / trackW))
@@ -2839,7 +2839,7 @@ private struct PlayerControlBar: View {
         PlaybackDebugLogger.log(
             "player scrubber width=\(Int(width.rounded())) previous=\(Int(lastMeasuredSliderWidth.rounded())) " +
             "isScrubbing=\(coordinator.isScrubbing) sponsorSegments=\(coordinator.visibleSponsorSegments.count) " +
-            "duration=\(coordinator.duration)"
+            "duration=\(coordinator.duration) liveRange=\(String(describing: coordinator.liveSeekableRange))"
         )
         lastMeasuredSliderWidth = width
     }
@@ -3853,8 +3853,8 @@ private struct ScrubPreviewPositioned: View {
     var body: some View {
         if let fraction = coordinator.scrubPreviewFraction,
            let spec = coordinator.storyboard,
-           coordinator.duration > 0 {
-            let hoverTime = min(fraction * coordinator.duration, coordinator.duration)
+           coordinator.hasSeekableTimeline {
+            let hoverTime = coordinator.scrubberTime(forFraction: fraction)
 
             // Tile display dimensions (independent of raw storyboard pixel size).
             let dispW = previewDisplayWidth

@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.14
+
+- Reworked live DVR scrubbing to read MPV's actual seekable live-range window instead of pretending livestreams always run from `0...duration`, which keeps the thumb moving across the real cached range, makes the `LIVE` button seek to the true edge, and lets live hover math use the same DVR coordinates.
+
 ## 0.13.13
 
 - Reworked live DVR playback so active livestreams prefer the manifest path before quality-based stream selection, changed the player scrubber to a clickable YouTube-style `LIVE` indicator with red or gray state instead of odd live time text, showed negative hover timestamps for live DVR previews, and pulled the standard watch-page live chat card back up so it stops closer to the action row.
