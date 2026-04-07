@@ -1460,6 +1460,15 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var commentCountText: String? = nil
     @Published private(set) var isLoadingComments = false
     @Published private(set) var isLoadingRecommendations = false
+    @Published private(set) var liveChatMessages: [LiveChatMessage] = []
+    @Published private(set) var liveChatComposer: LiveChatComposer? = nil
+    @Published private(set) var liveChatMode: LiveChatMode = .top
+    @Published private(set) var isLoadingLiveChat = false
+    @Published private(set) var liveChatErrorMessage: String? = nil
+    @Published private(set) var transcriptSegments: [TranscriptSegment] = []
+    @Published private(set) var transcriptTrack: SubtitleTrack? = nil
+    @Published private(set) var isLoadingTranscript = false
+    @Published private(set) var transcriptErrorMessage: String? = nil
     @Published private(set) var playbackLoadID = UUID()
     @Published private(set) var playlistOptions: [PlaylistOption] = []
     @Published private(set) var isLoadingPlaylistOptions = false
@@ -1468,6 +1477,9 @@ final class PlayerViewModel: ObservableObject {
     private var loadTask: Task<Void, Never>? = nil
     private var commentsTask: Task<Void, Never>? = nil
     private var sponsorSegmentsTask: Task<Void, Never>? = nil
+    private var liveChatTask: Task<Void, Never>? = nil
+    private var liveChatPollTask: Task<Void, Never>? = nil
+    private var transcriptTask: Task<Void, Never>? = nil
     private var commentsContinuation: String? = nil
     private var recommendationsContinuation: String? = nil
     private let mutationCenter = AppMutationCenter.shared
@@ -1480,6 +1492,9 @@ final class PlayerViewModel: ObservableObject {
         loadTask?.cancel()
         commentsTask?.cancel()
         sponsorSegmentsTask?.cancel()
+        liveChatTask?.cancel()
+        liveChatPollTask?.cancel()
+        transcriptTask?.cancel()
         loadTask = Task {
             await fetchPlayback()
         }
@@ -1489,6 +1504,9 @@ final class PlayerViewModel: ObservableObject {
         loadTask?.cancel()
         commentsTask?.cancel()
         sponsorSegmentsTask?.cancel()
+        liveChatTask?.cancel()
+        liveChatPollTask?.cancel()
+        transcriptTask?.cancel()
     }
 
     func reportPlaybackProgress(
@@ -1531,6 +1549,18 @@ final class PlayerViewModel: ObservableObject {
         isLoadingComments = false
         isLoadingRecommendations = false
         sponsorSegmentsTask?.cancel()
+        liveChatTask?.cancel()
+        liveChatPollTask?.cancel()
+        transcriptTask?.cancel()
+        liveChatMessages = []
+        liveChatComposer = nil
+        liveChatMode = .top
+        isLoadingLiveChat = false
+        liveChatErrorMessage = nil
+        transcriptSegments = []
+        transcriptTrack = nil
+        isLoadingTranscript = false
+        transcriptErrorMessage = nil
         commentsContinuation = nil
         recommendationsContinuation = nil
         playlistOptions = []
@@ -1545,10 +1575,13 @@ final class PlayerViewModel: ObservableObject {
             self.commentCountText = playback.commentCountText
             self.isLoadingComments = false
             self.recommendationsContinuation = playback.recommendationsContinuation
+            self.liveChatMode = playback.liveChat?.defaultMode ?? .top
             isLoading = false
             playbackLoadID = UUID()
             loadSponsorSegments(for: playback)
             startCommentsLoad()
+            startLiveChatLoadIfAvailable(for: playback)
+            startTranscriptLoad(for: playback)
         } catch {
             guard !Task.isCancelled else { return }
             playback = nil
@@ -1556,6 +1589,12 @@ final class PlayerViewModel: ObservableObject {
             recommendations = []
             commentCountText = nil
             isLoadingComments = false
+            liveChatMessages = []
+            liveChatComposer = nil
+            liveChatErrorMessage = nil
+            transcriptSegments = []
+            transcriptTrack = nil
+            transcriptErrorMessage = nil
             errorMessage = "Failed to load video."
             isLoading = false
             playbackLoadID = UUID()
@@ -1697,6 +1736,253 @@ final class PlayerViewModel: ObservableObject {
             }
         } catch {
             guard !Task.isCancelled else { return }
+        }
+    }
+
+    func selectLiveChatMode(_ mode: LiveChatMode) {
+        guard liveChatMode != mode else { return }
+        liveChatMode = mode
+        liveChatMessages = []
+        liveChatErrorMessage = nil
+        liveChatTask?.cancel()
+        liveChatPollTask?.cancel()
+        liveChatTask = Task { [weak self] in
+            await self?.fetchLiveChat()
+        }
+    }
+
+    func sendLiveChatMessage(_ text: String) {
+        guard let composer = liveChatComposer,
+              let sendParams = composer.sendParams,
+              let datasyncId = composer.datasyncId else {
+            return
+        }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return }
+
+        let optimisticMessage = LiveChatMessage(
+            id: "local-\(UUID().uuidString)",
+            kind: .text,
+            author: composer.authorName,
+            authorChannelId: nil,
+            avatarUrl: nil,
+            fragments: optimisticLiveChatFragments(for: trimmed),
+            timestampUsec: String(Int64(Date().timeIntervalSince1970 * 1_000_000)),
+            purchaseAmountText: nil,
+            isVerified: false,
+            isOwner: false,
+            isModerator: false,
+            isMember: false,
+            isPending: true
+        )
+
+        liveChatMessages.append(optimisticMessage)
+        trimLiveChatMessageWindow()
+        liveChatErrorMessage = nil
+
+        Task {
+            do {
+                try await BackendClient.shared.sendLiveChatMessage(
+                    message: trimmed,
+                    params: sendParams,
+                    datasyncId: datasyncId,
+                    clientIdPrefix: composer.clientIdPrefix
+                )
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self.liveChatMessages.removeAll { $0.id == optimisticMessage.id }
+                    self.liveChatErrorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func startLiveChatLoadIfAvailable(for playback: VideoPlayback) {
+        guard playback.liveChat != nil else { return }
+        liveChatTask?.cancel()
+        liveChatPollTask?.cancel()
+        liveChatTask = Task { [weak self] in
+            await self?.fetchLiveChat()
+        }
+    }
+
+    private func fetchLiveChat(continuation: String? = nil) async {
+        guard playback?.liveChat != nil else { return }
+
+        if continuation == nil {
+            isLoadingLiveChat = true
+            liveChatErrorMessage = nil
+        }
+
+        defer {
+            if continuation == nil {
+                isLoadingLiveChat = false
+            }
+        }
+
+        do {
+            let response = try await BackendClient.shared.fetchLiveChat(
+                id: video.id,
+                mode: liveChatMode,
+                continuation: continuation
+            )
+            guard !Task.isCancelled else { return }
+
+            if continuation == nil {
+                liveChatMessages = []
+            }
+            applyLiveChat(response)
+
+            if continuation == nil {
+                startLiveChatPolling(
+                    initialContinuation: response.continuation,
+                    delayMs: response.timeoutMs ?? 5_000
+                )
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            if continuation == nil {
+                liveChatErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func startLiveChatPolling(initialContinuation: String?, delayMs: Int) {
+        liveChatPollTask?.cancel()
+        guard let initialContinuation else { return }
+
+        liveChatPollTask = Task { [weak self] in
+            guard let self else { return }
+
+            var continuation: String? = initialContinuation
+            var nextDelayMs = max(delayMs, 1_500)
+
+            while !Task.isCancelled, let activeContinuation = continuation {
+                try? await Task.sleep(nanoseconds: UInt64(nextDelayMs) * 1_000_000)
+                guard !Task.isCancelled else { return }
+
+                do {
+                    let response = try await BackendClient.shared.fetchLiveChat(
+                        id: self.video.id,
+                        mode: self.liveChatMode,
+                        continuation: activeContinuation
+                    )
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        self.applyLiveChat(response)
+                    }
+                    continuation = response.continuation
+                    nextDelayMs = max(response.timeoutMs ?? nextDelayMs, 1_500)
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    nextDelayMs = 5_000
+                }
+            }
+        }
+    }
+
+    private func applyLiveChat(_ response: LiveChatResponse) {
+        liveChatComposer = response.composer ?? liveChatComposer
+        liveChatErrorMessage = nil
+
+        var merged = liveChatMessages
+        let pendingMessages = merged.filter(\.isPending)
+        merged.removeAll { message in
+            response.removedMessageIDs.contains(message.id)
+        }
+
+        for message in response.replacedMessages {
+            if let index = merged.firstIndex(where: { $0.id == message.id }) {
+                merged[index] = message
+            } else {
+                merged.append(message)
+            }
+        }
+
+        for message in response.messages {
+            if let index = merged.firstIndex(where: { $0.id == message.id }) {
+                merged[index] = message
+            } else {
+                merged.append(message)
+            }
+        }
+
+        let remoteFingerprints = Set(response.messages.map(\.plainText))
+        let retainedPending = pendingMessages.filter { pending in
+            remoteFingerprints.contains(pending.plainText) == false
+        }
+
+        merged.removeAll { $0.isPending }
+        merged.append(contentsOf: retainedPending)
+        liveChatMessages = merged
+        trimLiveChatMessageWindow()
+    }
+
+    private func trimLiveChatMessageWindow() {
+        let maximumMessages = 250
+        if liveChatMessages.count > maximumMessages {
+            liveChatMessages = Array(liveChatMessages.suffix(maximumMessages))
+        }
+    }
+
+    private func startTranscriptLoad(for playback: VideoPlayback) {
+        transcriptTask?.cancel()
+        transcriptTask = Task { [weak self] in
+            await self?.fetchTranscript(for: playback)
+        }
+    }
+
+    private func fetchTranscript(for playback: VideoPlayback) async {
+        let track = preferredTranscriptTrack(from: playback)
+        transcriptTrack = track
+
+        guard let track else {
+            transcriptSegments = []
+            transcriptErrorMessage = nil
+            return
+        }
+
+        isLoadingTranscript = true
+        transcriptErrorMessage = nil
+        defer { isLoadingTranscript = false }
+
+        do {
+            let response = try await BackendClient.shared.fetchTranscript(track: track)
+            guard !Task.isCancelled else { return }
+            transcriptTrack = response.track
+            transcriptSegments = response.segments
+        } catch {
+            guard !Task.isCancelled else { return }
+            transcriptSegments = []
+            transcriptErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func preferredTranscriptTrack(from playback: VideoPlayback) -> SubtitleTrack? {
+        let subtitles = playback.subtitles ?? []
+        if subtitles.isEmpty { return nil }
+
+        return subtitles.first(where: { $0.isAutoGenerated == false && $0.language.lowercased().hasPrefix("en") })
+            ?? subtitles.first(where: { $0.language.lowercased().hasPrefix("en") })
+            ?? subtitles.first(where: { $0.isAutoGenerated == false })
+            ?? subtitles.first
+    }
+
+    private func optimisticLiveChatFragments(for message: String) -> [LiveChatMessageFragment] {
+        let parts = message.split(separator: " ", omittingEmptySubsequences: false)
+        return parts.enumerated().map { index, part in
+            let text = String(part)
+            let kind: LiveChatMessageFragmentKind = text.hasPrefix("@") ? .mention : .text
+            let suffix = index < parts.count - 1 ? " " : ""
+            return LiveChatMessageFragment(
+                id: "local-\(index)",
+                text: text + suffix,
+                kind: kind,
+                url: nil,
+                emojiImageUrl: nil
+            )
         }
     }
 

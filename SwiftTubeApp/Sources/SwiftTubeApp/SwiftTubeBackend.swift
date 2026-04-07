@@ -401,6 +401,69 @@ actor SwiftTubeBackend {
         return try await buildCommentsResponse(videoID: videoID, authenticated: false)
     }
 
+    func fetchLiveChat(
+        id videoID: String,
+        mode: LiveChatMode,
+        continuation: String? = nil
+    ) async throws -> LiveChatResponse {
+        let usingAuth = await authManager.currentMaterial() != nil
+
+        if usingAuth {
+            do {
+                return try await buildLiveChatResponse(
+                    videoID: videoID,
+                    mode: mode,
+                    continuation: continuation,
+                    authenticated: true
+                )
+            } catch {
+                // Live chat endpoints can fail for stream-specific reasons. Fall through publicly.
+            }
+        }
+
+        return try await buildLiveChatResponse(
+            videoID: videoID,
+            mode: mode,
+            continuation: continuation,
+            authenticated: false
+        )
+    }
+
+    func sendLiveChatMessage(
+        message: String,
+        params: String,
+        datasyncId: String,
+        clientIdPrefix: String?
+    ) async throws {
+        _ = try await requireAuthenticatedMaterial()
+
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            throw BackendClientError(message: "Write a message before sending it.")
+        }
+
+        _ = try await api.sendLiveChatMessage(
+            message: trimmed,
+            params: params,
+            datasyncId: datasyncId,
+            clientMessageId: makeLiveChatClientMessageID(prefix: clientIdPrefix)
+        )
+    }
+
+    func fetchTranscript(track: SubtitleTrack?) async throws -> TranscriptResponse {
+        guard let track else {
+            return TranscriptResponse(track: nil, segments: [])
+        }
+
+        guard let url = transcriptURL(for: track.url) else {
+            throw BackendClientError(message: "This transcript track has an invalid URL.")
+        }
+
+        let text = try await api.fetchText(from: url, authenticated: false)
+        let segments = parseTranscriptSegments(from: text)
+        return TranscriptResponse(track: track, segments: segments)
+    }
+
     func fetchPlaylistOptions(id videoID: String) async throws -> PlaylistOptionsResponse {
         let (watchData, _) = try await loadWatchDataForActions(videoID: videoID)
         let clientCommand = extractWatchPageSaveCommand(from: watchData)
@@ -613,6 +676,53 @@ actor SwiftTubeBackend {
         )
     }
 
+    private func buildLiveChatResponse(
+        videoID: String,
+        mode: LiveChatMode,
+        continuation: String?,
+        authenticated: Bool
+    ) async throws -> LiveChatResponse {
+        let resolvedContinuation: String
+        if let continuation, continuation.isEmpty == false {
+            resolvedContinuation = continuation
+        } else {
+            let watchData = try await api.next(videoID: videoID, authenticated: authenticated)
+            guard let session = extractLiveChatSession(from: watchData) else {
+                throw BackendClientError(message: "Live chat isn’t available for this video.")
+            }
+
+            let preferredContinuation: String?
+            switch mode {
+            case .top:
+                preferredContinuation = session.topChatContinuation ?? session.initialContinuation
+            case .live:
+                preferredContinuation = session.liveChatContinuation ?? session.initialContinuation
+            }
+
+            guard let preferredContinuation, preferredContinuation.isEmpty == false else {
+                throw BackendClientError(message: "Live chat isn’t available for this mode right now.")
+            }
+
+            resolvedContinuation = preferredContinuation
+        }
+
+        let data = try await api.liveChat(continuation: resolvedContinuation, authenticated: authenticated)
+        return extractLiveChatResponse(from: data, requestedMode: mode)
+    }
+
+    private func makeLiveChatClientMessageID(prefix: String?) -> String {
+        let base = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-")
+        let resolvedPrefix: String
+        if let prefix, prefix.isEmpty == false {
+            resolvedPrefix = prefix
+        } else {
+            resolvedPrefix = String((0..<26).map { _ in base.randomElement() ?? "a" })
+        }
+
+        let counter = Int(Date().timeIntervalSince1970 * 1000) % Int.max
+        return "\(resolvedPrefix)\(counter)"
+    }
+
     private func buildRelatedResponse(
         videoID: String,
         continuation: String?,
@@ -712,6 +822,8 @@ actor SwiftTubeBackend {
             throw BackendClientError(message: "No playable streams found")
         }
         let details = playerData["videoDetails"] as? JSONDictionary
+        let webDetails = webPlayerData["videoDetails"] as? JSONDictionary
+        let mwebDetails = mwebPlayerData["videoDetails"] as? JSONDictionary
         let title: String? = metadata["title"] ?? preferredYTDLPPlayback?.title ?? (details?["title"] as? String)
         let duration = metadata["durationText"] ?? preferredYTDLPPlayback?.durationText ?? metadataDurationText(from: details)
         let durationSeconds = parseDurationSeconds(from: duration)
@@ -719,12 +831,15 @@ actor SwiftTubeBackend {
         if let tracking {
             trackingCache[videoID] = tracking
         }
+        let liveChatSession = extractLiveChatSession(from: watchData)
         let progress = mergeVideoProgress(
             remote: nil,
             local: await watchHistoryStore.progressEntry(for: videoID),
             durationSeconds: durationSeconds
         )
         let relatedItems = await mergeStoredProgress(into: extractRelatedVideos(from: watchData, currentVideoID: videoID))
+        let isLive = [details, webDetails, mwebDetails].contains { ($0?["isLive"] as? Bool) == true || ($0?["isLiveContent"] as? Bool) == true }
+        let isUpcoming = [details, webDetails, mwebDetails].contains { ($0?["isUpcoming"] as? Bool) == true }
 
         return VideoPlayback(
             id: videoID,
@@ -761,7 +876,10 @@ actor SwiftTubeBackend {
             playlistSaveEnabled: extractWatchPageSaveCommand(from: watchData) != nil,
             recommendationsContinuation: extractRelatedContinuationToken(from: watchData),
             tags: playbackTags,
-            accessIssue: accessIssue
+            accessIssue: accessIssue,
+            isLive: isLive,
+            isUpcoming: isUpcoming,
+            liveChat: liveChatSession
         )
     }
 
@@ -1313,6 +1431,54 @@ private func parseStreams(from playerResponse: JSONDictionary, defaultHeaders: [
 
     var results: [StreamInfo] = []
 
+    if let hlsManifestURL = streaming["hlsManifestUrl"] as? String, hlsManifestURL.isEmpty == false {
+        results.append(
+            StreamInfo(
+                url: hlsManifestURL,
+                formatId: "hls-manifest",
+                mimeType: "application/x-mpegURL",
+                qualityLabel: nil,
+                httpHeaders: defaultHeaders,
+                bitrate: nil,
+                width: nil,
+                height: nil,
+                fps: nil,
+                audioChannels: nil,
+                audioCodec: nil,
+                videoCodec: nil,
+                container: "m3u8",
+                hasAudio: true,
+                hasVideo: true,
+                isAdaptive: false,
+                streamKind: "manifest"
+            )
+        )
+    }
+
+    if let dashManifestURL = streaming["dashManifestUrl"] as? String, dashManifestURL.isEmpty == false {
+        results.append(
+            StreamInfo(
+                url: dashManifestURL,
+                formatId: "dash-manifest",
+                mimeType: "application/dash+xml",
+                qualityLabel: nil,
+                httpHeaders: defaultHeaders,
+                bitrate: nil,
+                width: nil,
+                height: nil,
+                fps: nil,
+                audioChannels: nil,
+                audioCodec: nil,
+                videoCodec: nil,
+                container: "mpd",
+                hasAudio: true,
+                hasVideo: true,
+                isAdaptive: false,
+                streamKind: "manifest"
+            )
+        )
+    }
+
     for key in ["formats", "adaptiveFormats"] {
         guard let entries = streaming[key] as? [Any] else { continue }
         for entry in entries {
@@ -1443,6 +1609,479 @@ private func extractSubtitles(from playerData: JSONDictionary) -> [SubtitleTrack
             isAutoGenerated: kind == "asr"
         )
     }
+}
+
+private func extractLiveChatSession(from watchData: JSONDictionary) -> LiveChatSession? {
+    guard let renderer = (((((watchData["contents"] as? JSONDictionary)?["twoColumnWatchNextResults"] as? JSONDictionary)?["conversationBar"] as? JSONDictionary)?["liveChatRenderer"] as? JSONDictionary)) else {
+        return nil
+    }
+
+    let initialContinuation = extractLiveChatContinuationToken(from: renderer["continuations"]).token
+    let subMenuItems = ((((renderer["header"] as? JSONDictionary)?["liveChatHeaderRenderer"] as? JSONDictionary)?["viewSelector"] as? JSONDictionary)?["sortFilterSubMenuRenderer"] as? JSONDictionary)?["subMenuItems"] as? [Any] ?? []
+
+    var topChatContinuation: String?
+    var liveChatContinuation: String?
+    var defaultMode: LiveChatMode = .top
+
+    for item in subMenuItems {
+        guard let item = item as? JSONDictionary else { continue }
+        let title = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let continuation = extractLiveChatContinuationToken(from: item["continuation"]).token
+
+        if title.contains("live") {
+            liveChatContinuation = continuation
+            if (item["selected"] as? Bool) == true {
+                defaultMode = .live
+            }
+        } else {
+            topChatContinuation = continuation
+            if (item["selected"] as? Bool) == true {
+                defaultMode = .top
+            }
+        }
+    }
+
+    guard initialContinuation != nil || topChatContinuation != nil || liveChatContinuation != nil else {
+        return nil
+    }
+
+    return LiveChatSession(
+        initialContinuation: initialContinuation,
+        topChatContinuation: topChatContinuation,
+        liveChatContinuation: liveChatContinuation,
+        defaultMode: defaultMode
+    )
+}
+
+private func extractLiveChatResponse(
+    from data: JSONDictionary,
+    requestedMode: LiveChatMode
+) -> LiveChatResponse {
+    let continuation = ((data["continuationContents"] as? JSONDictionary)?["liveChatContinuation"] as? JSONDictionary) ?? [:]
+    let actions = continuation["actions"] as? [Any] ?? []
+    let deltas = extractLiveChatMessageDeltas(from: actions)
+    let continuationPayload = extractLiveChatContinuationToken(from: continuation["continuations"])
+    let responseContext = data["responseContext"] as? JSONDictionary
+
+    return LiveChatResponse(
+        mode: requestedMode,
+        messages: deltas.messages,
+        replacedMessages: deltas.replacedMessages,
+        removedMessageIDs: deltas.removedMessageIDs,
+        continuation: continuationPayload.token,
+        timeoutMs: continuationPayload.timeoutMs,
+        composer: extractLiveChatComposer(from: continuation, responseContext: responseContext),
+        viewerName: textValue(from: continuation["viewerName"])
+    )
+}
+
+private func extractLiveChatMessageDeltas(from actions: [Any]) -> (
+    messages: [LiveChatMessage],
+    replacedMessages: [LiveChatMessage],
+    removedMessageIDs: [String]
+) {
+    var messages: [LiveChatMessage] = []
+    var replacedMessages: [LiveChatMessage] = []
+    var removedMessageIDs: [String] = []
+
+    for action in actions {
+        guard let action = action as? JSONDictionary else { continue }
+
+        if let addChatItemAction = action["addChatItemAction"] as? JSONDictionary,
+           let item = addChatItemAction["item"],
+           let message = extractLiveChatMessage(from: item) {
+            messages.append(message)
+        }
+
+        if let replaceChatItemAction = action["replaceChatItemAction"] as? JSONDictionary,
+           let item = replaceChatItemAction["replacementItem"],
+           let message = extractLiveChatMessage(from: item) {
+            replacedMessages.append(message)
+        }
+
+        if let removeChatItemAction = action["removeChatItemAction"] as? JSONDictionary,
+           let targetItemID = removeChatItemAction["targetItemId"] as? String,
+           targetItemID.isEmpty == false {
+            removedMessageIDs.append(targetItemID)
+        }
+    }
+
+    return (messages, replacedMessages, removedMessageIDs)
+}
+
+private func extractLiveChatMessage(from item: Any?) -> LiveChatMessage? {
+    guard let item = item as? JSONDictionary else { return nil }
+
+    if let renderer = item["liveChatTextMessageRenderer"] as? JSONDictionary {
+        return makeLiveChatMessage(
+            renderer: renderer,
+            kind: .text,
+            body: renderer["message"] as? JSONDictionary
+        )
+    }
+
+    if let renderer = item["liveChatPaidMessageRenderer"] as? JSONDictionary {
+        return makeLiveChatMessage(
+            renderer: renderer,
+            kind: .paid,
+            body: renderer["message"] as? JSONDictionary
+        )
+    }
+
+    if let renderer = item["liveChatPaidStickerRenderer"] as? JSONDictionary {
+        let stickerLabel = textValue(from: ((renderer["sticker"] as? JSONDictionary)?["accessibility"] as? JSONDictionary)?["accessibilityData"])
+            ?? "Super Sticker"
+        return makeLiveChatMessage(
+            renderer: renderer,
+            kind: .paidSticker,
+            body: ["runs": [["text": stickerLabel]]]
+        )
+    }
+
+    if let renderer = item["liveChatMembershipItemRenderer"] as? JSONDictionary {
+        let membershipBody = (renderer["message"] as? JSONDictionary)
+            ?? (renderer["headerSubtext"] as? JSONDictionary)
+        return makeLiveChatMessage(
+            renderer: renderer,
+            kind: .membership,
+            body: membershipBody
+        )
+    }
+
+    if let renderer = item["liveChatViewerEngagementMessageRenderer"] as? JSONDictionary {
+        return LiveChatMessage(
+            id: renderer["id"] as? String ?? UUID().uuidString,
+            kind: .system,
+            author: "YouTube",
+            authorChannelId: nil,
+            avatarUrl: nil,
+            fragments: extractLiveChatFragments(from: renderer["message"] as? JSONDictionary),
+            timestampUsec: renderer["timestampUsec"] as? String,
+            purchaseAmountText: nil,
+            isVerified: false,
+            isOwner: false,
+            isModerator: false,
+            isMember: false,
+            isPending: false
+        )
+    }
+
+    return nil
+}
+
+private func makeLiveChatMessage(
+    renderer: JSONDictionary,
+    kind: LiveChatMessageKind,
+    body: JSONDictionary?
+) -> LiveChatMessage? {
+    let fragments = extractLiveChatFragments(from: body)
+    let authorName = textValue(from: renderer["authorName"])
+    let purchaseAmountText = textValue(from: renderer["purchaseAmountText"])
+    let messageID = renderer["id"] as? String ?? UUID().uuidString
+
+    guard authorName != nil || fragments.isEmpty == false || purchaseAmountText != nil else {
+        return nil
+    }
+
+    let authorBadges = renderer["authorBadges"] as? [Any] ?? []
+    let badgeKinds = Set(authorBadges.compactMap { badge -> String? in
+        let renderer = (badge as? JSONDictionary)?["liveChatAuthorBadgeRenderer"] as? JSONDictionary
+        return ((renderer?["icon"] as? JSONDictionary)?["iconType"] as? String)
+    })
+
+    let isMember = authorBadges.contains { badge in
+        let renderer = (badge as? JSONDictionary)?["liveChatAuthorBadgeRenderer"] as? JSONDictionary
+        return renderer?["customThumbnail"] != nil
+    }
+
+    return LiveChatMessage(
+        id: messageID,
+        kind: kind,
+        author: authorName,
+        authorChannelId: renderer["authorExternalChannelId"] as? String,
+        avatarUrl: bestThumbnailURL(thumbnails(from: renderer["authorPhoto"])),
+        fragments: fragments,
+        timestampUsec: renderer["timestampUsec"] as? String,
+        purchaseAmountText: purchaseAmountText,
+        isVerified: badgeKinds.contains("VERIFIED"),
+        isOwner: badgeKinds.contains("OWNER"),
+        isModerator: badgeKinds.contains("MODERATOR"),
+        isMember: isMember,
+        isPending: false
+    )
+}
+
+private func extractLiveChatFragments(from message: JSONDictionary?) -> [LiveChatMessageFragment] {
+    let runs = message?["runs"] as? [Any] ?? []
+    return runs.enumerated().compactMap { index, value in
+        guard let run = value as? JSONDictionary else { return nil }
+
+        if let emoji = run["emoji"] as? JSONDictionary {
+            let shortcut = (emoji["shortcuts"] as? [Any])?.compactMap { $0 as? String }.first
+            let emojiID = emoji["emojiId"] as? String
+            let displayText = (emoji["isCustomEmoji"] as? Bool) == true
+                ? (shortcut ?? emojiID ?? "")
+                : (emojiID ?? shortcut ?? "")
+
+            guard displayText.isEmpty == false else { return nil }
+
+            return LiveChatMessageFragment(
+                id: "emoji-\(index)",
+                text: displayText,
+                kind: .emoji,
+                url: nil,
+                emojiImageUrl: bestThumbnailURL(thumbnails(from: (emoji["image"] as? JSONDictionary)))
+            )
+        }
+
+        guard let text = run["text"] as? String, text.isEmpty == false else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let kind: LiveChatMessageFragmentKind
+        if trimmed.hasPrefix("@") {
+            kind = .mention
+        } else if extractCommandURL(from: run["navigationEndpoint"]) != nil {
+            kind = .link
+        } else {
+            kind = .text
+        }
+
+        return LiveChatMessageFragment(
+            id: "text-\(index)",
+            text: text,
+            kind: kind,
+            url: extractCommandURL(from: run["navigationEndpoint"]),
+            emojiImageUrl: nil
+        )
+    }
+}
+
+private func extractLiveChatComposer(
+    from continuation: JSONDictionary,
+    responseContext: JSONDictionary?
+) -> LiveChatComposer? {
+    if let renderer = (continuation["actionPanel"] as? JSONDictionary)?["liveChatMessageInputRenderer"] as? JSONDictionary {
+        let textInputField = ((renderer["inputField"] as? JSONDictionary)?["liveChatTextInputFieldRenderer"] as? JSONDictionary)
+        let sendEndpoint = (((renderer["sendButton"] as? JSONDictionary)?["buttonRenderer"] as? JSONDictionary)?["serviceEndpoint"] as? JSONDictionary)?["sendLiveChatMessageEndpoint"] as? JSONDictionary
+        let datasyncId = (((responseContext?["mainAppWebResponseContext"] as? JSONDictionary)?["datasyncId"] as? String))
+
+        return LiveChatComposer(
+            authorName: textValue(from: renderer["authorName"]),
+            placeholder: textValue(from: textInputField?["placeholder"]) ?? textValue(from: textInputField?["unselectedPlaceholder"]),
+            maxCharacterLimit: intValue(textInputField?["maxCharacterLimit"]) ?? 200,
+            sendParams: sendEndpoint?["params"] as? String,
+            clientIdPrefix: sendEndpoint?["clientIdPrefix"] as? String,
+            datasyncId: datasyncId,
+            restrictedMessage: nil
+        )
+    }
+
+    if let restricted = (continuation["actionPanel"] as? JSONDictionary)?["liveChatRestrictedParticipationRenderer"] as? JSONDictionary {
+        return LiveChatComposer(
+            authorName: nil,
+            placeholder: nil,
+            maxCharacterLimit: 0,
+            sendParams: nil,
+            clientIdPrefix: nil,
+            datasyncId: nil,
+            restrictedMessage: textValue(from: restricted["message"])
+        )
+    }
+
+    return nil
+}
+
+private func extractLiveChatContinuationToken(from value: Any?) -> (token: String?, timeoutMs: Int?) {
+    let entries: [Any]
+    if let list = value as? [Any] {
+        entries = list
+    } else if let dictionary = value as? JSONDictionary {
+        entries = [dictionary]
+    } else {
+        entries = []
+    }
+
+    for entry in entries {
+        guard let entry = entry as? JSONDictionary else { continue }
+
+        if let reload = entry["reloadContinuationData"] as? JSONDictionary,
+           let continuation = reload["continuation"] as? String,
+           continuation.isEmpty == false {
+            return (continuation, intValue(reload["timeoutMs"]))
+        }
+
+        if let invalidation = entry["invalidationContinuationData"] as? JSONDictionary,
+           let continuation = invalidation["continuation"] as? String,
+           continuation.isEmpty == false {
+            return (continuation, intValue(invalidation["timeoutMs"]))
+        }
+
+        if let timed = entry["timedContinuationData"] as? JSONDictionary,
+           let continuation = timed["continuation"] as? String,
+           continuation.isEmpty == false {
+            return (continuation, intValue(timed["timeoutMs"]))
+        }
+
+        if let replay = entry["liveChatReplayContinuationData"] as? JSONDictionary,
+           let continuation = replay["continuation"] as? String,
+           continuation.isEmpty == false {
+            return (continuation, intValue(replay["timeoutMs"]))
+        }
+    }
+
+    return (nil, nil)
+}
+
+private func transcriptURL(for baseURLString: String) -> URL? {
+    guard var components = URLComponents(string: baseURLString) else {
+        return nil
+    }
+
+    var queryItems = components.queryItems ?? []
+    queryItems.removeAll { $0.name == "fmt" }
+    queryItems.append(URLQueryItem(name: "fmt", value: "vtt"))
+    queryItems.append(URLQueryItem(name: "xorb", value: "2"))
+    components.queryItems = queryItems
+    return components.url
+}
+
+private func parseTranscriptSegments(from text: String) -> [TranscriptSegment] {
+    let vttSegments = parseWebVTTTranscriptSegments(from: text)
+    if vttSegments.isEmpty == false {
+        return vttSegments
+    }
+
+    return parseXMLTranscriptSegments(from: text)
+}
+
+private func parseWebVTTTranscriptSegments(from text: String) -> [TranscriptSegment] {
+    let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+    let blocks = normalized.components(separatedBy: "\n\n")
+    var segments: [TranscriptSegment] = []
+
+    for block in blocks {
+        let lines = block
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+
+        guard let timingIndex = lines.firstIndex(where: { $0.contains("-->") }) else { continue }
+        let timingParts = lines[timingIndex].components(separatedBy: "-->")
+        guard timingParts.count == 2,
+              let start = parseWebVTTTime(timingParts[0]),
+              let end = parseWebVTTTime(timingParts[1]) else {
+            continue
+        }
+
+        let caption = lines[(timingIndex + 1)...]
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleaned = decodeTranscriptText(caption)
+        guard cleaned.isEmpty == false else { continue }
+
+        segments.append(
+            TranscriptSegment(
+                id: "vtt-\(segments.count)",
+                startTime: start,
+                duration: max(end - start, 0),
+                text: cleaned
+            )
+        )
+    }
+
+    return segments
+}
+
+private func parseWebVTTTime(_ value: String) -> Double? {
+    let trimmed = value
+        .components(separatedBy: " ")
+        .first?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let parts = trimmed.split(separator: ":").map(String.init)
+    guard parts.count == 2 || parts.count == 3 else { return nil }
+
+    let secondsPart = parts.last ?? ""
+    let secondComponents = secondsPart.split(separator: ".").map(String.init)
+    guard let seconds = Double(secondComponents.first ?? "") else { return nil }
+    let fractional = secondComponents.count > 1 ? (Double("0.\(secondComponents[1])") ?? 0) : 0
+
+    if parts.count == 2 {
+        guard let minutes = Double(parts[0]) else { return nil }
+        return (minutes * 60) + seconds + fractional
+    }
+
+    guard let hours = Double(parts[0]), let minutes = Double(parts[1]) else { return nil }
+    return (hours * 3600) + (minutes * 60) + seconds + fractional
+}
+
+private func parseXMLTranscriptSegments(from text: String) -> [TranscriptSegment] {
+    let pattern = #"<(text|p)\b([^>]*)>(.*?)</\1>"#
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
+        return []
+    }
+
+    let nsText = text as NSString
+    let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+    var segments: [TranscriptSegment] = []
+
+    for match in matches {
+        guard match.numberOfRanges >= 4 else { continue }
+        let attributes = nsText.substring(with: match.range(at: 2))
+        let inner = nsText.substring(with: match.range(at: 3))
+
+        let start = attributeValue(named: "start", in: attributes).flatMap(Double.init)
+            ?? attributeValue(named: "t", in: attributes).flatMap { value in
+                Double(value).map { $0 / 1000 }
+            }
+        let duration = attributeValue(named: "dur", in: attributes).flatMap(Double.init)
+            ?? attributeValue(named: "d", in: attributes).flatMap { value in
+                Double(value).map { $0 / 1000 }
+            }
+
+        guard let start else { continue }
+        let cleaned = decodeTranscriptText(stripXMLTags(from: inner))
+        guard cleaned.isEmpty == false else { continue }
+
+        segments.append(
+            TranscriptSegment(
+                id: "xml-\(segments.count)",
+                startTime: start,
+                duration: duration ?? 0,
+                text: cleaned
+            )
+        )
+    }
+
+    return segments
+}
+
+private func attributeValue(named name: String, in attributes: String) -> String? {
+    let pattern = #"\b\#(name)=\"([^\"]+)\""#
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let nsAttributes = attributes as NSString
+    guard let match = regex.firstMatch(in: attributes, range: NSRange(location: 0, length: nsAttributes.length)),
+          match.numberOfRanges >= 2 else {
+        return nil
+    }
+    return nsAttributes.substring(with: match.range(at: 1))
+}
+
+private func stripXMLTags(from text: String) -> String {
+    text.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+}
+
+private func decodeTranscriptText(_ text: String) -> String {
+    let decoded = text
+        .replacingOccurrences(of: "&amp;", with: "&")
+        .replacingOccurrences(of: "&lt;", with: "<")
+        .replacingOccurrences(of: "&gt;", with: ">")
+        .replacingOccurrences(of: "&quot;", with: "\"")
+        .replacingOccurrences(of: "&#39;", with: "'")
+        .replacingOccurrences(of: "&nbsp;", with: " ")
+        .replacingOccurrences(of: "\n", with: " ")
+        .replacingOccurrences(of: "\u{00A0}", with: " ")
+
+    return decoded
+        .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 private func mergeVideoProgress(

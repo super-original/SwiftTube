@@ -425,6 +425,110 @@ struct CommentsResponse: Codable, Sendable {
     let continuation: String?
 }
 
+enum LiveChatMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case top
+    case live
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .top:
+            return "Top chat"
+        case .live:
+            return "Live chat"
+        }
+    }
+}
+
+struct LiveChatSession: Codable, Hashable, Sendable {
+    let initialContinuation: String?
+    let topChatContinuation: String?
+    let liveChatContinuation: String?
+    let defaultMode: LiveChatMode
+}
+
+enum LiveChatMessageFragmentKind: String, Codable, Hashable, Sendable {
+    case text
+    case mention
+    case link
+    case emoji
+}
+
+struct LiveChatMessageFragment: Codable, Hashable, Identifiable, Sendable {
+    let id: String
+    let text: String
+    let kind: LiveChatMessageFragmentKind
+    let url: String?
+    let emojiImageUrl: String?
+}
+
+enum LiveChatMessageKind: String, Codable, Hashable, Sendable {
+    case text
+    case paid
+    case paidSticker
+    case membership
+    case system
+}
+
+struct LiveChatMessage: Codable, Hashable, Identifiable, Sendable {
+    let id: String
+    let kind: LiveChatMessageKind
+    let author: String?
+    let authorChannelId: String?
+    let avatarUrl: String?
+    let fragments: [LiveChatMessageFragment]
+    let timestampUsec: String?
+    let purchaseAmountText: String?
+    let isVerified: Bool
+    let isOwner: Bool
+    let isModerator: Bool
+    let isMember: Bool
+    let isPending: Bool
+
+    var avatarURL: URL? {
+        guard let avatarUrl else { return nil }
+        return URL(string: avatarUrl)
+    }
+
+    var plainText: String {
+        fragments.map(\.text).joined()
+    }
+}
+
+struct LiveChatComposer: Codable, Hashable, Sendable {
+    let authorName: String?
+    let placeholder: String?
+    let maxCharacterLimit: Int
+    let sendParams: String?
+    let clientIdPrefix: String?
+    let datasyncId: String?
+    let restrictedMessage: String?
+}
+
+struct LiveChatResponse: Codable, Sendable {
+    let mode: LiveChatMode
+    let messages: [LiveChatMessage]
+    let replacedMessages: [LiveChatMessage]
+    let removedMessageIDs: [String]
+    let continuation: String?
+    let timeoutMs: Int?
+    let composer: LiveChatComposer?
+    let viewerName: String?
+}
+
+struct TranscriptSegment: Codable, Hashable, Identifiable, Sendable {
+    let id: String
+    let startTime: Double
+    let duration: Double
+    let text: String
+}
+
+struct TranscriptResponse: Codable, Sendable {
+    let track: SubtitleTrack?
+    let segments: [TranscriptSegment]
+}
+
 struct StoryboardSpec: Codable, Sendable {
     let urls: [String]           // one URL per sprite-sheet file (file index = array index)
     let tileWidth: Int
@@ -604,6 +708,9 @@ struct VideoPlayback: Codable, Sendable {
     let recommendationsContinuation: String?
     let tags: [VideoTag]
     let accessIssue: VideoAccessIssue?
+    let isLive: Bool
+    let isUpcoming: Bool
+    let liveChat: LiveChatSession?
 
     var channelAvatarURL: URL? {
         guard let channelAvatarUrl else { return nil }
@@ -660,7 +767,10 @@ struct VideoPlayback: Codable, Sendable {
             playlistSaveEnabled: playlistSaveEnabled,
             recommendationsContinuation: recommendationsContinuation,
             tags: tags,
-            accessIssue: accessIssue
+            accessIssue: accessIssue,
+            isLive: isLive,
+            isUpcoming: isUpcoming,
+            liveChat: liveChat
         )
     }
 }

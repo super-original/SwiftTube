@@ -137,6 +137,25 @@ private struct PlayerSurfaceBoundsKey: PreferenceKey {
     }
 }
 
+private enum PlayerSidePanelTab: String, CaseIterable, Identifiable {
+    case suggestions
+    case transcripts
+    case liveChat
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .suggestions:
+            return "Suggestions"
+        case .transcripts:
+            return "Transcripts"
+        case .liveChat:
+            return "Live Chat"
+        }
+    }
+}
+
 struct PlayerScreen: View {
     let video: VideoItem
     let libraryPlaylists: [PlaylistSummary]
@@ -148,6 +167,7 @@ struct PlayerScreen: View {
     @State private var isSharePopoverPresented = false
     @State private var isPlaylistPopoverPresented = false
     @State private var isPlaylistRailExpanded = true
+    @State private var selectedSidePanelTab: PlayerSidePanelTab = .suggestions
     @ObservedObject private var mutationCenter = AppMutationCenter.shared
     @EnvironmentObject private var navigation: AppNavigationModel
     @EnvironmentObject private var authSession: AuthSessionModel
@@ -188,6 +208,15 @@ struct PlayerScreen: View {
                 }
             }
         }
+        .overlay(alignment: .trailing) {
+            if layoutState.isFullscreen, layoutState.isSidePanelVisible {
+                fullscreenSidePanel
+                    .frame(width: secondaryPanelWidth)
+                    .padding(.vertical, 18)
+                    .padding(.trailing, 18)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
         .background(
             WindowAccessor { window in
                 playbackCoordinator.setWindow(window)
@@ -206,6 +235,7 @@ struct PlayerScreen: View {
                 }
                 playbackCoordinator.updateSponsorSegments(playback.sponsorSegments)
                 playbackCoordinator.configure(with: playback)
+                selectedSidePanelTab = defaultSidePanelTab(for: playback)
                 if authSession.status.authenticated, playback.playlistSaveEnabled {
                     viewModel.loadPlaylistOptions()
                 }
@@ -240,6 +270,10 @@ struct PlayerScreen: View {
 private extension PlayerScreen {
     var standardPlayerColumnMaxWidth: CGFloat {
         980
+    }
+
+    var secondaryPanelWidth: CGFloat {
+        368
     }
 
     var playback: VideoPlayback? {
@@ -327,6 +361,16 @@ private extension PlayerScreen {
         playback?.accessIssue
     }
 
+    var effectiveSidePanelTab: PlayerSidePanelTab {
+        if selectedSidePanelTab == .liveChat, playback?.liveChat == nil {
+            return viewModel.transcriptSegments.isEmpty ? .suggestions : .transcripts
+        }
+        if selectedSidePanelTab == .transcripts, viewModel.transcriptSegments.isEmpty, viewModel.isLoadingTranscript == false {
+            return playback?.liveChat != nil ? .liveChat : .suggestions
+        }
+        return selectedSidePanelTab
+    }
+
     var scrollContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             if layoutState.isFullscreen {
@@ -355,15 +399,15 @@ private extension PlayerScreen {
             HStack(alignment: .top, spacing: 24) {
                 mainColumn
                     .frame(maxWidth: standardPlayerColumnMaxWidth, alignment: .leading)
-                recommendationsColumn
-                    .frame(width: 360)
+                sidePanel
+                    .frame(width: secondaryPanelWidth)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 24) {
                 mainColumn
                     .frame(maxWidth: standardPlayerColumnMaxWidth, alignment: .leading)
-                recommendationsColumn
+                sidePanel
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -383,7 +427,13 @@ private extension PlayerScreen {
 
     func surfaceRect(anchor: Anchor<CGRect>?, proxy: GeometryProxy) -> CGRect? {
         if layoutState.isFullscreen {
-            return CGRect(origin: .zero, size: proxy.size)
+            let sideInset = layoutState.isSidePanelVisible ? secondaryPanelWidth + 32 : 0
+            return CGRect(
+                x: 0,
+                y: 0,
+                width: max(proxy.size.width - sideInset, 0),
+                height: proxy.size.height
+            )
         }
         if layoutState.isTheaterMode, let anchor {
             let anchorRect = proxy[anchor]
@@ -428,6 +478,33 @@ private extension PlayerScreen {
 
             channelAndActionsSection
         }
+    }
+
+    var sidePanel: some View {
+        WatchSecondaryPanel(
+            selectedTab: Binding(
+                get: { effectiveSidePanelTab },
+                set: { selectedSidePanelTab = $0 }
+            ),
+            liveChatAvailable: playback?.liveChat != nil,
+            transcriptAvailable: viewModel.isLoadingTranscript || viewModel.transcriptSegments.isEmpty == false,
+            liveChatContent: AnyView(liveChatPanelContent),
+            transcriptContent: AnyView(transcriptPanelContent),
+            suggestionsContent: AnyView(suggestionsPanelContent)
+        )
+    }
+
+    var fullscreenSidePanel: some View {
+        sidePanel
+            .background(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(Color.black.opacity(0.86))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.34), radius: 24, y: 10)
     }
 
     var channelAndActionsSection: some View {
@@ -1372,15 +1449,21 @@ private extension PlayerScreen {
         )
     }
 
-    var recommendationsColumn: some View {
+    func defaultSidePanelTab(for playback: VideoPlayback) -> PlayerSidePanelTab {
+        if playback.liveChat != nil {
+            return .liveChat
+        }
+        if viewModel.transcriptSegments.isEmpty == false {
+            return .transcripts
+        }
+        return .suggestions
+    }
+
+    var suggestionsPanelContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             if hasActivePlaylistContext, let activePlaylistFeed {
                 playlistQueueColumn(feed: activePlaylistFeed)
             }
-
-            Text("Up next")
-                .font(.title3)
-                .fontWeight(.semibold)
 
             if recommendations.isEmpty {
                 LazyVStack(alignment: .leading, spacing: 8) {
@@ -1436,6 +1519,420 @@ private extension PlayerScreen {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    var transcriptPanelContent: some View {
+        Group {
+            if viewModel.isLoadingTranscript && viewModel.transcriptSegments.isEmpty {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Loading transcript...")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let errorMessage = viewModel.transcriptErrorMessage, !errorMessage.isEmpty {
+                Text(errorMessage)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if viewModel.transcriptSegments.isEmpty {
+                Text("A transcript isn’t available for this video.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(viewModel.transcriptSegments) { segment in
+                            Button {
+                                playbackCoordinator.seek(to: segment.startTime)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(transcriptTimestamp(segment.startTime))
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(Color.accentColor)
+                                    Text(segment.text)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.primary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .fill(AppSettings.shared.cardBackgroundColor.opacity(0.78))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    var liveChatPanelContent: some View {
+        LiveChatPanel(
+            messages: viewModel.liveChatMessages,
+            composer: viewModel.liveChatComposer,
+            isLoading: viewModel.isLoadingLiveChat,
+            errorMessage: viewModel.liveChatErrorMessage,
+            onSend: { viewModel.sendLiveChatMessage($0) }
+        )
+    }
+
+    func transcriptTimestamp(_ seconds: Double) -> String {
+        let totalSeconds = Int(seconds.rounded(.down))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let secondsPart = totalSeconds % 60
+
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, secondsPart)
+        }
+        return String(format: "%d:%02d", minutes, secondsPart)
+    }
+}
+
+@MainActor
+private final class LiveChatUsernameColorStore: ObservableObject {
+    static let shared = LiveChatUsernameColorStore()
+
+    @Published private var colors: [String: Color] = [:]
+    private var loadingKeys: Set<String> = []
+
+    func color(for avatarURL: URL?, fallbackKey: String) -> Color {
+        if let key = avatarURL?.absoluteString, let cached = colors[key] {
+            return cached
+        }
+        return fallbackColor(for: fallbackKey)
+    }
+
+    func loadColor(for avatarURL: URL?, fallbackKey: String) async {
+        guard let avatarURL else { return }
+        let key = avatarURL.absoluteString
+        guard colors[key] == nil, loadingKeys.contains(key) == false else { return }
+        loadingKeys.insert(key)
+        defer { loadingKeys.remove(key) }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: avatarURL)
+            guard let bitmap = NSBitmapImageRep(data: data) else {
+                colors[key] = fallbackColor(for: fallbackKey)
+                return
+            }
+
+            let stepX = max(bitmap.pixelsWide / 8, 1)
+            let stepY = max(bitmap.pixelsHigh / 8, 1)
+            var red = 0.0
+            var green = 0.0
+            var blue = 0.0
+            var count = 0.0
+
+            for x in stride(from: 0, to: bitmap.pixelsWide, by: stepX) {
+                for y in stride(from: 0, to: bitmap.pixelsHigh, by: stepY) {
+                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                    if color.alphaComponent < 0.2 { continue }
+                    red += Double(color.redComponent)
+                    green += Double(color.greenComponent)
+                    blue += Double(color.blueComponent)
+                    count += 1
+                }
+            }
+
+            guard count > 0 else {
+                colors[key] = fallbackColor(for: fallbackKey)
+                return
+            }
+
+            let averaged = Color(
+                hue: normalizedHue(red / count, green / count, blue / count),
+                saturation: 0.55,
+                brightness: 0.92
+            )
+            colors[key] = averaged
+        } catch {
+            colors[key] = fallbackColor(for: fallbackKey)
+        }
+    }
+
+    private func normalizedHue(_ red: Double, _ green: Double, _ blue: Double) -> Double {
+        let maxValue = max(red, green, blue)
+        let minValue = min(red, green, blue)
+        let delta = maxValue - minValue
+        guard delta > 0.0001 else { return 0.62 }
+
+        let rawHue: Double
+        if maxValue == red {
+            rawHue = ((green - blue) / delta).truncatingRemainder(dividingBy: 6)
+        } else if maxValue == green {
+            rawHue = ((blue - red) / delta) + 2
+        } else {
+            rawHue = ((red - green) / delta) + 4
+        }
+
+        let hue = rawHue / 6
+        return hue >= 0 ? hue : hue + 1
+    }
+
+    private func fallbackColor(for key: String) -> Color {
+        let hash = abs(key.hashValue)
+        let hue = Double(hash % 360) / 360.0
+        return Color(hue: hue, saturation: 0.56, brightness: 0.9)
+    }
+}
+
+private struct WatchSecondaryPanel: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @Binding var selectedTab: PlayerSidePanelTab
+    let liveChatAvailable: Bool
+    let transcriptAvailable: Bool
+    let liveChatContent: AnyView
+    let transcriptContent: AnyView
+    let suggestionsContent: AnyView
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 0) {
+                secondaryPanelTab(.suggestions, enabled: true)
+                secondaryPanelTab(.transcripts, enabled: transcriptAvailable || selectedTab == .transcripts)
+                secondaryPanelTab(.liveChat, enabled: liveChatAvailable || selectedTab == .liveChat)
+            }
+            .padding(4)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(settings.sidebarBackgroundColor.opacity(0.88))
+            )
+
+            Group {
+                switch selectedTab {
+                case .suggestions:
+                    suggestionsContent
+                case .transcripts:
+                    transcriptContent
+                case .liveChat:
+                    liveChatContent
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(settings.cardBackgroundColor.opacity(0.9))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+            )
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private func secondaryPanelTab(_ tab: PlayerSidePanelTab, enabled: Bool) -> some View {
+        Button {
+            guard enabled else { return }
+            withAnimation(.snappy(duration: 0.18, extraBounce: 0)) {
+                selectedTab = tab
+            }
+        } label: {
+            HStack(spacing: 8) {
+                if selectedTab == tab {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                Text(tab.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(selectedTab == tab ? Color.black : (enabled ? Color.primary : Color.secondary.opacity(0.7)))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(selectedTab == tab ? Color.white : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+}
+
+private struct LiveChatPanel: View {
+    let messages: [LiveChatMessage]
+    let composer: LiveChatComposer?
+    let isLoading: Bool
+    let errorMessage: String?
+    let onSend: (String) -> Void
+
+    @State private var draft = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Group {
+                if isLoading && messages.isEmpty {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Connecting to live chat...")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let errorMessage, messages.isEmpty {
+                    Text(errorMessage)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } else if messages.isEmpty {
+                    Text("Live chat hasn’t started yet.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 12) {
+                                ForEach(messages) { message in
+                                    LiveChatMessageRow(message: message)
+                                }
+                                Color.clear
+                                    .frame(height: 1)
+                                    .id("live-chat-bottom")
+                            }
+                        }
+                        .onAppear {
+                            proxy.scrollTo("live-chat-bottom", anchor: .bottom)
+                        }
+                        .onChange(of: messages.map(\.id)) { _, _ in
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                proxy.scrollTo("live-chat-bottom", anchor: .bottom)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            if let composer, let sendParams = composer.sendParams, sendParams.isEmpty == false {
+                Divider()
+                    .padding(.top, 12)
+                    .padding(.bottom, 10)
+
+                HStack(spacing: 10) {
+                    TextField(composer.placeholder ?? "Type to chat...", text: $draft, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.body)
+                        .lineLimit(1...4)
+                        .onSubmit(sendDraft)
+
+                    Button {
+                        NSApp.orderFrontCharacterPalette(nil)
+                    } label: {
+                        Image(systemName: "face.smiling")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+
+                    Button(action: sendDraft) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 15, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : Color.accentColor)
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.white.opacity(0.04))
+                )
+            } else if let restrictedMessage = composer?.restrictedMessage, !restrictedMessage.isEmpty {
+                Divider()
+                    .padding(.top, 12)
+                    .padding(.bottom, 10)
+
+                Text(restrictedMessage)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color.white.opacity(0.04))
+                    )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func sendDraft() {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return }
+        onSend(trimmed)
+        draft = ""
+    }
+}
+
+private struct LiveChatMessageRow: View {
+    @ObservedObject private var colorStore = LiveChatUsernameColorStore.shared
+    let message: LiveChatMessage
+
+    var body: some View {
+        Group {
+            if let author = message.author, !author.isEmpty {
+                Text("\(authorText(author))\(Text(": ").foregroundColor(.secondary))\(bodyText)")
+            } else {
+                bodyText.foregroundColor(.secondary)
+            }
+        }
+        .font(.system(size: 15, weight: .medium))
+        .lineSpacing(4)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(message.isPending ? 0.68 : 1)
+        .task {
+            await colorStore.loadColor(for: message.avatarURL, fallbackKey: message.author ?? message.id)
+        }
+    }
+
+    private func authorText(_ author: String) -> Text {
+        var text = Text(author)
+            .foregroundColor(resolvedAuthorColor)
+        if message.isOwner || message.isModerator || message.isVerified {
+            text = text.fontWeight(.bold)
+        }
+        return text
+    }
+
+    private var bodyText: Text {
+        let initial = message.purchaseAmountText.map {
+            Text("\($0) ")
+                .foregroundColor(Color(red: 1.0, green: 0.79, blue: 0.36))
+                .fontWeight(.bold)
+        } ?? Text("")
+
+        return message.fragments.reduce(initial) { partial, fragment in
+            Text("\(partial)\(styledText(for: fragment))")
+        }
+    }
+
+    private func styledText(for fragment: LiveChatMessageFragment) -> Text {
+        switch fragment.kind {
+        case .mention:
+            return Text(fragment.text)
+                .foregroundColor(Color(red: 0.62, green: 0.56, blue: 0.98))
+                .fontWeight(.semibold)
+        case .link:
+            return Text(fragment.text)
+                .foregroundColor(Color(red: 0.56, green: 0.69, blue: 1.0))
+        case .emoji:
+            return Text(fragment.text)
+                .foregroundColor(.primary)
+        case .text:
+            return Text(fragment.text)
+                .foregroundColor(.primary)
+        }
+    }
+
+    private var resolvedAuthorColor: Color {
+        colorStore.color(for: message.avatarURL, fallbackKey: message.author ?? message.id)
     }
 }
 
@@ -1989,6 +2486,7 @@ private struct PlayerControlBar: View {
                 subtitlesButton
                 qualityMenu
                 settingsMenu
+                sidebarToggle
                 theaterToggle
                 fullscreenButton
             }
@@ -2473,6 +2971,19 @@ private struct PlayerControlBar: View {
         .controlSize(.regular)
         .accessibilityLabel("Theater Mode")
         .accessibilityValue(coordinator.isTheaterMode ? "On" : "Off")
+    }
+
+    var sidebarToggle: some View {
+        Button {
+            coordinator.toggleSidePanel()
+        } label: {
+            circularButtonLabel(symbol: coordinator.sidebarPanelSymbolName, fontSize: 14)
+        }
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.circle)
+        .controlSize(.regular)
+        .accessibilityLabel("Sidebar Panel")
+        .accessibilityValue(coordinator.isSidePanelVisible ? "Visible" : "Hidden")
     }
 
     var fullscreenButton: some View {

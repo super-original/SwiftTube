@@ -8,6 +8,16 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.0 — Pulse
+
+Theme: Live playback, live chat, and a cleaner control surface.
+
+- Added real livestream playback support by carrying HLS and DASH manifest URLs through the backend and teaching the MPV startup path to treat live manifests as valid playable streams instead of failing during preparation.
+- Rebuilt the watch-page side rail into a full-height tabbed panel for Suggestions, Transcripts, and Live Chat, including a fullscreen sidebar toggle so chat can stay open without leaving fullscreen playback.
+- Added live chat fetching and sending support, plus a redesigned avatar-free chat layout that colorizes usernames per author and keeps fast-moving messages easier to scan.
+- Reworked Settings into a native split-view sidebar, folded video-grid sizing into Appearance, moved the changelog to the bottom of the category list, and cleaned up sidebar item reordering so it behaves more like the app’s other drag-and-drop lists.
+- Retired the old dark baseline, promoted the previous Midnight palette into the new default Dark theme, introduced a true-black Midnight option, brightened the light themes, and added new Ruby, Meadow, and Glacier theme variants.
+
 ## 0.12.44
 
 - Switched channel banners back to a fixed YouTube-style `16:9` aspect ratio and width-based scaling, so full-width pages no longer show side gaps and narrower windows no longer introduce top or bottom bands.

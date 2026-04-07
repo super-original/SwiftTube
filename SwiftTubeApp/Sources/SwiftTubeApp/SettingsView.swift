@@ -3,106 +3,110 @@ import SwiftUI
 
 private enum SettingsPane: String, CaseIterable, Identifiable {
     case appearance
-    case browse
     case sidebar
     case notifications
     case playback
     case sponsorBlock
-    case updates
     case seeking
     case shortcuts
+    case changelog
 
     var id: String { rawValue }
+
+    static var appSection: [SettingsPane] {
+        [.appearance, .sidebar, .notifications]
+    }
+
+    static var playbackSection: [SettingsPane] {
+        [.playback, .sponsorBlock, .seeking, .shortcuts]
+    }
+
+    static var aboutSection: [SettingsPane] {
+        [.changelog]
+    }
 
     var title: String {
         switch self {
         case .appearance: return "Appearance"
-        case .browse: return "Browse"
         case .sidebar: return "Sidebar"
         case .notifications: return "Notifications"
         case .playback: return "Playback"
         case .sponsorBlock: return "SponsorBlock"
-        case .updates: return "Updates"
         case .seeking: return "Seeking"
         case .shortcuts: return "Keybinds"
+        case .changelog: return "Changelog"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .appearance: return "Themes and colors"
-        case .browse: return "Grid and cards"
+        case .appearance: return "Themes and layout"
         case .sidebar: return "Navigation layout"
         case .notifications: return "Queue and toasts"
         case .playback: return "Quality and speed"
         case .sponsorBlock: return "Skips and segments"
-        case .updates: return "Release notes"
         case .seeking: return "Seek timings"
         case .shortcuts: return "Keyboard controls"
+        case .changelog: return "Release notes"
         }
     }
 
     var systemImage: String {
         switch self {
         case .appearance: return "circle.lefthalf.filled"
-        case .browse: return "rectangle.grid.2x2"
         case .sidebar: return "sidebar.left"
         case .notifications: return "bell.badge"
         case .playback: return "play.circle"
         case .sponsorBlock: return "scissors"
-        case .updates: return "sparkles.rectangle.stack"
         case .seeking: return "gobackward.10"
         case .shortcuts: return "keyboard"
+        case .changelog: return "text.document"
         }
     }
 }
 
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var selection: SettingsPane = .appearance
+    @State private var selection: SettingsPane? = .appearance
     @Namespace private var settingsScrollTop
 
     var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             settingsSidebar
+        } detail: {
             settingsDetail
         }
-        .frame(width: 940, height: 620)
+        .navigationSplitViewStyle(.balanced)
+        .frame(width: 980, height: 650)
         .background(settings.windowBackgroundColor.ignoresSafeArea())
         .preferredColorScheme(settings.preferredColorScheme)
     }
 
     private var settingsSidebar: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Settings")
-                .font(.system(size: 30, weight: .bold))
-                .padding(.top, 8)
-
-            VStack(spacing: 8) {
-                ForEach(SettingsPane.allCases) { pane in
-                    SettingsSidebarRow(
-                        pane: pane,
-                        isSelected: selection == pane
-                    ) {
-                        withAnimation(.snappy(duration: 0.18, extraBounce: 0)) {
-                            selection = pane
-                        }
-                    }
+        List(selection: $selection) {
+            Section("App") {
+                ForEach(SettingsPane.appSection) { pane in
+                    Label(pane.title, systemImage: pane.systemImage)
+                        .tag(Optional(pane))
                 }
             }
 
-            Spacer()
+            Section("Player") {
+                ForEach(SettingsPane.playbackSection) { pane in
+                    Label(pane.title, systemImage: pane.systemImage)
+                        .tag(Optional(pane))
+                }
+            }
+
+            Section("About") {
+                ForEach(SettingsPane.aboutSection) { pane in
+                    Label(pane.title, systemImage: pane.systemImage)
+                        .tag(Optional(pane))
+                }
+            }
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 24)
-        .frame(width: 240)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(settings.sidebarBackgroundColor)
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(settings.separatorColor)
-                .frame(width: 1)
-        }
+        .listStyle(.sidebar)
+        .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
     }
 
     @ViewBuilder
@@ -114,11 +118,9 @@ struct SettingsView: View {
                         .frame(height: 0)
                         .id(settingsScrollTop)
 
-                    switch selection {
+                    switch selection ?? .appearance {
                     case .appearance:
                         AppearancePane()
-                    case .browse:
-                        BrowsePane()
                     case .sidebar:
                         SidebarPane()
                     case .notifications:
@@ -127,12 +129,12 @@ struct SettingsView: View {
                         PlaybackPane()
                     case .sponsorBlock:
                         SponsorBlockPane()
-                    case .updates:
-                        UpdatesPane()
                     case .seeking:
                         SeekingPane()
                     case .shortcuts:
                         ShortcutPane()
+                    case .changelog:
+                        ChangelogPane()
                     }
                 }
                 .padding(28)
@@ -146,189 +148,7 @@ struct SettingsView: View {
     }
 }
 
-private struct SettingsSidebarRow: View {
-    @ObservedObject private var settings = AppSettings.shared
-    let pane: SettingsPane
-    let isSelected: Bool
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: pane.systemImage)
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 20)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(pane.title)
-                        .font(.headline)
-                    Text(pane.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(backgroundColor)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.35) : .clear, lineWidth: 1)
-            )
-            .offset(x: isHovered && !isSelected ? 2 : 0)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(isSelected ? Color.accentColor : .primary)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.14)) {
-                isHovered = hovering
-            }
-        }
-    }
-
-    private var backgroundColor: Color {
-        if isSelected {
-            return settings.elevatedBackgroundColor
-        }
-        return isHovered ? settings.hoverCardBackgroundColor : .clear
-    }
-}
-
 private struct AppearancePane: View {
-    @ObservedObject private var settings = AppSettings.shared
-    @State private var hoveredTheme: AppAppearanceMode?
-
-    private var darkThemes: [AppAppearanceMode] {
-        [.dark, .midnight, .midnightOcean, .midnightForest, .midnightRose, .midnightAurora, .midnightEmber, .midnightAmethyst, .midnightLagoon, .midnightCocoa]
-    }
-
-    private var lightThemes: [AppAppearanceMode] {
-        [.light, .sunrise, .sky, .mint, .rose, .sand, .lavender, .citrus, .pearl, .coral]
-    }
-
-    private var spotlightTheme: AppAppearanceMode {
-        hoveredTheme ?? settings.appearanceMode
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            SettingsHeader(
-                title: "Appearance",
-                subtitle: "Pick a visual theme for SwiftTube."
-            )
-
-            VStack(alignment: .leading, spacing: 14) {
-                Text(spotlightTheme.title)
-                    .font(.title2.weight(.bold))
-                    .contentTransition(.opacity)
-                Text(spotlightTheme.subtitle)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.opacity)
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(settings.elevatedBackgroundColor)
-            )
-
-            ThemeGroup(title: "Dark Themes", themes: darkThemes, hoveredTheme: $hoveredTheme)
-            ThemeGroup(title: "Light Themes", themes: lightThemes, hoveredTheme: $hoveredTheme)
-        }
-    }
-}
-
-private struct ThemeGroup: View {
-    @ObservedObject private var settings = AppSettings.shared
-    let title: String
-    let themes: [AppAppearanceMode]
-    @Binding var hoveredTheme: AppAppearanceMode?
-
-    private let columns = Array(repeating: GridItem(.fixed(72), spacing: 12), count: 6)
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(title)
-                .font(.title3.weight(.bold))
-
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
-                ForEach(themes) { theme in
-                    ThemeSwatch(
-                        theme: theme,
-                        isSelected: settings.appearanceMode == theme
-                    ) {
-                        settings.appearanceMode = theme
-                    } onHover: { hovering in
-                        hoveredTheme = hovering ? theme : nil
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct ThemeSwatch: View {
-    let theme: AppAppearanceMode
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onHover: (Bool) -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: onSelect) {
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(theme.previewGradient)
-                    .frame(width: 72, height: 72)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(borderColor, lineWidth: isSelected ? 2.5 : 1)
-                    )
-
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(Color.accentColor, .white)
-                        .background(Circle().fill(Color.white))
-                        .offset(x: 7, y: -7)
-                }
-            }
-            .scaleEffect(isHovered ? 1.05 : 1)
-            .overlay(alignment: .bottom) {
-                Text(theme.title)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .opacity(isHovered ? 1 : 0)
-                    .offset(y: 14)
-            }
-        }
-        .buttonStyle(.plain)
-        .padding(.bottom, 22)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.14)) {
-                isHovered = hovering
-            }
-            onHover(hovering)
-        }
-    }
-
-    private var borderColor: Color {
-        if isSelected { return Color.accentColor }
-        return Color.primary.opacity(isHovered ? 0.45 : 0.18)
-    }
-}
-
-private struct BrowsePane: View {
     @ObservedObject private var settings = AppSettings.shared
 
     private var widthText: String {
@@ -349,9 +169,20 @@ private struct BrowsePane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
-                title: "Browse",
-                subtitle: "Tune the size of video cards on Home and Search."
+                title: "Appearance",
+                subtitle: "Choose a theme, tidy the browse layout, and keep SwiftTube feeling native."
             )
+
+            SettingsCard(title: "Default Themes", icon: "circle.lefthalf.filled") {
+                Text("Dark is now the default, and Midnight is the new true-black option.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                ThemeGroup(themes: AppAppearanceMode.defaultThemes)
+            }
+
+            SettingsCard(title: "Colored Themes", icon: "paintpalette") {
+                ThemeGroup(themes: AppAppearanceMode.coloredThemes)
+            }
 
             SettingsCard(title: "Video Grid", icon: "rectangle.grid.2x2") {
                 VStack(alignment: .leading, spacing: 14) {
@@ -392,9 +223,90 @@ private struct BrowsePane: View {
     }
 }
 
+private struct ThemeGroup: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let themes: [AppAppearanceMode]
+    private let columns = [GridItem(.adaptive(minimum: 104, maximum: 140), spacing: 14)]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
+            ForEach(themes) { theme in
+                ThemeSwatch(
+                    theme: theme,
+                    isSelected: settings.appearanceMode == theme
+                ) {
+                    settings.appearanceMode = theme
+                }
+            }
+        }
+    }
+}
+
+private struct ThemeSwatch: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let theme: AppAppearanceMode
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 10) {
+                ZStack(alignment: .topTrailing) {
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(theme.previewGradient)
+                        .frame(height: 82)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18)
+                                .stroke(borderColor, lineWidth: isSelected ? 2.5 : 1)
+                        )
+
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(Color.accentColor, .white)
+                            .background(Circle().fill(Color.white))
+                            .offset(x: 7, y: -7)
+                    }
+                }
+
+                Text(theme.title)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 22)
+                    .fill(backgroundColor)
+            )
+            .scaleEffect(isHovered ? 1.02 : 1)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.14)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var borderColor: Color {
+        if isSelected { return Color.accentColor }
+        return Color.primary.opacity(isHovered ? 0.45 : 0.18)
+    }
+
+    private var backgroundColor: Color {
+        if isSelected {
+            return Color.accentColor.opacity(settings.preferredColorScheme == .dark ? 0.15 : 0.08)
+        }
+        return isHovered ? settings.hoverCardBackgroundColor : .clear
+    }
+}
+
 private struct SidebarPane: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var draggedItem: SidebarItemKind?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -404,37 +316,26 @@ private struct SidebarPane: View {
             )
 
             SettingsCard(title: "Navigation Items", icon: "sidebar.left") {
-                VStack(spacing: 0) {
+                Text("Drag rows into place and switch off the ones you don’t want. Home stays pinned.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                List {
                     ForEach(settings.sidebarItemOrder) { item in
                         SidebarSettingsListRow(
                             item: item,
-                            isVisible: settings.isSidebarItemVisible(item),
-                            isDraggingOver: draggedItem == item
+                            isVisible: settings.isSidebarItemVisible(item)
                         ) { visible in
                             settings.setSidebarItem(item, visible: visible)
                         }
-                        .draggable(item.rawValue) {
-                            Label(item.title, systemImage: item.systemImage)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                        }
-                        .dropDestination(for: String.self) { items, _ in
-                            guard let rawValue = items.first,
-                                  let dragged = SidebarItemKind(rawValue: rawValue) else { return false }
-                            settings.reorderSidebarItem(dragged, before: item)
-                            return true
-                        } isTargeted: { targeted in
-                            draggedItem = targeted ? item : nil
-                        }
-
-                        if item != settings.sidebarItemOrder.last {
-                            Rectangle()
-                                .fill(settings.separatorColor)
-                                .frame(height: 1)
-                        }
+                        .moveDisabled(item == .home)
+                    }
+                    .onMove { source, destination in
+                        settings.moveSidebarItems(from: source, to: destination)
                     }
                 }
+                .listStyle(.plain)
+                .frame(height: CGFloat(settings.sidebarItemOrder.count) * 44 + 18)
             }
         }
     }
@@ -443,31 +344,44 @@ private struct SidebarPane: View {
 private struct SidebarSettingsListRow: View {
     let item: SidebarItemKind
     let isVisible: Bool
-    let isDraggingOver: Bool
     let onVisibilityChanged: (Bool) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "line.3.horizontal")
+                .font(.callout.weight(.semibold))
                 .foregroundStyle(.secondary)
-            Toggle(isOn: Binding(
-                get: { isVisible },
-                set: { newValue in
-                    onVisibilityChanged(newValue)
-                }
-            )) {
-                Label(item.title, systemImage: item.systemImage)
-                    .foregroundStyle(item == .home ? .primary : (isVisible ? .primary : .secondary))
+
+            Button {
+                onVisibilityChanged(!isVisible)
+            } label: {
+                Image(systemName: checkboxSymbol)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(item == .home ? .secondary : (isVisible ? Color.accentColor : .secondary))
+                    .frame(width: 22)
             }
-            .toggleStyle(.checkbox)
+            .buttonStyle(.plain)
             .disabled(item == .home)
+
+            Label(item.title, systemImage: item.systemImage)
+                .foregroundStyle(item == .home ? .primary : (isVisible ? .primary : .secondary))
+
+            Spacer()
+
+            if item == .home {
+                Text("Required")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(isDraggingOver ? Color.accentColor.opacity(0.12) : .clear)
-        )
+        .padding(.vertical, 6)
+    }
+
+    private var checkboxSymbol: String {
+        if item == .home {
+            return "checkmark.square.fill"
+        }
+        return isVisible ? "checkmark.square.fill" : "square"
     }
 }
 
@@ -792,7 +706,7 @@ private struct SponsorBlockCategoryRow: View {
     }
 }
 
-private struct UpdatesPane: View {
+private struct ChangelogPane: View {
     @State private var changelogReleases = ChangelogDocument.load()
 
     private var currentVersionText: String {
@@ -806,7 +720,7 @@ private struct UpdatesPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
-                title: "Updates",
+                title: "Changelog",
                 subtitle: "Release notes and version history for SwiftTube."
             )
 

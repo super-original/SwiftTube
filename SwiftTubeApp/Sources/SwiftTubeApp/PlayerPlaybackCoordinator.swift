@@ -140,10 +140,7 @@ private func manualQualityAudioPreference(for stream: StreamInfo) -> (Int, Int, 
 }
 
 private func isMPVStartupVideoStream(_ stream: StreamInfo) -> Bool {
-    guard stream.hasVideo, stream.streamKind != "manifest" else {
-        return false
-    }
-    return true
+    stream.hasVideo
 }
 
 private func startupMPVAudioPreference(for stream: StreamInfo) -> (Int, Int, Int, Int, Int) {
@@ -208,6 +205,10 @@ private func isSupportedManualQualityCodec(_ codec: String?) -> Bool {
 }
 
 private func isManualQualityVideoStream(_ stream: StreamInfo) -> Bool {
+    if stream.streamKind == "manifest" {
+        return stream.hasVideo && stream.hasAudio && (stream.height ?? 0) > 0
+    }
+
     guard stream.hasVideo,
           !stream.hasAudio,
           stream.streamKind != "manifest",
@@ -232,6 +233,16 @@ private func manualQualityCandidate(
     for stream: StreamInfo,
     playback: VideoPlayback
 ) -> ManualQualityCandidate? {
+    if stream.streamKind == "manifest" {
+        return ManualQualityCandidate(
+            selection: ManualPlaybackSelection(
+                stream: stream,
+                audioStream: nil
+            ),
+            bitrate: stream.bitrate ?? 0
+        )
+    }
+
     guard isManualQualityVideoStream(stream),
           let audioStream = preferredManualQualityAudioStream(for: playback),
           hasConflictingHeaders(video: stream, audio: audioStream) == false else {
@@ -279,6 +290,9 @@ private func automaticStartupMPVSelection(for playback: VideoPlayback) -> Manual
 
     func buildSelection(for stream: StreamInfo?) -> ManualPlaybackSelection? {
         guard let stream, isMPVStartupVideoStream(stream) else { return nil }
+        if stream.streamKind == "manifest" {
+            return ManualPlaybackSelection(stream: stream, audioStream: nil)
+        }
         guard stream.hasAudio || (audioStream != nil && !hasConflictingHeaders(video: stream, audio: audioStream)) else {
             return nil
         }
@@ -288,7 +302,9 @@ private func automaticStartupMPVSelection(for playback: VideoPlayback) -> Manual
     let candidates = playback.streams
         .filter(isMPVStartupVideoStream)
         .filter { stream in
-            stream.hasAudio || (audioStream != nil && !hasConflictingHeaders(video: stream, audio: audioStream))
+            stream.streamKind == "manifest"
+                || stream.hasAudio
+                || (audioStream != nil && !hasConflictingHeaders(video: stream, audio: audioStream))
         }
 
     // When a quality preference is set, find the best stream at or below that height.
@@ -316,6 +332,7 @@ private func automaticStartupMPVSelection(for playback: VideoPlayback) -> Manual
 final class PlayerLayoutState: ObservableObject {
     @Published var isTheaterMode = false
     @Published var isFullscreen = false
+    @Published var isSidePanelVisible = false
 }
 
 @MainActor
@@ -441,12 +458,22 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             : "rectangle.expand.vertical"
     }
 
+    var sidebarPanelSymbolName: String {
+        layoutState.isSidePanelVisible
+            ? "sidebar.right"
+            : "sidebar.right"
+    }
+
     var isTheaterMode: Bool {
         layoutState.isTheaterMode
     }
 
     var isFullscreen: Bool {
         layoutState.isFullscreen
+    }
+
+    var isSidePanelVisible: Bool {
+        layoutState.isSidePanelVisible
     }
 
     var shouldShowPlaybackLoadingOverlay: Bool {
@@ -596,6 +623,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         effectivePlaybackSpeed = selectedPlaybackSpeed
         currentPlayback = nil
         layoutState.isTheaterMode = false
+        layoutState.isSidePanelVisible = false
         keyboardLocked = false
         videoAspect = 16.0 / 9.0
         storyboard = nil
@@ -805,6 +833,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         // applyImmersiveToolbarState() is called from the fullscreen notifications
     }
 
+    func toggleSidePanel() {
+        noteInteraction()
+        withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
+            layoutState.isSidePanelVisible.toggle()
+        }
+    }
+
     func toggleSubtitles() {
         noteInteraction()
         guard !subtitleOptions.isEmpty else { return }
@@ -866,6 +901,20 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         let target = max(0, min(currentTime + seconds, duration))
         scrubPosition = target
         currentTime = target
+        Task { [weak self] in
+            guard let self, let mpvEngine else { return }
+            await mpvEngine.seek(to: target)
+            syncMPVState(using: mpvEngine)
+        }
+    }
+
+    func seek(to seconds: Double) {
+        guard mpvEngine != nil, duration > 0 else { return }
+        noteInteraction()
+        let target = max(0, min(seconds, duration))
+        scrubPosition = target
+        currentTime = target
+        didReachPlaybackEnd = false
         Task { [weak self] in
             guard let self, let mpvEngine else { return }
             await mpvEngine.seek(to: target)

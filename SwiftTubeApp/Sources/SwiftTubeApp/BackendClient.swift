@@ -60,6 +60,32 @@ final class BackendClient {
         try await backend.fetchPlaylistOptions(id: id)
     }
 
+    func fetchLiveChat(
+        id: String,
+        mode: LiveChatMode,
+        continuation: String? = nil
+    ) async throws -> LiveChatResponse {
+        try await backend.fetchLiveChat(id: id, mode: mode, continuation: continuation)
+    }
+
+    func sendLiveChatMessage(
+        message: String,
+        params: String,
+        datasyncId: String,
+        clientIdPrefix: String?
+    ) async throws {
+        try await backend.sendLiveChatMessage(
+            message: message,
+            params: params,
+            datasyncId: datasyncId,
+            clientIdPrefix: clientIdPrefix
+        )
+    }
+
+    func fetchTranscript(track: SubtitleTrack?) async throws -> TranscriptResponse {
+        try await backend.fetchTranscript(track: track)
+    }
+
     func fetchPlaylistLibrary(continuation: String? = nil) async throws -> PlaylistLibraryResponse {
         try await backend.fetchPlaylistLibrary(continuation: continuation)
     }

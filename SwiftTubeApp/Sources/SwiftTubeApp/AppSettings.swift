@@ -23,340 +23,434 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
     case citrus
     case pearl
     case coral
+    case ruby
+    case meadow
+    case glacier
+
+    struct Palette {
+        let title: String
+        let subtitle: String
+        let preferredColorScheme: ColorScheme
+        let isDefaultTheme: Bool
+        let windowBackgroundColor: NSColor
+        let cardBackgroundColor: NSColor
+        let sidebarBackgroundColor: NSColor
+        let elevatedBackgroundColor: NSColor
+        let previewColors: [NSColor]
+    }
 
     var id: String { rawValue }
 
-    var title: String {
-        switch self {
-        case .dark: return "Dark"
-        case .midnight: return "Midnight"
-        case .midnightOcean: return "Midnight Ocean"
-        case .midnightForest: return "Midnight Forest"
-        case .midnightRose: return "Midnight Rose"
-        case .midnightAurora: return "Midnight Aurora"
-        case .midnightEmber: return "Midnight Ember"
-        case .midnightAmethyst: return "Midnight Amethyst"
-        case .midnightLagoon: return "Midnight Lagoon"
-        case .midnightCocoa: return "Midnight Cocoa"
-        case .light: return "Light"
-        case .sunrise: return "Sunrise"
-        case .sky: return "Sky"
-        case .mint: return "Mint"
-        case .rose: return "Rose"
-        case .sand: return "Sand"
-        case .lavender: return "Lavender"
-        case .citrus: return "Citrus"
-        case .pearl: return "Pearl"
-        case .coral: return "Coral"
-        }
+    static var defaultThemes: [AppAppearanceMode] {
+        [.light, .dark, .midnight]
     }
 
-    var subtitle: String {
-        switch self {
-        case .dark: return "Matches the native macOS dark baseline at #1E1E1E."
-        case .midnight: return "Low-glare neutral dark built around #0F0F0F."
-        case .midnightOcean: return "Deep blue midnight with a cool neon cast."
-        case .midnightForest: return "Dark evergreen tones with calmer contrast."
-        case .midnightRose: return "Dark charcoal with a subtle cherry-magenta glow."
-        case .midnightAurora: return "A vivid blue-violet midnight with aurora highlights."
-        case .midnightEmber: return "Warm charcoal with copper and ember undertones."
-        case .midnightAmethyst: return "A plush midnight purple with a richer glow."
-        case .midnightLagoon: return "A teal midnight with calmer aquatic depth."
-        case .midnightCocoa: return "Velvety espresso brown with softer warmth."
-        case .light: return "Bright, native macOS styling across the app."
-        case .sunrise: return "Warm paper-like light theme with a peach tint."
-        case .sky: return "Airy light theme with cool blue surfaces."
-        case .mint: return "Soft mint light theme with gentle green cards."
-        case .rose: return "Rosy light theme with a soft editorial feel."
-        case .sand: return "Soft neutral light theme with warm beige surfaces."
-        case .lavender: return "A pale violet light theme with softer contrast."
-        case .citrus: return "Fresh cream theme with lemon-lime highlights."
-        case .pearl: return "Clean pearl-white light theme with subtle silver blues."
-        case .coral: return "A soft coral light theme with warmer accents."
-        }
+    static var coloredThemes: [AppAppearanceMode] {
+        allCases.filter { !defaultThemes.contains($0) }
     }
 
-    var preferredColorScheme: ColorScheme {
-        switch self {
-        case .dark, .midnight, .midnightOcean, .midnightForest, .midnightRose, .midnightAurora, .midnightEmber, .midnightAmethyst, .midnightLagoon, .midnightCocoa:
-            return .dark
-        case .light, .sunrise, .sky, .mint, .rose, .sand, .lavender, .citrus, .pearl, .coral:
-            return .light
-        }
+    private static func preview(_ colors: NSColor...) -> [NSColor] {
+        colors
     }
+
+    var title: String { palette.title }
+    var subtitle: String { palette.subtitle }
+    var preferredColorScheme: ColorScheme { palette.preferredColorScheme }
+    var isDefaultTheme: Bool { palette.isDefaultTheme }
 
     var windowBackgroundColor: Color {
-        Color(nsColor: nsWindowBackgroundColor)
+        Color(nsColor: palette.windowBackgroundColor)
     }
 
     var cardBackgroundColor: Color {
-        Color(nsColor: nsCardBackgroundColor)
+        Color(nsColor: palette.cardBackgroundColor)
     }
 
     var sidebarBackgroundColor: Color {
-        Color(nsColor: nsSidebarBackgroundColor)
+        Color(nsColor: palette.sidebarBackgroundColor)
     }
 
     var elevatedBackgroundColor: Color {
-        Color(nsColor: nsElevatedBackgroundColor)
+        Color(nsColor: palette.elevatedBackgroundColor)
     }
 
     var hoverCardBackgroundColor: Color {
-        Color(nsColor: nsHoverCardBackgroundColor)
+        switch preferredColorScheme {
+        case .dark:
+            return Color.white.opacity(0.07)
+        case .light:
+            return Color.black.opacity(0.06)
+        @unknown default:
+            return Color.black.opacity(0.06)
+        }
     }
 
     var separatorColor: Color {
-        Color(nsColor: nsSeparatorColor)
+        switch preferredColorScheme {
+        case .dark:
+            return Color.white.opacity(0.08)
+        case .light:
+            return Color.black.opacity(0.08)
+        @unknown default:
+            return Color.black.opacity(0.08)
+        }
     }
 
     var previewGradient: LinearGradient {
-        LinearGradient(colors: previewColors, startPoint: .topLeading, endPoint: .bottomTrailing)
+        LinearGradient(
+            colors: palette.previewColors.map { Color(nsColor: $0) },
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 
-    private var nsWindowBackgroundColor: NSColor {
+    private var palette: Palette {
         switch self {
         case .dark:
-            return NSColor(calibratedRed: 30 / 255, green: 30 / 255, blue: 30 / 255, alpha: 1)
+            return Palette(
+                title: "Dark",
+                subtitle: "The old Midnight look, promoted into SwiftTube’s new default dark theme.",
+                preferredColorScheme: .dark,
+                isDefaultTheme: true,
+                windowBackgroundColor: .init(calibratedRed: 15 / 255, green: 15 / 255, blue: 15 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 24 / 255, green: 24 / 255, blue: 24 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 18 / 255, green: 18 / 255, blue: 18 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 28 / 255, green: 28 / 255, blue: 28 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 30 / 255, green: 30 / 255, blue: 30 / 255, alpha: 1),
+                    .init(calibratedRed: 15 / 255, green: 15 / 255, blue: 15 / 255, alpha: 1)
+                )
+            )
         case .midnight:
-            return NSColor(calibratedRed: 15 / 255, green: 15 / 255, blue: 15 / 255, alpha: 1)
+            return Palette(
+                title: "Midnight",
+                subtitle: "A true-black variant with maximum contrast and almost no glow.",
+                preferredColorScheme: .dark,
+                isDefaultTheme: true,
+                windowBackgroundColor: .black,
+                cardBackgroundColor: .init(calibratedRed: 12 / 255, green: 12 / 255, blue: 12 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 8 / 255, green: 8 / 255, blue: 8 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 16 / 255, green: 16 / 255, blue: 16 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 28 / 255, green: 28 / 255, blue: 28 / 255, alpha: 1),
+                    .black
+                )
+            )
         case .midnightOcean:
-            return NSColor(calibratedRed: 13 / 255, green: 18 / 255, blue: 28 / 255, alpha: 1)
+            return Palette(
+                title: "Ocean",
+                subtitle: "Deep navy surfaces with cool electric highlights.",
+                preferredColorScheme: .dark,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 13 / 255, green: 18 / 255, blue: 28 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 24 / 255, green: 31 / 255, blue: 44 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 18 / 255, green: 26 / 255, blue: 42 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 30 / 255, green: 38 / 255, blue: 56 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 77 / 255, green: 121 / 255, blue: 212 / 255, alpha: 1),
+                    .init(calibratedRed: 13 / 255, green: 18 / 255, blue: 28 / 255, alpha: 1)
+                )
+            )
         case .midnightForest:
-            return NSColor(calibratedRed: 14 / 255, green: 20 / 255, blue: 17 / 255, alpha: 1)
+            return Palette(
+                title: "Forest",
+                subtitle: "Dark evergreen surfaces with calmer muted contrast.",
+                preferredColorScheme: .dark,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 14 / 255, green: 20 / 255, blue: 17 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 25 / 255, green: 34 / 255, blue: 29 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 18 / 255, green: 28 / 255, blue: 23 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 30 / 255, green: 40 / 255, blue: 33 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 90 / 255, green: 135 / 255, blue: 102 / 255, alpha: 1),
+                    .init(calibratedRed: 14 / 255, green: 20 / 255, blue: 17 / 255, alpha: 1)
+                )
+            )
         case .midnightRose:
-            return NSColor(calibratedRed: 24 / 255, green: 16 / 255, blue: 23 / 255, alpha: 1)
+            return Palette(
+                title: "Rose",
+                subtitle: "Charcoal and cherry-magenta tones with a softer glow.",
+                preferredColorScheme: .dark,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 24 / 255, green: 16 / 255, blue: 23 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 36 / 255, green: 24 / 255, blue: 35 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 31 / 255, green: 20 / 255, blue: 30 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 42 / 255, green: 28 / 255, blue: 40 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 182 / 255, green: 87 / 255, blue: 134 / 255, alpha: 1),
+                    .init(calibratedRed: 24 / 255, green: 16 / 255, blue: 23 / 255, alpha: 1)
+                )
+            )
         case .midnightAurora:
-            return NSColor(calibratedRed: 15 / 255, green: 18 / 255, blue: 32 / 255, alpha: 1)
+            return Palette(
+                title: "Aurora",
+                subtitle: "Bold indigo-blue surfaces with brighter neon energy.",
+                preferredColorScheme: .dark,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 15 / 255, green: 18 / 255, blue: 32 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 26 / 255, green: 32 / 255, blue: 52 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 20 / 255, green: 24 / 255, blue: 44 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 31 / 255, green: 36 / 255, blue: 61 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 103 / 255, green: 129 / 255, blue: 1, alpha: 1),
+                    .init(calibratedRed: 107 / 255, green: 61 / 255, blue: 229 / 255, alpha: 1)
+                )
+            )
         case .midnightEmber:
-            return NSColor(calibratedRed: 28 / 255, green: 18 / 255, blue: 16 / 255, alpha: 1)
+            return Palette(
+                title: "Ember",
+                subtitle: "Warm charcoal with copper highlights and deeper reds.",
+                preferredColorScheme: .dark,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 28 / 255, green: 18 / 255, blue: 16 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 44 / 255, green: 29 / 255, blue: 24 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 35 / 255, green: 22 / 255, blue: 18 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 47 / 255, green: 30 / 255, blue: 24 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 230 / 255, green: 126 / 255, blue: 65 / 255, alpha: 1),
+                    .init(calibratedRed: 76 / 255, green: 35 / 255, blue: 19 / 255, alpha: 1)
+                )
+            )
         case .midnightAmethyst:
-            return NSColor(calibratedRed: 20 / 255, green: 16 / 255, blue: 31 / 255, alpha: 1)
+            return Palette(
+                title: "Amethyst",
+                subtitle: "A plush violet dark theme with richer purple depth.",
+                preferredColorScheme: .dark,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 20 / 255, green: 16 / 255, blue: 31 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 34 / 255, green: 27 / 255, blue: 50 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 27 / 255, green: 22 / 255, blue: 40 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 40 / 255, green: 31 / 255, blue: 57 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 169 / 255, green: 119 / 255, blue: 1, alpha: 1),
+                    .init(calibratedRed: 78 / 255, green: 51 / 255, blue: 149 / 255, alpha: 1)
+                )
+            )
         case .midnightLagoon:
-            return NSColor(calibratedRed: 12 / 255, green: 22 / 255, blue: 24 / 255, alpha: 1)
+            return Palette(
+                title: "Lagoon",
+                subtitle: "A teal dark theme with denser aquatic depth.",
+                preferredColorScheme: .dark,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 12 / 255, green: 22 / 255, blue: 24 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 19 / 255, green: 35 / 255, blue: 37 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 16 / 255, green: 30 / 255, blue: 32 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 24 / 255, green: 43 / 255, blue: 46 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 66 / 255, green: 188 / 255, blue: 188 / 255, alpha: 1),
+                    .init(calibratedRed: 13 / 255, green: 54 / 255, blue: 58 / 255, alpha: 1)
+                )
+            )
         case .midnightCocoa:
-            return NSColor(calibratedRed: 27 / 255, green: 20 / 255, blue: 17 / 255, alpha: 1)
+            return Palette(
+                title: "Cocoa",
+                subtitle: "Velvety espresso brown with softer amber warmth.",
+                preferredColorScheme: .dark,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 27 / 255, green: 20 / 255, blue: 17 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 41 / 255, green: 31 / 255, blue: 26 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 34 / 255, green: 25 / 255, blue: 21 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 47 / 255, green: 35 / 255, blue: 29 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 170 / 255, green: 122 / 255, blue: 93 / 255, alpha: 1),
+                    .init(calibratedRed: 52 / 255, green: 36 / 255, blue: 28 / 255, alpha: 1)
+                )
+            )
         case .light:
-            return NSColor.windowBackgroundColor
+            return Palette(
+                title: "Light",
+                subtitle: "Bright, clean default surfaces with subtle cool contrast.",
+                preferredColorScheme: .light,
+                isDefaultTheme: true,
+                windowBackgroundColor: .windowBackgroundColor,
+                cardBackgroundColor: .white,
+                sidebarBackgroundColor: .init(calibratedRed: 240 / 255, green: 243 / 255, blue: 248 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 1, green: 1, blue: 1, alpha: 1),
+                previewColors: Self.preview(
+                    .white,
+                    .init(calibratedRed: 217 / 255, green: 227 / 255, blue: 244 / 255, alpha: 1)
+                )
+            )
         case .sunrise:
-            return NSColor(calibratedRed: 249 / 255, green: 242 / 255, blue: 236 / 255, alpha: 1)
+            return Palette(
+                title: "Sunrise",
+                subtitle: "Warm cream surfaces with peach and apricot accents.",
+                preferredColorScheme: .light,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 255 / 255, green: 243 / 255, blue: 234 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 1, green: 250 / 255, blue: 244 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 247 / 255, green: 232 / 255, blue: 219 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 1, green: 246 / 255, blue: 239 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 1, green: 185 / 255, blue: 138 / 255, alpha: 1),
+                    .init(calibratedRed: 1, green: 233 / 255, blue: 209 / 255, alpha: 1)
+                )
+            )
         case .sky:
-            return NSColor(calibratedRed: 239 / 255, green: 245 / 255, blue: 252 / 255, alpha: 1)
+            return Palette(
+                title: "Sky",
+                subtitle: "Airy blue surfaces with brighter daylight contrast.",
+                preferredColorScheme: .light,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 235 / 255, green: 244 / 255, blue: 1, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 247 / 255, green: 251 / 255, blue: 1, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 223 / 255, green: 236 / 255, blue: 252 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 244 / 255, green: 249 / 255, blue: 1, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 117 / 255, green: 182 / 255, blue: 1, alpha: 1),
+                    .init(calibratedRed: 208 / 255, green: 231 / 255, blue: 1, alpha: 1)
+                )
+            )
         case .mint:
-            return NSColor(calibratedRed: 238 / 255, green: 248 / 255, blue: 243 / 255, alpha: 1)
+            return Palette(
+                title: "Mint",
+                subtitle: "Soft mint surfaces with fresher green highlights.",
+                preferredColorScheme: .light,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 233 / 255, green: 250 / 255, blue: 242 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 245 / 255, green: 1, blue: 249 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 216 / 255, green: 242 / 255, blue: 228 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 240 / 255, green: 252 / 255, blue: 246 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 89 / 255, green: 204 / 255, blue: 150 / 255, alpha: 1),
+                    .init(calibratedRed: 211 / 255, green: 248 / 255, blue: 228 / 255, alpha: 1)
+                )
+            )
         case .rose:
-            return NSColor(calibratedRed: 252 / 255, green: 240 / 255, blue: 244 / 255, alpha: 1)
+            return Palette(
+                title: "Rose",
+                subtitle: "Editorial pink surfaces with brighter berry accents.",
+                preferredColorScheme: .light,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 1, green: 238 / 255, blue: 245 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 1, green: 246 / 255, blue: 249 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 249 / 255, green: 227 / 255, blue: 236 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 1, green: 242 / 255, blue: 247 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 1, green: 133 / 255, blue: 178 / 255, alpha: 1),
+                    .init(calibratedRed: 1, green: 222 / 255, blue: 234 / 255, alpha: 1)
+                )
+            )
         case .sand:
-            return NSColor(calibratedRed: 245 / 255, green: 238 / 255, blue: 228 / 255, alpha: 1)
+            return Palette(
+                title: "Sand",
+                subtitle: "Warm neutral surfaces with a sunnier paper tone.",
+                preferredColorScheme: .light,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 251 / 255, green: 241 / 255, blue: 226 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 1, green: 248 / 255, blue: 238 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 244 / 255, green: 231 / 255, blue: 212 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 1, green: 244 / 255, blue: 231 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 233 / 255, green: 185 / 255, blue: 112 / 255, alpha: 1),
+                    .init(calibratedRed: 1, green: 233 / 255, blue: 196 / 255, alpha: 1)
+                )
+            )
         case .lavender:
-            return NSColor(calibratedRed: 245 / 255, green: 241 / 255, blue: 252 / 255, alpha: 1)
+            return Palette(
+                title: "Lavender",
+                subtitle: "Pale violet surfaces with stronger lilac highlights.",
+                preferredColorScheme: .light,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 244 / 255, green: 239 / 255, blue: 1, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 250 / 255, green: 246 / 255, blue: 1, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 235 / 255, green: 227 / 255, blue: 1, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 247 / 255, green: 243 / 255, blue: 1, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 186 / 255, green: 143 / 255, blue: 1, alpha: 1),
+                    .init(calibratedRed: 226 / 255, green: 203 / 255, blue: 1, alpha: 1)
+                )
+            )
         case .citrus:
-            return NSColor(calibratedRed: 248 / 255, green: 247 / 255, blue: 229 / 255, alpha: 1)
+            return Palette(
+                title: "Citrus",
+                subtitle: "Fresh cream surfaces with punchier lime and lemon notes.",
+                preferredColorScheme: .light,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 249 / 255, green: 251 / 255, blue: 219 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 1, green: 1, blue: 238 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 236 / 255, green: 244 / 255, blue: 198 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 252 / 255, green: 1, blue: 231 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 186 / 255, green: 233 / 255, blue: 74 / 255, alpha: 1),
+                    .init(calibratedRed: 1, green: 226 / 255, blue: 124 / 255, alpha: 1)
+                )
+            )
         case .pearl:
-            return NSColor(calibratedRed: 244 / 255, green: 246 / 255, blue: 250 / 255, alpha: 1)
+            return Palette(
+                title: "Pearl",
+                subtitle: "Clean pearl-white surfaces with crisp silver-blue separation.",
+                preferredColorScheme: .light,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 241 / 255, green: 245 / 255, blue: 251 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 1, green: 1, blue: 1, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 231 / 255, green: 237 / 255, blue: 246 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 250 / 255, green: 252 / 255, blue: 1, alpha: 1),
+                previewColors: Self.preview(
+                    .white,
+                    .init(calibratedRed: 205 / 255, green: 221 / 255, blue: 244 / 255, alpha: 1)
+                )
+            )
         case .coral:
-            return NSColor(calibratedRed: 252 / 255, green: 239 / 255, blue: 234 / 255, alpha: 1)
-        }
-    }
-
-    private var nsCardBackgroundColor: NSColor {
-        switch self {
-        case .dark:
-            return NSColor(calibratedRed: 40 / 255, green: 40 / 255, blue: 40 / 255, alpha: 1)
-        case .midnight:
-            return NSColor(calibratedRed: 24 / 255, green: 24 / 255, blue: 24 / 255, alpha: 1)
-        case .midnightOcean:
-            return NSColor(calibratedRed: 24 / 255, green: 31 / 255, blue: 44 / 255, alpha: 1)
-        case .midnightForest:
-            return NSColor(calibratedRed: 25 / 255, green: 34 / 255, blue: 29 / 255, alpha: 1)
-        case .midnightRose:
-            return NSColor(calibratedRed: 36 / 255, green: 24 / 255, blue: 35 / 255, alpha: 1)
-        case .midnightAurora:
-            return NSColor(calibratedRed: 26 / 255, green: 32 / 255, blue: 52 / 255, alpha: 1)
-        case .midnightEmber:
-            return NSColor(calibratedRed: 44 / 255, green: 29 / 255, blue: 24 / 255, alpha: 1)
-        case .midnightAmethyst:
-            return NSColor(calibratedRed: 34 / 255, green: 27 / 255, blue: 50 / 255, alpha: 1)
-        case .midnightLagoon:
-            return NSColor(calibratedRed: 19 / 255, green: 35 / 255, blue: 37 / 255, alpha: 1)
-        case .midnightCocoa:
-            return NSColor(calibratedRed: 41 / 255, green: 31 / 255, blue: 26 / 255, alpha: 1)
-        case .light:
-            return NSColor.controlBackgroundColor
-        case .sunrise:
-            return NSColor(calibratedRed: 1, green: 249 / 255, blue: 244 / 255, alpha: 1)
-        case .sky:
-            return NSColor(calibratedRed: 248 / 255, green: 251 / 255, blue: 1, alpha: 1)
-        case .mint:
-            return NSColor(calibratedRed: 246 / 255, green: 1, blue: 250 / 255, alpha: 1)
-        case .rose:
-            return NSColor(calibratedRed: 1, green: 247 / 255, blue: 250 / 255, alpha: 1)
-        case .sand:
-            return NSColor(calibratedRed: 252 / 255, green: 247 / 255, blue: 240 / 255, alpha: 1)
-        case .lavender:
-            return NSColor(calibratedRed: 250 / 255, green: 247 / 255, blue: 1, alpha: 1)
-        case .citrus:
-            return NSColor(calibratedRed: 1, green: 253 / 255, blue: 239 / 255, alpha: 1)
-        case .pearl:
-            return NSColor(calibratedRed: 1, green: 1, blue: 1, alpha: 1)
-        case .coral:
-            return NSColor(calibratedRed: 1, green: 245 / 255, blue: 241 / 255, alpha: 1)
-        }
-    }
-
-    private var nsSidebarBackgroundColor: NSColor {
-        switch self {
-        case .dark:
-            return NSColor(calibratedRed: 36 / 255, green: 36 / 255, blue: 36 / 255, alpha: 1)
-        case .midnight:
-            return NSColor(calibratedRed: 18 / 255, green: 18 / 255, blue: 18 / 255, alpha: 1)
-        case .midnightOcean:
-            return NSColor(calibratedRed: 18 / 255, green: 26 / 255, blue: 42 / 255, alpha: 1)
-        case .midnightForest:
-            return NSColor(calibratedRed: 18 / 255, green: 28 / 255, blue: 23 / 255, alpha: 1)
-        case .midnightRose:
-            return NSColor(calibratedRed: 31 / 255, green: 20 / 255, blue: 30 / 255, alpha: 1)
-        case .midnightAurora:
-            return NSColor(calibratedRed: 20 / 255, green: 24 / 255, blue: 44 / 255, alpha: 1)
-        case .midnightEmber:
-            return NSColor(calibratedRed: 35 / 255, green: 22 / 255, blue: 18 / 255, alpha: 1)
-        case .midnightAmethyst:
-            return NSColor(calibratedRed: 27 / 255, green: 22 / 255, blue: 40 / 255, alpha: 1)
-        case .midnightLagoon:
-            return NSColor(calibratedRed: 16 / 255, green: 30 / 255, blue: 32 / 255, alpha: 1)
-        case .midnightCocoa:
-            return NSColor(calibratedRed: 34 / 255, green: 25 / 255, blue: 21 / 255, alpha: 1)
-        case .light:
-            return NSColor(calibratedRed: 243 / 255, green: 245 / 255, blue: 248 / 255, alpha: 1)
-        case .sunrise:
-            return NSColor(calibratedRed: 245 / 255, green: 236 / 255, blue: 228 / 255, alpha: 1)
-        case .sky:
-            return NSColor(calibratedRed: 231 / 255, green: 239 / 255, blue: 249 / 255, alpha: 1)
-        case .mint:
-            return NSColor(calibratedRed: 230 / 255, green: 242 / 255, blue: 235 / 255, alpha: 1)
-        case .rose:
-            return NSColor(calibratedRed: 247 / 255, green: 233 / 255, blue: 239 / 255, alpha: 1)
-        case .sand:
-            return NSColor(calibratedRed: 241 / 255, green: 234 / 255, blue: 223 / 255, alpha: 1)
-        case .lavender:
-            return NSColor(calibratedRed: 239 / 255, green: 233 / 255, blue: 249 / 255, alpha: 1)
-        case .citrus:
-            return NSColor(calibratedRed: 240 / 255, green: 246 / 255, blue: 218 / 255, alpha: 1)
-        case .pearl:
-            return NSColor(calibratedRed: 236 / 255, green: 240 / 255, blue: 246 / 255, alpha: 1)
-        case .coral:
-            return NSColor(calibratedRed: 247 / 255, green: 233 / 255, blue: 227 / 255, alpha: 1)
-        }
-    }
-
-    private var nsElevatedBackgroundColor: NSColor {
-        switch self {
-        case .dark:
-            return NSColor(calibratedRed: 45 / 255, green: 45 / 255, blue: 45 / 255, alpha: 1)
-        case .midnight:
-            return NSColor(calibratedRed: 28 / 255, green: 28 / 255, blue: 28 / 255, alpha: 1)
-        case .midnightOcean:
-            return NSColor(calibratedRed: 30 / 255, green: 38 / 255, blue: 56 / 255, alpha: 1)
-        case .midnightForest:
-            return NSColor(calibratedRed: 30 / 255, green: 40 / 255, blue: 33 / 255, alpha: 1)
-        case .midnightRose:
-            return NSColor(calibratedRed: 42 / 255, green: 28 / 255, blue: 40 / 255, alpha: 1)
-        case .midnightAurora:
-            return NSColor(calibratedRed: 31 / 255, green: 36 / 255, blue: 61 / 255, alpha: 1)
-        case .midnightEmber:
-            return NSColor(calibratedRed: 47 / 255, green: 30 / 255, blue: 24 / 255, alpha: 1)
-        case .midnightAmethyst:
-            return NSColor(calibratedRed: 40 / 255, green: 31 / 255, blue: 57 / 255, alpha: 1)
-        case .midnightLagoon:
-            return NSColor(calibratedRed: 24 / 255, green: 43 / 255, blue: 46 / 255, alpha: 1)
-        case .midnightCocoa:
-            return NSColor(calibratedRed: 47 / 255, green: 35 / 255, blue: 29 / 255, alpha: 1)
-        case .light:
-            return NSColor.white
-        case .sunrise:
-            return NSColor(calibratedRed: 1, green: 246 / 255, blue: 241 / 255, alpha: 1)
-        case .sky:
-            return NSColor(calibratedRed: 247 / 255, green: 250 / 255, blue: 1, alpha: 1)
-        case .mint:
-            return NSColor(calibratedRed: 245 / 255, green: 252 / 255, blue: 248 / 255, alpha: 1)
-        case .rose:
-            return NSColor(calibratedRed: 1, green: 245 / 255, blue: 248 / 255, alpha: 1)
-        case .sand:
-            return NSColor(calibratedRed: 250 / 255, green: 245 / 255, blue: 236 / 255, alpha: 1)
-        case .lavender:
-            return NSColor(calibratedRed: 250 / 255, green: 247 / 255, blue: 1, alpha: 1)
-        case .citrus:
-            return NSColor(calibratedRed: 251 / 255, green: 1, blue: 244 / 255, alpha: 1)
-        case .pearl:
-            return NSColor(calibratedRed: 252 / 255, green: 253 / 255, blue: 1, alpha: 1)
-        case .coral:
-            return NSColor(calibratedRed: 1, green: 243 / 255, blue: 239 / 255, alpha: 1)
-        }
-    }
-
-    private var nsHoverCardBackgroundColor: NSColor {
-        switch self.preferredColorScheme {
-        case .dark:
-            return NSColor.white.withAlphaComponent(0.07)
-        case .light:
-            return NSColor.black.withAlphaComponent(0.06)
-        @unknown default:
-            return NSColor.black.withAlphaComponent(0.06)
-        }
-    }
-
-    private var nsSeparatorColor: NSColor {
-        switch self.preferredColorScheme {
-        case .dark:
-            return NSColor.white.withAlphaComponent(0.08)
-        case .light:
-            return NSColor.black.withAlphaComponent(0.08)
-        @unknown default:
-            return NSColor.black.withAlphaComponent(0.08)
-        }
-    }
-
-    private var previewColors: [Color] {
-        switch self {
-        case .dark:
-            return [Color(red: 46 / 255, green: 46 / 255, blue: 46 / 255), Color(red: 30 / 255, green: 30 / 255, blue: 30 / 255)]
-        case .midnight:
-            return [Color(red: 24 / 255, green: 24 / 255, blue: 24 / 255), Color(red: 15 / 255, green: 15 / 255, blue: 15 / 255)]
-        case .midnightOcean:
-            return [Color(red: 49 / 255, green: 74 / 255, blue: 124 / 255), Color(red: 13 / 255, green: 18 / 255, blue: 28 / 255)]
-        case .midnightForest:
-            return [Color(red: 74 / 255, green: 108 / 255, blue: 85 / 255), Color(red: 14 / 255, green: 20 / 255, blue: 17 / 255)]
-        case .midnightRose:
-            return [Color(red: 123 / 255, green: 67 / 255, blue: 110 / 255), Color(red: 24 / 255, green: 16 / 255, blue: 23 / 255)]
-        case .midnightAurora:
-            return [Color(red: 74 / 255, green: 111 / 255, blue: 1), Color(red: 90 / 255, green: 52 / 255, blue: 184 / 255)]
-        case .midnightEmber:
-            return [Color(red: 215 / 255, green: 117 / 255, blue: 55 / 255), Color(red: 76 / 255, green: 35 / 255, blue: 19 / 255)]
-        case .midnightAmethyst:
-            return [Color(red: 149 / 255, green: 110 / 255, blue: 1), Color(red: 67 / 255, green: 45 / 255, blue: 126 / 255)]
-        case .midnightLagoon:
-            return [Color(red: 54 / 255, green: 150 / 255, blue: 150 / 255), Color(red: 13 / 255, green: 54 / 255, blue: 58 / 255)]
-        case .midnightCocoa:
-            return [Color(red: 141 / 255, green: 101 / 255, blue: 77 / 255), Color(red: 52 / 255, green: 36 / 255, blue: 28 / 255)]
-        case .light:
-            return [Color.white, Color(red: 228 / 255, green: 232 / 255, blue: 238 / 255)]
-        case .sunrise:
-            return [Color(red: 1, green: 232 / 255, blue: 210 / 255), Color(red: 249 / 255, green: 242 / 255, blue: 236 / 255)]
-        case .sky:
-            return [Color(red: 202 / 255, green: 227 / 255, blue: 1), Color(red: 239 / 255, green: 245 / 255, blue: 252 / 255)]
-        case .mint:
-            return [Color(red: 198 / 255, green: 241 / 255, blue: 224 / 255), Color(red: 238 / 255, green: 248 / 255, blue: 243 / 255)]
-        case .rose:
-            return [Color(red: 1, green: 218 / 255, blue: 230 / 255), Color(red: 252 / 255, green: 240 / 255, blue: 244 / 255)]
-        case .sand:
-            return [Color(red: 234 / 255, green: 212 / 255, blue: 175 / 255), Color(red: 248 / 255, green: 240 / 255, blue: 225 / 255)]
-        case .lavender:
-            return [Color(red: 225 / 255, green: 206 / 255, blue: 1), Color(red: 239 / 255, green: 233 / 255, blue: 249 / 255)]
-        case .citrus:
-            return [Color(red: 211 / 255, green: 244 / 255, blue: 119 / 255), Color(red: 1, green: 236 / 255, blue: 154 / 255)]
-        case .pearl:
-            return [Color.white, Color(red: 217 / 255, green: 228 / 255, blue: 244 / 255)]
-        case .coral:
-            return [Color(red: 1, green: 214 / 255, blue: 199 / 255), Color(red: 1, green: 241 / 255, blue: 234 / 255)]
+            return Palette(
+                title: "Coral",
+                subtitle: "Soft coral surfaces with warmer citrus-pink accents.",
+                preferredColorScheme: .light,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 1, green: 236 / 255, blue: 228 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 1, green: 244 / 255, blue: 239 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 251 / 255, green: 228 / 255, blue: 220 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 1, green: 240 / 255, blue: 232 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 1, green: 142 / 255, blue: 118 / 255, alpha: 1),
+                    .init(calibratedRed: 1, green: 218 / 255, blue: 190 / 255, alpha: 1)
+                )
+            )
+        case .ruby:
+            return Palette(
+                title: "Ruby",
+                subtitle: "A new dark crimson palette with deeper wine-toned highlights.",
+                preferredColorScheme: .dark,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 25 / 255, green: 13 / 255, blue: 18 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 40 / 255, green: 21 / 255, blue: 29 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 31 / 255, green: 17 / 255, blue: 24 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 47 / 255, green: 24 / 255, blue: 33 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 217 / 255, green: 76 / 255, blue: 114 / 255, alpha: 1),
+                    .init(calibratedRed: 74 / 255, green: 22 / 255, blue: 38 / 255, alpha: 1)
+                )
+            )
+        case .meadow:
+            return Palette(
+                title: "Meadow",
+                subtitle: "A new spring green light theme with brighter leafy contrast.",
+                preferredColorScheme: .light,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 236 / 255, green: 250 / 255, blue: 228 / 255, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 247 / 255, green: 1, blue: 241 / 255, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 220 / 255, green: 243 / 255, blue: 206 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 243 / 255, green: 252 / 255, blue: 235 / 255, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 111 / 255, green: 205 / 255, blue: 90 / 255, alpha: 1),
+                    .init(calibratedRed: 204 / 255, green: 246 / 255, blue: 171 / 255, alpha: 1)
+                )
+            )
+        case .glacier:
+            return Palette(
+                title: "Glacier",
+                subtitle: "A crisp ice-blue light theme with sharper frosted surfaces.",
+                preferredColorScheme: .light,
+                isDefaultTheme: false,
+                windowBackgroundColor: .init(calibratedRed: 235 / 255, green: 247 / 255, blue: 1, alpha: 1),
+                cardBackgroundColor: .init(calibratedRed: 247 / 255, green: 252 / 255, blue: 1, alpha: 1),
+                sidebarBackgroundColor: .init(calibratedRed: 220 / 255, green: 238 / 255, blue: 252 / 255, alpha: 1),
+                elevatedBackgroundColor: .init(calibratedRed: 242 / 255, green: 250 / 255, blue: 1, alpha: 1),
+                previewColors: Self.preview(
+                    .init(calibratedRed: 108 / 255, green: 197 / 255, blue: 1, alpha: 1),
+                    .init(calibratedRed: 198 / 255, green: 234 / 255, blue: 1, alpha: 1)
+                )
+            )
         }
     }
 }
@@ -540,6 +634,7 @@ final class AppSettings: ObservableObject {
     private let notificationPlacementKey = "notificationPlacement"
     private let notificationAutoHideDelayKey = "notificationAutoHideDelay"
     private let browseVideoCardWidthKey = "browseVideoCardWidth"
+    private let appearanceModeMigrationKey = "appearanceModeMigration0130"
     private let sponsorBlockEnabledKey = "sponsorBlockEnabled"
     private let sponsorBlockAutoSkipKey = "sponsorBlockAutoSkipEnabled"
     private let sponsorBlockCategoryBehaviorsKey = "sponsorBlockCategoryBehaviors"
@@ -622,8 +717,30 @@ final class AppSettings: ObservableObject {
 
     init() {
         let storedAppearance = defaults.string(forKey: "appearanceMode") ?? ""
-        self.appearanceMode = AppAppearanceMode(rawValue: storedAppearance)
-            ?? (storedAppearance == "oledDark" ? .midnight : .dark)
+        let hasMigratedAppearance = defaults.bool(forKey: appearanceModeMigrationKey)
+        let resolvedAppearance: AppAppearanceMode
+
+        if hasMigratedAppearance {
+            resolvedAppearance = AppAppearanceMode(rawValue: storedAppearance)
+                ?? (storedAppearance == "oledDark" ? .midnight : .dark)
+        } else {
+            switch storedAppearance {
+            case "midnight":
+                resolvedAppearance = .dark
+                defaults.set(AppAppearanceMode.dark.rawValue, forKey: "appearanceMode")
+            case "oledDark":
+                resolvedAppearance = .midnight
+                defaults.set(AppAppearanceMode.midnight.rawValue, forKey: "appearanceMode")
+            default:
+                resolvedAppearance = AppAppearanceMode(rawValue: storedAppearance) ?? .dark
+                if storedAppearance.isEmpty == false {
+                    defaults.set(resolvedAppearance.rawValue, forKey: "appearanceMode")
+                }
+            }
+            defaults.set(true, forKey: appearanceModeMigrationKey)
+        }
+
+        self.appearanceMode = resolvedAppearance
         self.defaultQuality = DefaultQuality(rawValue: defaults.string(forKey: "defaultQuality") ?? "") ?? .auto
 
         let storedDefaultPlaybackSpeed = defaults.double(forKey: "defaultPlaybackSpeed")
@@ -857,15 +974,25 @@ final class AppSettings: ObservableObject {
 
     func reorderSidebarItem(_ dragged: SidebarItemKind, before target: SidebarItemKind) {
         guard dragged != target,
-              let sourceIndex = sidebarItemOrder.firstIndex(of: dragged),
               let targetIndex = sidebarItemOrder.firstIndex(of: target) else {
+            return
+        }
+
+        reorderSidebarItem(dragged, to: targetIndex)
+    }
+
+    func reorderSidebarItem(_ dragged: SidebarItemKind, to destinationIndex: Int) {
+        guard let sourceIndex = sidebarItemOrder.firstIndex(of: dragged) else {
             return
         }
 
         var updatedOrder = sidebarItemOrder
         updatedOrder.remove(at: sourceIndex)
-        let adjustedTarget = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
-        updatedOrder.insert(dragged, at: adjustedTarget)
+        let clampedDestination = max(0, min(destinationIndex, sidebarItemOrder.count))
+        let adjustedDestination = sourceIndex < destinationIndex
+            ? min(clampedDestination - 1, updatedOrder.count)
+            : min(clampedDestination, updatedOrder.count)
+        updatedOrder.insert(dragged, at: adjustedDestination)
         sidebarItemOrder = updatedOrder
     }
 

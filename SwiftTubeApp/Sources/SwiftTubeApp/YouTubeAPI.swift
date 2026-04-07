@@ -165,6 +165,46 @@ final class YouTubeAPI: @unchecked Sendable {
         return try await request(profile: .web, endpoint: "next", body: body, authenticated: authenticated)
     }
 
+    func liveChat(
+        continuation: String,
+        authenticated: Bool = false
+    ) async throws -> JSONDictionary {
+        try await request(
+            profile: .web,
+            endpoint: "live_chat/get_live_chat",
+            body: ["continuation": continuation],
+            authenticated: authenticated
+        )
+    }
+
+    func sendLiveChatMessage(
+        message: String,
+        params: String,
+        datasyncId: String,
+        clientMessageId: String,
+        authenticated: Bool = true
+    ) async throws -> JSONDictionary {
+        try await request(
+            profile: .web,
+            endpoint: "live_chat/send_message",
+            body: [
+                "clientMessageId": clientMessageId,
+                "params": params,
+                "richMessage": [
+                    "textSegments": [
+                        "text": message,
+                    ],
+                ],
+            ],
+            extraContext: [
+                "user": [
+                    "onBehalfOfUser": datasyncId,
+                ],
+            ],
+            authenticated: authenticated
+        )
+    }
+
     func player(
         videoID: String,
         profile: InnerTubeClientProfile,
@@ -303,10 +343,32 @@ final class YouTubeAPI: @unchecked Sendable {
         return headers
     }
 
+    func fetchText(from url: URL, authenticated: Bool = false) async throws -> String {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+
+        if authenticated {
+            for (header, value) in try await authManager.authHeaders(origin: "https://www.youtube.com", url: url) {
+                request.setValue(value, forHTTPHeaderField: header)
+            }
+        }
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTPResponse(response, data: data)
+
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw BackendClientError(message: "YouTube returned unreadable text data.")
+        }
+
+        return text
+    }
+
     private func request(
         profile: InnerTubeClientProfile,
         endpoint: String,
         body: JSONDictionary,
+        extraContext: JSONDictionary = [:],
         authenticated: Bool
     ) async throws -> JSONDictionary {
         let context = InnerTubeClients.context(for: profile)
@@ -343,7 +405,11 @@ final class YouTubeAPI: @unchecked Sendable {
         }
 
         var payload = body
-        payload["context"] = context.requestContext
+        var requestContext = context.requestContext
+        for (key, value) in extraContext {
+            requestContext[key] = value
+        }
+        payload["context"] = requestContext
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
         let (data, response) = try await session.data(for: request)
