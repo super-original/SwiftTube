@@ -1753,8 +1753,7 @@ final class PlayerViewModel: ObservableObject {
 
     func sendLiveChatMessage(_ text: String) {
         guard let composer = liveChatComposer,
-              let sendParams = composer.sendParams,
-              let datasyncId = composer.datasyncId else {
+              let sendParams = composer.sendParams else {
             return
         }
 
@@ -1786,7 +1785,6 @@ final class PlayerViewModel: ObservableObject {
                 try await BackendClient.shared.sendLiveChatMessage(
                     message: trimmed,
                     params: sendParams,
-                    datasyncId: datasyncId,
                     clientIdPrefix: composer.clientIdPrefix
                 )
             } catch {

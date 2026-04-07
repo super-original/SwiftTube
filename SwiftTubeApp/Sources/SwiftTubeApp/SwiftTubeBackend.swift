@@ -432,7 +432,6 @@ actor SwiftTubeBackend {
     func sendLiveChatMessage(
         message: String,
         params: String,
-        datasyncId: String,
         clientIdPrefix: String?
     ) async throws {
         _ = try await requireAuthenticatedMaterial()
@@ -445,7 +444,6 @@ actor SwiftTubeBackend {
         _ = try await api.sendLiveChatMessage(
             message: trimmed,
             params: params,
-            datasyncId: datasyncId,
             clientMessageId: makeLiveChatClientMessageID(prefix: clientIdPrefix)
         )
     }

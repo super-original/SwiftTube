@@ -180,7 +180,6 @@ final class YouTubeAPI: @unchecked Sendable {
     func sendLiveChatMessage(
         message: String,
         params: String,
-        datasyncId: String,
         clientMessageId: String,
         authenticated: Bool = true
     ) async throws -> JSONDictionary {
@@ -196,11 +195,6 @@ final class YouTubeAPI: @unchecked Sendable {
                             "text": message,
                         ],
                     ],
-                ],
-            ],
-            extraContext: [
-                "user": [
-                    "onBehalfOfUser": datasyncId,
                 ],
             ],
             authenticated: authenticated

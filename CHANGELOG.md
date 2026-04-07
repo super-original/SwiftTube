@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.8
+
+- Made the watch-history context-menu trash icon follow the same red destructive styling as the label, tightened the normal-view live-chat height against the actual window so the composer stops clipping offscreen, and removed the extra live-chat send context that was likely causing YouTube to reject outgoing messages with an internal error.
+
 ## 0.13.7
 
 - Restored the SponsorBlock master control to a real switch while keeping it right-aligned, and removed the mismatched background fill from the sidebar navigation-items list.

@@ -71,13 +71,11 @@ final class BackendClient {
     func sendLiveChatMessage(
         message: String,
         params: String,
-        datasyncId: String,
         clientIdPrefix: String?
     ) async throws {
         try await backend.sendLiveChatMessage(
             message: message,
             params: params,
-            datasyncId: datasyncId,
             clientIdPrefix: clientIdPrefix
         )
     }

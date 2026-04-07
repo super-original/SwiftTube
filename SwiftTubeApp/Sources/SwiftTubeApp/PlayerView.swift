@@ -370,8 +370,10 @@ private extension PlayerScreen {
     }
 
     var standardLiveChatHeight: CGFloat {
-        let visibleHeight = NSScreen.main?.visibleFrame.height ?? 900
-        return min(max(visibleHeight - 150, 720), 1040)
+        let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
+        let windowHeight = NSApp.keyWindow?.contentLayoutRect.height ?? screenHeight
+        let availableHeight = min(screenHeight, windowHeight)
+        return min(max(availableHeight - 210, 560), 880)
     }
 
     var scrollContent: some View {
