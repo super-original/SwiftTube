@@ -308,6 +308,7 @@ private struct SidebarPane: View {
                         ) { visible in
                             settings.setSidebarItem(item, visible: visible)
                         }
+                        .listRowBackground(Color.clear)
                         .moveDisabled(item == .home)
                     }
                     .onMove { source, destination in
@@ -315,6 +316,8 @@ private struct SidebarPane: View {
                     }
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
                 .frame(height: CGFloat(settings.sidebarItemOrder.count) * 44 + 18)
             }
         }
@@ -1024,6 +1027,7 @@ private struct NativeToggleRow: View {
             Spacer()
 
             Toggle(title, isOn: $isOn)
+                .toggleStyle(.switch)
                 .labelsHidden()
         }
     }

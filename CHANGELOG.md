@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.7
+
+- Restored the SponsorBlock master control to a real switch while keeping it right-aligned, and removed the mismatched background fill from the sidebar navigation-items list.
+
 ## 0.13.6
 
 - Trimmed the remaining card-level settings copy, moved the SponsorBlock master switch into a right-aligned control row, and merged seeking plus keybinds into a cleaner `Controls` pane to make the settings sidebar less fragmented.
