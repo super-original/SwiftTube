@@ -395,13 +395,13 @@ private extension PlayerScreen {
             ? playerStageHeight + 24 + headerSectionHeight
             : 0
         if measuredPrimaryHeight > 0 {
-            return max(measuredPrimaryHeight, 520)
+            return max(measuredPrimaryHeight - 14, 500)
         }
 
         let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
         let windowHeight = NSApp.keyWindow?.contentLayoutRect.height ?? screenHeight
         let availableHeight = min(screenHeight, windowHeight)
-        return min(max(availableHeight - 150, 620), 960)
+        return min(max(availableHeight - 164, 600), 940)
     }
 
     var scrollContent: some View {
@@ -2650,6 +2650,7 @@ private struct PlayerControlBar: View {
     private let qualityButtonMinWidth: CGFloat = 104
     private let volumeIconContentHeight: CGFloat = 22
     private let timeLabelWidth: CGFloat = 54
+    private let liveIndicatorWidth: CGFloat = 66
 
     var body: some View {
         VStack(spacing: 10) {
@@ -2726,10 +2727,7 @@ private struct PlayerControlBar: View {
 
     var scrubberControl: some View {
         HStack(spacing: 12) {
-            Text(coordinator.isLivePlayback ? "LIVE" : coordinator.currentTimeText)
-                .foregroundStyle(coordinator.isLivePlayback ? BrandAssets.youtubeRed : .primary)
-                .fontWeight(coordinator.isLivePlayback ? .bold : .regular)
-                .frame(width: timeLabelWidth, alignment: .leading)
+            leadingScrubberStatus
 
             // Keep this row structure aligned with the pre-refactor scrubber so
             // the sponsor overlay shares the same native slider geometry.
@@ -2780,9 +2778,7 @@ private struct PlayerControlBar: View {
                 }
             }
 
-            Text(coordinator.isLivePlayback ? coordinator.liveLatencyText : coordinator.remainingTimeText)
-                .foregroundStyle(.secondary)
-                .frame(width: timeLabelWidth, alignment: .trailing)
+            trailingScrubberStatus
         }
         .font(.caption.weight(.medium))
         .monospacedDigit()
@@ -2794,6 +2790,46 @@ private struct PlayerControlBar: View {
             glass: .regular,
             shape: Capsule()
         )
+    }
+
+    @ViewBuilder
+    private var leadingScrubberStatus: some View {
+        if coordinator.isLivePlayback {
+            Button {
+                coordinator.seekToLiveEdge()
+            } label: {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(coordinator.isAtLiveEdge ? BrandAssets.youtubeRed : Color.secondary.opacity(0.75))
+                        .frame(width: 8, height: 8)
+
+                    Text("LIVE")
+                        .foregroundStyle(coordinator.isAtLiveEdge ? BrandAssets.youtubeRed : .secondary)
+                        .fontWeight(.bold)
+                }
+                .frame(width: liveIndicatorWidth, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Jump to live")
+            .accessibilityValue(coordinator.isAtLiveEdge ? "At live edge" : "Behind live")
+        } else {
+            Text(coordinator.currentTimeText)
+                .foregroundStyle(.primary)
+                .frame(width: timeLabelWidth, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var trailingScrubberStatus: some View {
+        if coordinator.isLivePlayback {
+            Color.clear
+                .frame(width: liveIndicatorWidth, height: 1)
+        } else {
+            Text(coordinator.remainingTimeText)
+                .foregroundStyle(.secondary)
+                .frame(width: timeLabelWidth, alignment: .trailing)
+        }
     }
 
     private func updateMeasuredSliderWidth(_ width: CGFloat) {
@@ -3809,6 +3845,7 @@ private struct ScrubPreviewPositioned: View {
 
     // Must match constants in PlayerControlBar.
     private let timeLabelWidth: CGFloat = 54
+    private let liveIndicatorWidth: CGFloat = 66
     private let scrubberRowHeight: CGFloat = 38
     // Fixed display width for the preview tile; height is derived from the tile's aspect ratio.
     private let previewDisplayWidth: CGFloat = 136
@@ -3828,7 +3865,8 @@ private struct ScrubPreviewPositioned: View {
             // Horizontal centre of the hovered position on stage.
             // Layout: edgePad | controlBarPad(14) | timeLabel(54) | spacing(12) | [track] | …
             let edgePad = CGFloat(edgeToEdge ? 20 : 18) + sidePad
-            let innerOffset: CGFloat = 14 + timeLabelWidth + 12 + 10   // ~90 pt (includes track inset)
+            let statusWidth = coordinator.isLivePlayback ? liveIndicatorWidth : timeLabelWidth
+            let innerOffset: CGFloat = 14 + statusWidth + 12 + 10
             let trackLeft = edgePad + innerOffset
             let trackRight = stageSize.width - edgePad - innerOffset
             let thumbX = trackLeft + fraction * max(0, trackRight - trackLeft)
@@ -3838,38 +3876,23 @@ private struct ScrubPreviewPositioned: View {
             let bottomPad = CGFloat(edgeToEdge ? 20 : 18)
             let popupY = stageSize.height - bottomPad - scrubberRowHeight - 10 - dispH / 2
 
-            ScrubPreviewBubble(spec: spec, time: hoverTime, displayWidth: dispW, displayHeight: dispH)
+            ScrubPreviewBubble(
+                spec: spec,
+                time: hoverTime,
+                displayWidth: dispW,
+                displayHeight: dispH,
+                timestampText: timestampText(for: hoverTime)
+            )
                 .fixedSize()
                 .position(x: clampedX, y: popupY)
         }
     }
-}
 
-/// Thumbnail + timestamp label shown above the scrubber during hover/drag.
-private struct ScrubPreviewBubble: View {
-    let spec: StoryboardSpec
-    let time: Double
-    let displayWidth: CGFloat
-    let displayHeight: CGFloat
-
-    var body: some View {
-        VStack(spacing: 5) {
-            ScrubPreviewTile(spec: spec, time: time, displayWidth: displayWidth, displayHeight: displayHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.white.opacity(0.25), lineWidth: 1)
-                )
-
-            Text(formatTimestamp(time))
-                .font(.caption.weight(.semibold))
-                .monospacedDigit()
-                .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(Color.black.opacity(0.72)))
+    private func timestampText(for hoverTime: Double) -> String {
+        if coordinator.isLivePlayback {
+            return "-\(formatTimestamp(max(coordinator.scrubberUpperBound - hoverTime, 0)))"
         }
-        .shadow(color: .black.opacity(0.55), radius: 10, y: 4)
+        return formatTimestamp(hoverTime)
     }
 
     private func formatTimestamp(_ seconds: Double) -> String {
@@ -3880,6 +3903,35 @@ private struct ScrubPreviewBubble: View {
         let s = total % 60
         if h > 0 { return "\(h):\(String(format: "%02d", m)):\(String(format: "%02d", s))" }
         return "\(m):\(String(format: "%02d", s))"
+    }
+}
+
+/// Thumbnail + timestamp label shown above the scrubber during hover/drag.
+private struct ScrubPreviewBubble: View {
+    let spec: StoryboardSpec
+    let time: Double
+    let displayWidth: CGFloat
+    let displayHeight: CGFloat
+    let timestampText: String
+
+    var body: some View {
+        VStack(spacing: 5) {
+            ScrubPreviewTile(spec: spec, time: time, displayWidth: displayWidth, displayHeight: displayHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                )
+
+            Text(timestampText)
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.black.opacity(0.72)))
+        }
+        .shadow(color: .black.opacity(0.55), radius: 10, y: 4)
     }
 }
 

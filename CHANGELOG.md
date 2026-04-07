@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.13
+
+- Reworked live DVR playback so active livestreams prefer the manifest path before quality-based stream selection, changed the player scrubber to a clickable YouTube-style `LIVE` indicator with red or gray state instead of odd live time text, showed negative hover timestamps for live DVR previews, and pulled the standard watch-page live chat card back up so it stops closer to the action row.
+
 ## 0.13.12
 
 - Anchored the standard watch-page live-chat card to the measured player-plus-header height so it stops at the action row again, added hover timestamps to live-chat messages, and tightened live DVR behavior by preferring the DASH live manifest while snapping the scrubber thumb to the live edge when playback is effectively current.

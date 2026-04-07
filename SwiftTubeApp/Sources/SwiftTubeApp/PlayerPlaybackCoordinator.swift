@@ -307,15 +307,27 @@ private func automaticStartupMPVSelection(for playback: VideoPlayback) -> Manual
                 || (audioStream != nil && !hasConflictingHeaders(video: stream, audio: audioStream))
         }
 
+    if playback.isLive {
+        if let selection = buildSelection(for: playback.preferredManifestStream) {
+            return selection
+        }
+
+        if let manifestCandidate = candidates
+            .filter({ $0.streamKind == "manifest" })
+            .max(by: { automaticStartupMPVSortKey(for: $0) < automaticStartupMPVSortKey(for: $1) }) {
+            return buildSelection(for: manifestCandidate)
+        }
+    }
+
     // When a quality preference is set, find the best stream at or below that height.
     if let preferredHeight {
         let atOrBelow = candidates.filter { ($0.height ?? 0) <= preferredHeight }
         if let best = atOrBelow.max(by: { automaticStartupMPVSortKey(for: $0) < automaticStartupMPVSortKey(for: $1) }) {
-            return ManualPlaybackSelection(stream: best, audioStream: best.hasAudio ? nil : audioStream)
+            return buildSelection(for: best)
         }
         // Nothing at/below; fall back to the lowest stream above as a safety net.
         if let fallback = candidates.min(by: { ($0.height ?? 0) < ($1.height ?? 0) }) {
-            return ManualPlaybackSelection(stream: fallback, audioStream: fallback.hasAudio ? nil : audioStream)
+            return buildSelection(for: fallback)
         }
     }
 
@@ -384,6 +396,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private let layoutState: PlayerLayoutState
+    private let liveEdgeThresholdSeconds = 3.0
     private var lastNonZeroVolume = 0.9
     @Published private(set) var isScrubbing = false
     private var wasPlayingBeforeScrub = false
@@ -521,6 +534,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         return max(duration - t, 0)
     }
 
+    var isAtLiveEdge: Bool {
+        guard isLivePlayback else { return false }
+        return liveLatencySeconds <= liveEdgeThresholdSeconds
+    }
+
     var liveLatencyText: String {
         guard isLivePlayback else { return "" }
         let liveLag = liveLatencySeconds
@@ -550,7 +568,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     var displayedScrubPosition: Double {
         guard isLivePlayback, !isScrubbing else { return scrubPosition }
-        return liveLatencySeconds <= 20 ? scrubberUpperBound : scrubPosition
+        return isAtLiveEdge ? scrubberUpperBound : scrubPosition
     }
 
     var visibleSponsorSegments: [SponsorBlockSegment] {
@@ -942,6 +960,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             await mpvEngine.seek(to: target)
             syncMPVState(using: mpvEngine)
         }
+    }
+
+    func seekToLiveEdge() {
+        guard isLivePlayback else { return }
+        seek(to: scrubberUpperBound)
     }
 
     func stepFrame(direction: Int) {
