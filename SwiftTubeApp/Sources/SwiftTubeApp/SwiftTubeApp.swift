@@ -39,12 +39,12 @@ struct SwiftTubeApp: App {
             SettingsWindowCommands()
         }
 
-        Window("Settings", id: "settings") {
+        WindowGroup(id: "settings") {
             SettingsView()
                 .preferredColorScheme(settings.preferredColorScheme)
         }
         .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
-        .windowResizability(.contentSize)
+        .windowToolbarStyle(.unified(showsTitle: false))
+        .defaultSize(width: 980, height: 650)
     }
 }

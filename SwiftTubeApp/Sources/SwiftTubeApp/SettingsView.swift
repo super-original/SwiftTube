@@ -77,7 +77,6 @@ struct SettingsView: View {
             settingsDetail
         }
         .navigationSplitViewStyle(.balanced)
-        .toolbar(removing: .sidebarToggle)
         .frame(width: 980, height: 650)
         .background(settings.windowBackgroundColor.ignoresSafeArea())
         .preferredColorScheme(settings.preferredColorScheme)

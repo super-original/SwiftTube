@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.5
+
+- Switched the settings scene from a dedicated `Window` to the same `WindowGroup` plus unified hidden-titlebar configuration used by the main app so the native traffic lights and sidebar toggle follow the main window’s placement rules.
+
 ## 0.13.4
 
 - Moved the settings UI off the macOS `Settings` scene into a normal app window with a custom `Settings...` command so it can use the same hidden-titlebar window shell as the main app.
