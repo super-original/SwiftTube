@@ -71,12 +71,17 @@ struct SettingsView: View {
     @Namespace private var settingsScrollTop
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             settingsSidebar
-        } detail: {
+                .frame(width: 220)
+                .frame(maxHeight: .infinity)
+                .background(settings.sidebarBackgroundColor)
+
+            Divider()
+                .overlay(Color.white.opacity(0.06))
+
             settingsDetail
         }
-        .navigationSplitViewStyle(.balanced)
         .frame(width: 980, height: 650)
         .background(settings.windowBackgroundColor.ignoresSafeArea())
         .preferredColorScheme(settings.preferredColorScheme)
@@ -106,7 +111,8 @@ struct SettingsView: View {
             }
         }
         .listStyle(.sidebar)
-        .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder

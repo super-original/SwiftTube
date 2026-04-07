@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.1
+
+- Restored the classic suggestions rail for standard videos by removing the new tab strip and card wrapper whenever the watch page only has next-up recommendations to show.
+- Fixed live chat bootstrapping so the first chat fetch always starts from the real watch-page continuation before switching filters, which resolves the `Request contains an invalid argument.` failure on live streams.
+- Replaced the settings window split-view shell with the app’s regular sidebar-style list layout again, removing the oversized sidebar toggle chrome and restoring normal clickable category selection.
+
 ## 0.13.0 — Pulse
 
 Theme: Live playback, live chat, and a cleaner control surface.

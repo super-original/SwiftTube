@@ -371,6 +371,10 @@ private extension PlayerScreen {
         return selectedSidePanelTab
     }
 
+    var usesTabbedSidePanel: Bool {
+        playback?.liveChat != nil || viewModel.isLoadingTranscript || viewModel.transcriptSegments.isEmpty == false
+    }
+
     var scrollContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             if layoutState.isFullscreen {
@@ -481,17 +485,23 @@ private extension PlayerScreen {
     }
 
     var sidePanel: some View {
-        WatchSecondaryPanel(
-            selectedTab: Binding(
-                get: { effectiveSidePanelTab },
-                set: { selectedSidePanelTab = $0 }
-            ),
-            liveChatAvailable: playback?.liveChat != nil,
-            transcriptAvailable: viewModel.isLoadingTranscript || viewModel.transcriptSegments.isEmpty == false,
-            liveChatContent: AnyView(liveChatPanelContent),
-            transcriptContent: AnyView(transcriptPanelContent),
-            suggestionsContent: AnyView(suggestionsPanelContent)
-        )
+        Group {
+            if usesTabbedSidePanel {
+                WatchSecondaryPanel(
+                    selectedTab: Binding(
+                        get: { effectiveSidePanelTab },
+                        set: { selectedSidePanelTab = $0 }
+                    ),
+                    liveChatAvailable: playback?.liveChat != nil,
+                    transcriptAvailable: viewModel.isLoadingTranscript || viewModel.transcriptSegments.isEmpty == false,
+                    liveChatContent: AnyView(liveChatPanelContent),
+                    transcriptContent: AnyView(transcriptPanelContent),
+                    suggestionsContent: AnyView(suggestionsPanelContent)
+                )
+            } else {
+                suggestionsPanelContent
+            }
+        }
     }
 
     var fullscreenSidePanel: some View {

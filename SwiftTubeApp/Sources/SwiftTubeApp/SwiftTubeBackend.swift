@@ -682,32 +682,35 @@ actor SwiftTubeBackend {
         continuation: String?,
         authenticated: Bool
     ) async throws -> LiveChatResponse {
-        let resolvedContinuation: String
         if let continuation, continuation.isEmpty == false {
-            resolvedContinuation = continuation
-        } else {
-            let watchData = try await api.next(videoID: videoID, authenticated: authenticated)
-            guard let session = extractLiveChatSession(from: watchData) else {
-                throw BackendClientError(message: "Live chat isn’t available for this video.")
-            }
-
-            let preferredContinuation: String?
-            switch mode {
-            case .top:
-                preferredContinuation = session.topChatContinuation ?? session.initialContinuation
-            case .live:
-                preferredContinuation = session.liveChatContinuation ?? session.initialContinuation
-            }
-
-            guard let preferredContinuation, preferredContinuation.isEmpty == false else {
-                throw BackendClientError(message: "Live chat isn’t available for this mode right now.")
-            }
-
-            resolvedContinuation = preferredContinuation
+            let data = try await api.liveChat(continuation: continuation, authenticated: authenticated)
+            return extractLiveChatResponse(from: data, requestedMode: mode)
         }
 
-        let data = try await api.liveChat(continuation: resolvedContinuation, authenticated: authenticated)
-        return extractLiveChatResponse(from: data, requestedMode: mode)
+        let watchData = try await api.next(videoID: videoID, authenticated: authenticated)
+        guard let session = extractLiveChatSession(from: watchData) else {
+            throw BackendClientError(message: "Live chat isn’t available for this video.")
+        }
+
+        let bootstrapContinuation = session.initialContinuation ?? preferredLiveChatContinuation(for: mode, in: session)
+        guard let bootstrapContinuation, bootstrapContinuation.isEmpty == false else {
+            throw BackendClientError(message: "Live chat isn’t available for this mode right now.")
+        }
+
+        let bootstrapData = try await api.liveChat(continuation: bootstrapContinuation, authenticated: authenticated)
+        let bootstrapResponse = extractLiveChatResponse(from: bootstrapData, requestedMode: mode)
+        let activeMode = extractLiveChatMode(from: bootstrapData) ?? session.defaultMode
+        if activeMode == mode {
+            return bootstrapResponse
+        }
+
+        guard let modeContinuation = extractLiveChatModeContinuations(from: bootstrapData)[mode],
+              modeContinuation.isEmpty == false else {
+            throw BackendClientError(message: "Live chat isn’t available for this mode right now.")
+        }
+
+        let modeData = try await api.liveChat(continuation: modeContinuation, authenticated: authenticated)
+        return extractLiveChatResponse(from: modeData, requestedMode: mode)
     }
 
     private func makeLiveChatClientMessageID(prefix: String?) -> String {
@@ -1617,40 +1620,91 @@ private func extractLiveChatSession(from watchData: JSONDictionary) -> LiveChatS
     }
 
     let initialContinuation = extractLiveChatContinuationToken(from: renderer["continuations"]).token
-    let subMenuItems = ((((renderer["header"] as? JSONDictionary)?["liveChatHeaderRenderer"] as? JSONDictionary)?["viewSelector"] as? JSONDictionary)?["sortFilterSubMenuRenderer"] as? JSONDictionary)?["subMenuItems"] as? [Any] ?? []
+    let modeContinuations = extractLiveChatModeContinuations(from: renderer)
+    let defaultMode = extractLiveChatMode(from: renderer) ?? .top
 
-    var topChatContinuation: String?
-    var liveChatContinuation: String?
-    var defaultMode: LiveChatMode = .top
-
-    for item in subMenuItems {
-        guard let item = item as? JSONDictionary else { continue }
-        let title = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-        let continuation = extractLiveChatContinuationToken(from: item["continuation"]).token
-
-        if title.contains("live") {
-            liveChatContinuation = continuation
-            if (item["selected"] as? Bool) == true {
-                defaultMode = .live
-            }
-        } else {
-            topChatContinuation = continuation
-            if (item["selected"] as? Bool) == true {
-                defaultMode = .top
-            }
-        }
-    }
-
-    guard initialContinuation != nil || topChatContinuation != nil || liveChatContinuation != nil else {
+    guard initialContinuation != nil || modeContinuations[.top] != nil || modeContinuations[.live] != nil else {
         return nil
     }
 
     return LiveChatSession(
         initialContinuation: initialContinuation,
-        topChatContinuation: topChatContinuation,
-        liveChatContinuation: liveChatContinuation,
+        topChatContinuation: modeContinuations[.top],
+        liveChatContinuation: modeContinuations[.live],
         defaultMode: defaultMode
     )
+}
+
+private func preferredLiveChatContinuation(for mode: LiveChatMode, in session: LiveChatSession) -> String? {
+    switch mode {
+    case .top:
+        return session.topChatContinuation ?? session.initialContinuation
+    case .live:
+        return session.liveChatContinuation ?? session.initialContinuation
+    }
+}
+
+private func extractLiveChatMode(from data: JSONDictionary) -> LiveChatMode? {
+    let continuation = ((data["continuationContents"] as? JSONDictionary)?["liveChatContinuation"] as? JSONDictionary)
+    return extractLiveChatMode(from: continuation)
+}
+
+private func extractLiveChatMode(from renderer: JSONDictionary?) -> LiveChatMode? {
+    guard let renderer else { return nil }
+
+    let liveChatCurrentFilter = (((renderer["header"] as? JSONDictionary)?["liveChatHeaderRenderer"] as? JSONDictionary)?["viewSelector"] as? JSONDictionary)?["liveChatCurrentFilter"] as? String
+    if liveChatCurrentFilter == "LIVE_CHAT_FILTER_MODE_UNFILTERED" {
+        return .live
+    }
+    if liveChatCurrentFilter == "LIVE_CHAT_FILTER_MODE_DEFAULT" {
+        return .top
+    }
+
+    let subMenuItems = extractLiveChatSubMenuItems(from: renderer)
+    for item in subMenuItems {
+        guard (item["selected"] as? Bool) == true else { continue }
+        return liveChatMode(for: item)
+    }
+
+    return nil
+}
+
+private func extractLiveChatModeContinuations(from data: JSONDictionary) -> [LiveChatMode: String] {
+    let continuation = ((data["continuationContents"] as? JSONDictionary)?["liveChatContinuation"] as? JSONDictionary)
+    return extractLiveChatModeContinuations(from: continuation)
+}
+
+private func extractLiveChatModeContinuations(from renderer: JSONDictionary?) -> [LiveChatMode: String] {
+    var continuations: [LiveChatMode: String] = [:]
+
+    for item in extractLiveChatSubMenuItems(from: renderer) {
+        guard let mode = liveChatMode(for: item) else { continue }
+        guard let continuation = extractLiveChatContinuationToken(from: item["continuation"]).token,
+              continuation.isEmpty == false else {
+            continue
+        }
+        continuations[mode] = continuation
+    }
+
+    return continuations
+}
+
+private func extractLiveChatSubMenuItems(from renderer: JSONDictionary?) -> [JSONDictionary] {
+    guard let renderer else { return [] }
+
+    let subMenuItems = ((((renderer["header"] as? JSONDictionary)?["liveChatHeaderRenderer"] as? JSONDictionary)?["viewSelector"] as? JSONDictionary)?["sortFilterSubMenuRenderer"] as? JSONDictionary)?["subMenuItems"] as? [Any] ?? []
+    return subMenuItems.compactMap { $0 as? JSONDictionary }
+}
+
+private func liveChatMode(for item: JSONDictionary) -> LiveChatMode? {
+    let title = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    if title.contains("live") {
+        return .live
+    }
+    if title.isEmpty == false {
+        return .top
+    }
+    return nil
 }
 
 private func extractLiveChatResponse(
