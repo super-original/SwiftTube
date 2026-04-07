@@ -379,9 +379,21 @@ struct VideoTag: Codable, Hashable, Identifiable, Sendable {
     let foregroundColor: VideoTagColor
     let backgroundColor: VideoTagColor
 
+    var isLive: Bool {
+        id == "live"
+    }
+
     var isMembersOnly: Bool {
         id == "members-only"
     }
+
+    static let live = VideoTag(
+        id: "live",
+        label: "Live",
+        systemImageName: "dot.radiowaves.left.and.right",
+        foregroundColor: VideoTagColor(red: 1, green: 1, blue: 1, opacity: 1),
+        backgroundColor: VideoTagColor(red: 1, green: 0, blue: 0.2, opacity: 0.96)
+    )
 
     static let membersOnly = VideoTag(
         id: "members-only",

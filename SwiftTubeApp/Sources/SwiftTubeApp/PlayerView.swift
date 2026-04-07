@@ -373,7 +373,7 @@ private extension PlayerScreen {
         let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
         let windowHeight = NSApp.keyWindow?.contentLayoutRect.height ?? screenHeight
         let availableHeight = min(screenHeight, windowHeight)
-        return min(max(availableHeight - 210, 560), 880)
+        return min(max(availableHeight - 110, 680), 1_020)
     }
 
     var scrollContent: some View {
@@ -1809,13 +1809,13 @@ private struct LiveChatPanel: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 } else if messages.isEmpty {
-                    Text("Live chat hasn’t started yet.")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        Text("Live chat hasn’t started yet.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 } else {
                     ScrollViewReader { proxy in
                         ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 12) {
+                            LazyVStack(alignment: .leading, spacing: 4) {
                                 ForEach(messages) { message in
                                     LiveChatMessageRow(message: message)
                                 }
@@ -1921,19 +1921,23 @@ private struct LiveChatMessageRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        Group {
-            if let author = displayAuthor, !author.isEmpty {
-                Text("\(authorText(author))\(Text(": ").foregroundColor(.secondary))\(bodyText)")
-            } else {
-                bodyText.foregroundColor(message.kind == .system ? BrandAssets.youtubeRed : .secondary)
+        HStack(alignment: .top, spacing: 0) {
+            Group {
+                if let author = displayAuthor, !author.isEmpty {
+                    Text("\(authorText(author))\(Text(": ").foregroundColor(.secondary))\(bodyText)")
+                } else {
+                    bodyText.foregroundColor(message.kind == .system ? BrandAssets.youtubeRed : .secondary)
+                }
             }
+            Spacer(minLength: 0)
         }
         .font(.system(size: 15, weight: .medium))
-        .lineSpacing(4)
+        .lineSpacing(3)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(rowBackgroundColor)
@@ -2649,7 +2653,9 @@ private struct PlayerControlBar: View {
 
     var scrubberControl: some View {
         HStack(spacing: 12) {
-            Text(coordinator.currentTimeText)
+            Text(coordinator.isLivePlayback ? "LIVE" : coordinator.currentTimeText)
+                .foregroundStyle(coordinator.isLivePlayback ? BrandAssets.youtubeRed : .primary)
+                .fontWeight(coordinator.isLivePlayback ? .bold : .regular)
                 .frame(width: timeLabelWidth, alignment: .leading)
 
             // Keep this row structure aligned with the pre-refactor scrubber so
@@ -2701,7 +2707,8 @@ private struct PlayerControlBar: View {
                 }
             }
 
-            Text(coordinator.remainingTimeText)
+            Text(coordinator.isLivePlayback ? coordinator.liveLatencyText : coordinator.remainingTimeText)
+                .foregroundStyle(.secondary)
                 .frame(width: timeLabelWidth, alignment: .trailing)
         }
         .font(.caption.weight(.medium))

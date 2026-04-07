@@ -511,6 +511,18 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         formatTime(isScrubbing ? scrubPosition : currentTime)
     }
 
+    var isLivePlayback: Bool {
+        currentPlayback?.isLive == true
+    }
+
+    var liveLatencyText: String {
+        guard isLivePlayback else { return "" }
+        let t = isScrubbing ? scrubPosition : currentTime
+        let liveLag = max(duration - t, 0)
+        guard liveLag > 2 else { return "" }
+        return "-\(formatTime(liveLag))"
+    }
+
     var remainingTimeText: String {
         guard duration > 0 else { return "--:--" }
         let t = isScrubbing ? scrubPosition : currentTime

@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.9
+
+- Expanded live-chat hover targets to the full row width, tightened row spacing, added a reusable red `Live` video tag that can coexist with `Members only`, made the live-player scrubber show stream status instead of meaningless elapsed totals, and extended the standard watch-page live-chat panel closer to a full screen-height block before suggestions begin.
+
 ## 0.13.8
 
 - Made the watch-history context-menu trash icon follow the same red destructive styling as the label, tightened the normal-view live-chat height against the actual window so the composer stops clipping offscreen, and removed the extra live-chat send context that was likely causing YouTube to reject outgoing messages with an internal error.

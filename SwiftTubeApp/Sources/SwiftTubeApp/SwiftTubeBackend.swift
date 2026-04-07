@@ -2185,6 +2185,7 @@ private func deduplicatedVideoTags(_ groups: [VideoTag]...) -> [VideoTag] {
 
 private func extractVideoTags(from data: Any?) -> [VideoTag] {
     guard let data else { return [] }
+    var hasLive = false
     var hasMembersOnly = false
 
     visitJSONObjects(in: data) { node in
@@ -2192,6 +2193,10 @@ private func extractVideoTags(from data: Any?) -> [VideoTag] {
             let style = (renderer["style"] as? String) ?? ""
             let label = textValue(from: renderer["label"]) ?? ""
             let tooltip = textValue(from: renderer["tooltip"]) ?? ""
+            let iconType = (((renderer["icon"] as? JSONDictionary)?["iconType"] as? String) ?? "")
+            if matchesLiveBadge(style) || matchesLiveBadge(label) || matchesLiveBadge(tooltip) || matchesLiveBadge(iconType) {
+                hasLive = true
+            }
             if style.localizedCaseInsensitiveContains("members_only")
                 || matchesMembersOnlyBadge(label)
                 || matchesMembersOnlyBadge(tooltip) {
@@ -2202,6 +2207,9 @@ private func extractVideoTags(from data: Any?) -> [VideoTag] {
         if let badgeViewModel = node["badgeViewModel"] as? JSONDictionary {
             let iconName = (badgeViewModel["iconName"] as? String) ?? ""
             let label = (badgeViewModel["label"] as? String) ?? contentTextValue(from: badgeViewModel["text"]) ?? ""
+            if matchesLiveBadge(iconName) || matchesLiveBadge(label) {
+                hasLive = true
+            }
             if iconName.localizedCaseInsensitiveContains("members")
                 || matchesMembersOnlyBadge(label) {
                 hasMembersOnly = true
@@ -2210,15 +2218,46 @@ private func extractVideoTags(from data: Any?) -> [VideoTag] {
 
         if let thumbnailBadgeViewModel = node["thumbnailBadgeViewModel"] as? JSONDictionary {
             let text = (thumbnailBadgeViewModel["text"] as? String) ?? ""
+            if matchesLiveBadge(text) {
+                hasLive = true
+            }
             if matchesMembersOnlyBadge(text) {
                 hasMembersOnly = true
             }
         }
 
-        return hasMembersOnly ? .stop : .continue
+        if let overlayRenderer = node["thumbnailOverlayTimeStatusRenderer"] as? JSONDictionary {
+            let style = (overlayRenderer["style"] as? String) ?? ""
+            let text = textValue(from: overlayRenderer["text"]) ?? ""
+            if matchesLiveBadge(style) || matchesLiveBadge(text) {
+                hasLive = true
+            }
+        }
+
+        return (hasLive && hasMembersOnly) ? .stop : .continue
     }
 
-    return hasMembersOnly ? [.membersOnly] : []
+    var tags: [VideoTag] = []
+    if hasLive {
+        tags.append(.live)
+    }
+    if hasMembersOnly {
+        tags.append(.membersOnly)
+    }
+    return tags
+}
+
+private func matchesLiveBadge(_ text: String) -> Bool {
+    let normalized = text
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    guard !normalized.isEmpty else { return false }
+    return normalized == "live"
+        || normalized == "live now"
+        || normalized.contains("live_now")
+        || normalized.contains("live now")
+        || normalized.contains("style_live")
+        || normalized.contains("is live")
 }
 
 private func matchesMembersOnlyBadge(_ text: String) -> Bool {
