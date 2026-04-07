@@ -64,9 +64,16 @@ final class BackendClient {
         id: String,
         mode: LiveChatMode,
         continuation: String? = nil,
-        isReplay: Bool = false
+        isReplay: Bool = false,
+        replayOffsetMs: Int? = nil
     ) async throws -> LiveChatResponse {
-        try await backend.fetchLiveChat(id: id, mode: mode, continuation: continuation, isReplay: isReplay)
+        try await backend.fetchLiveChat(
+            id: id,
+            mode: mode,
+            continuation: continuation,
+            isReplay: isReplay,
+            replayOffsetMs: replayOffsetMs
+        )
     }
 
     func sendLiveChatMessage(

@@ -233,6 +233,9 @@ struct PlayerScreen: View {
                 playbackCoordinator.updateSponsorSegments(playback.sponsorSegments)
                 playbackCoordinator.configure(with: playback)
                 selectedSidePanelTab = defaultSidePanelTab(for: playback)
+                if playback.liveChat?.isReplay == true {
+                    viewModel.syncReplayChat(to: playback.resumeStartTimeSeconds ?? 0, force: true)
+                }
                 if authSession.status.authenticated, playback.playlistSaveEnabled {
                     viewModel.loadPlaylistOptions()
                 }
@@ -242,6 +245,16 @@ struct PlayerScreen: View {
         }
         .onChange(of: viewModel.playback?.sponsorSegments ?? []) { _, segments in
             playbackCoordinator.updateSponsorSegments(segments)
+        }
+        .onChange(of: playbackCoordinator.isScrubbing) { wasScrubbing, isScrubbing in
+            guard wasScrubbing, !isScrubbing else { return }
+            guard viewModel.playback?.liveChat?.isReplay == true else { return }
+            viewModel.syncReplayChat(to: playbackCoordinator.scrubPosition, force: true)
+        }
+        .onChange(of: selectedSidePanelTab) { _, tab in
+            guard tab == .liveChat else { return }
+            guard viewModel.playback?.liveChat?.isReplay == true else { return }
+            viewModel.syncReplayChat(to: playbackCoordinator.currentTime, force: true)
         }
         .task(id: "\(video.id)-\(viewModel.playbackLoadID.uuidString)-progress") {
             await monitorPlaybackProgress()
@@ -379,7 +392,7 @@ private extension PlayerScreen {
         let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
         let windowHeight = NSApp.keyWindow?.contentLayoutRect.height ?? screenHeight
         let availableHeight = min(screenHeight, windowHeight)
-        return min(max(availableHeight - 32, 760), 1_080)
+        return min(max(availableHeight - 110, 680), 1_020)
     }
 
     var scrollContent: some View {

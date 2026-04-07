@@ -405,7 +405,8 @@ actor SwiftTubeBackend {
         id videoID: String,
         mode: LiveChatMode,
         continuation: String? = nil,
-        isReplay: Bool = false
+        isReplay: Bool = false,
+        replayOffsetMs: Int? = nil
     ) async throws -> LiveChatResponse {
         let usingAuth = await authManager.currentMaterial() != nil
 
@@ -416,6 +417,7 @@ actor SwiftTubeBackend {
                     mode: mode,
                     continuation: continuation,
                     isReplay: isReplay,
+                    replayOffsetMs: replayOffsetMs,
                     authenticated: true
                 )
             } catch {
@@ -428,6 +430,7 @@ actor SwiftTubeBackend {
             mode: mode,
             continuation: continuation,
             isReplay: isReplay,
+            replayOffsetMs: replayOffsetMs,
             authenticated: false
         )
     }
@@ -682,12 +685,14 @@ actor SwiftTubeBackend {
         mode: LiveChatMode,
         continuation: String?,
         isReplay: Bool,
+        replayOffsetMs: Int?,
         authenticated: Bool
     ) async throws -> LiveChatResponse {
         if let continuation, continuation.isEmpty == false {
             let data = try await api.liveChat(
                 continuation: continuation,
                 isReplay: isReplay,
+                replayOffsetMs: nil,
                 authenticated: authenticated
             )
             return extractLiveChatResponse(from: data, requestedMode: mode)
@@ -706,6 +711,7 @@ actor SwiftTubeBackend {
         let bootstrapData = try await api.liveChat(
             continuation: bootstrapContinuation,
             isReplay: session.isReplay,
+            replayOffsetMs: session.isReplay ? replayOffsetMs : nil,
             authenticated: authenticated
         )
         let bootstrapResponse = extractLiveChatResponse(from: bootstrapData, requestedMode: mode)
@@ -722,6 +728,7 @@ actor SwiftTubeBackend {
         let modeData = try await api.liveChat(
             continuation: modeContinuation,
             isReplay: session.isReplay,
+            replayOffsetMs: nil,
             authenticated: authenticated
         )
         return extractLiveChatResponse(from: modeData, requestedMode: mode)
@@ -1761,6 +1768,15 @@ private func extractLiveChatMessageDeltas(from actions: [Any]) -> (
 
     for action in actions {
         guard let action = action as? JSONDictionary else { continue }
+
+        if let replayChatItemAction = action["replayChatItemAction"] as? JSONDictionary {
+            let nestedActions = replayChatItemAction["actions"] as? [Any] ?? []
+            let nestedDeltas = extractLiveChatMessageDeltas(from: nestedActions)
+            messages.append(contentsOf: nestedDeltas.messages)
+            replacedMessages.append(contentsOf: nestedDeltas.replacedMessages)
+            removedMessageIDs.append(contentsOf: nestedDeltas.removedMessageIDs)
+            continue
+        }
 
         if let addChatItemAction = action["addChatItemAction"] as? JSONDictionary,
            let item = addChatItemAction["item"],

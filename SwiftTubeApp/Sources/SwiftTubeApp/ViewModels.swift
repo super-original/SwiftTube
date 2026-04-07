@@ -1480,6 +1480,7 @@ final class PlayerViewModel: ObservableObject {
     private var liveChatTask: Task<Void, Never>? = nil
     private var liveChatPollTask: Task<Void, Never>? = nil
     private var transcriptTask: Task<Void, Never>? = nil
+    private var lastReplaySyncOffsetMs: Int? = nil
     private var commentsContinuation: String? = nil
     private var recommendationsContinuation: String? = nil
     private let mutationCenter = AppMutationCenter.shared
@@ -1564,6 +1565,7 @@ final class PlayerViewModel: ObservableObject {
         transcriptErrorMessage = nil
         commentsContinuation = nil
         recommendationsContinuation = nil
+        lastReplaySyncOffsetMs = nil
         playlistOptions = []
         isLoadingPlaylistOptions = false
 
@@ -1807,7 +1809,7 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
-    private func fetchLiveChat(continuation: String? = nil) async {
+    private func fetchLiveChat(continuation: String? = nil, replayOffsetMs: Int? = nil) async {
         guard let session = playback?.liveChat else { return }
 
         if continuation == nil {
@@ -1826,7 +1828,8 @@ final class PlayerViewModel: ObservableObject {
                 id: video.id,
                 mode: liveChatMode,
                 continuation: continuation,
-                isReplay: session.isReplay
+                isReplay: session.isReplay,
+                replayOffsetMs: continuation == nil ? replayOffsetMs : nil
             )
             guard !Task.isCancelled else { return }
 
@@ -1881,6 +1884,24 @@ final class PlayerViewModel: ObservableObject {
                     nextDelayMs = 5_000
                 }
             }
+        }
+    }
+
+    func syncReplayChat(to seconds: Double, force: Bool = false) {
+        guard let session = playback?.liveChat, session.isReplay else { return }
+
+        let offsetMs = max(Int(seconds * 1_000), 0)
+        if !force, let lastReplaySyncOffsetMs, abs(lastReplaySyncOffsetMs - offsetMs) < 8_000 {
+            return
+        }
+
+        lastReplaySyncOffsetMs = offsetMs
+        liveChatTask?.cancel()
+        liveChatPollTask?.cancel()
+        liveChatErrorMessage = nil
+        isLoadingLiveChat = true
+        liveChatTask = Task { [weak self] in
+            await self?.fetchLiveChat(replayOffsetMs: offsetMs)
         }
     }
 
