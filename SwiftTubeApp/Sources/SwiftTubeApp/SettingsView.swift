@@ -6,9 +6,8 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case sidebar
     case notifications
     case playback
+    case controls
     case sponsorBlock
-    case seeking
-    case shortcuts
     case changelog
 
     var id: String { rawValue }
@@ -18,7 +17,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     }
 
     static var playbackSection: [SettingsPane] {
-        [.playback, .sponsorBlock, .seeking, .shortcuts]
+        [.playback, .controls, .sponsorBlock]
     }
 
     static var aboutSection: [SettingsPane] {
@@ -31,23 +30,9 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .sidebar: return "Sidebar"
         case .notifications: return "Notifications"
         case .playback: return "Playback"
+        case .controls: return "Controls"
         case .sponsorBlock: return "SponsorBlock"
-        case .seeking: return "Seeking"
-        case .shortcuts: return "Keybinds"
         case .changelog: return "Changelog"
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .appearance: return "Themes and layout"
-        case .sidebar: return "Navigation layout"
-        case .notifications: return "Queue and toasts"
-        case .playback: return "Quality and speed"
-        case .sponsorBlock: return "Skips and segments"
-        case .seeking: return "Seek timings"
-        case .shortcuts: return "Keyboard controls"
-        case .changelog: return "Release notes"
         }
     }
 
@@ -57,9 +42,8 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .sidebar: return "sidebar.left"
         case .notifications: return "bell.badge"
         case .playback: return "play.circle"
+        case .controls: return "keyboard"
         case .sponsorBlock: return "scissors"
-        case .seeking: return "gobackward.10"
-        case .shortcuts: return "keyboard"
         case .changelog: return "text.document"
         }
     }
@@ -135,12 +119,10 @@ struct SettingsView: View {
                         NotificationsPane()
                     case .playback:
                         PlaybackPane()
+                    case .controls:
+                        ControlsPane()
                     case .sponsorBlock:
                         SponsorBlockPane()
-                    case .seeking:
-                        SeekingPane()
-                    case .shortcuts:
-                        ShortcutPane()
                     case .changelog:
                         ChangelogPane()
                     }
@@ -178,7 +160,7 @@ private struct AppearancePane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Appearance",
-                subtitle: "Theme, colors, and grid size."
+                subtitle: "Theme and browse layout."
             )
 
             SettingsCard(title: "Default Themes", icon: "circle.lefthalf.filled") {
@@ -314,7 +296,7 @@ private struct SidebarPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Sidebar",
-                subtitle: "Sidebar order and visibility."
+                subtitle: "Navigation order and visibility."
             )
 
             SettingsCard(title: "Navigation Items", icon: "sidebar.left") {
@@ -395,13 +377,12 @@ private struct NotificationsPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Notifications",
-                subtitle: "Notification visibility and placement."
+                subtitle: "Toast display and placement."
             )
 
-            SettingsCard(title: "Visibility", icon: "bell.badge") {
+            SettingsCard(title: "Behavior", icon: "bell.badge") {
                 NativePickerRow(
-                    title: "Show notifications",
-                    selectionText: settings.notificationDisplayMode.subtitle
+                    title: "Show notifications"
                 ) {
                     Picker("Show notifications", selection: $settings.notificationDisplayMode) {
                         ForEach(NotificationDisplayMode.allCases) { mode in
@@ -410,9 +391,9 @@ private struct NotificationsPane: View {
                     }
                     .labelsHidden()
                 }
-            }
 
-            SettingsCard(title: "Placement", icon: "uiwindow.split.2x1") {
+                SettingsDivider()
+
                 NativePickerRow(
                     title: "Stack position"
                 ) {
@@ -424,12 +405,8 @@ private struct NotificationsPane: View {
                     .labelsHidden()
                 }
 
-                Text("Notifications stack upward from the selected corner and can still be dismissed manually.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
+                SettingsDivider()
 
-            SettingsCard(title: "Auto Hide", icon: "timer") {
                 NativePickerRow(
                     title: "Hide after"
                 ) {
@@ -440,10 +417,6 @@ private struct NotificationsPane: View {
                     }
                     .labelsHidden()
                 }
-
-                Text("Hover a notification to reveal its close button, or swipe it sideways to dismiss it early.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
             }
 
             SettingsCard(title: "Preview", icon: "sparkles") {
@@ -493,10 +466,6 @@ private struct NotificationsPane: View {
                         )
                     }
                     .buttonStyle(.borderedProminent)
-
-                    Text("Preview buttons always show a toast, even if normal notifications are currently hidden.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -565,10 +534,10 @@ private struct PlaybackPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Playback",
-                subtitle: "Default quality and speed."
+                subtitle: "Default playback quality and speed."
             )
 
-            SettingsCard(title: "Quality", icon: "sparkles.tv") {
+            SettingsCard(title: "Defaults", icon: "play.circle") {
                 NativePickerRow(
                     title: "Default quality"
                 ) {
@@ -579,9 +548,9 @@ private struct PlaybackPane: View {
                     }
                     .labelsHidden()
                 }
-            }
 
-            SettingsCard(title: "Speed", icon: "speedometer") {
+                divider
+
                 NativePickerRow(
                     title: "Default playback speed"
                 ) {
@@ -624,24 +593,14 @@ private struct SponsorBlockPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "SponsorBlock",
-                subtitle: "Skip behavior and category settings."
+                subtitle: "Global toggle and category behavior."
             )
 
             SettingsCard(title: "Global", icon: "switch.2") {
-                Toggle(isOn: $settings.sponsorBlockEnabled) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Enable SponsorBlock")
-                            .font(.headline)
-                        Text("Show community-submitted segments in the player and apply the behaviors below.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.switch)
-
-                Text("Disable hides all SponsorBlock markers and prompts. Manual skip shows a side prompt and also works with Return.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                NativeToggleRow(
+                    title: "Enable SponsorBlock",
+                    isOn: $settings.sponsorBlockEnabled
+                )
             }
 
             SettingsCard(title: "Categories", icon: "slider.horizontal.3") {
@@ -682,13 +641,8 @@ private struct SponsorBlockCategoryRow: View {
                 .padding(.top, 3)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(category.title)
+                Text(category.shortTitle)
                     .font(.headline)
-
-                Text(category.description)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 16)
@@ -719,17 +673,12 @@ private struct ChangelogPane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Changelog",
-                subtitle: "Version and release history."
+                subtitle: "Current version and release history."
             )
 
             SettingsCard(title: "Current Version", icon: "app.badge") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(currentVersionText)
-                        .font(.title2.weight(.bold))
-                    Text("Every shipped update is recorded in the bundled changelog, including future named milestone releases.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
+                Text(currentVersionText)
+                    .font(.title2.weight(.bold))
             }
 
             SettingsCard(title: "Changelog", icon: "text.document") {
@@ -798,20 +747,20 @@ private struct ChangelogReleaseCard: View {
     }
 }
 
-private struct SeekingPane: View {
+private struct ControlsPane: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
-                title: "Seeking",
-                subtitle: "Seek step durations."
+                title: "Controls",
+                subtitle: "Seek amounts and keyboard shortcuts."
             )
 
-            ForEach(SeekCategory.allCases) { category in
-                SettingsCard(title: category.title, icon: icon(for: category)) {
+            SettingsCard(title: "Seek Timing", icon: "gobackward.10") {
+                ForEach(Array(SeekCategory.allCases.enumerated()), id: \.element.id) { index, category in
                     NativePickerRow(
-                        title: "Seek amount"
+                        title: category.title
                     ) {
                         Picker("Seek amount", selection: Binding(
                             get: { Int(settings.seekSeconds(for: category)) },
@@ -824,37 +773,11 @@ private struct SeekingPane: View {
                         .labelsHidden()
                     }
 
-                    Text("You can customize the shortcuts for this seek category in the Keybinds section.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-
-                    Text(category.description)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    if index < SeekCategory.allCases.count - 1 {
+                        SettingsDivider()
+                    }
                 }
             }
-        }
-    }
-
-    private func icon(for category: SeekCategory) -> String {
-        switch category {
-        case .short: return "arrow.left.and.right.circle"
-        case .medium: return "gobackward.10"
-        case .long: return "forward.end.circle"
-        }
-    }
-
-}
-
-private struct ShortcutPane: View {
-    @ObservedObject private var settings = AppSettings.shared
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            SettingsHeader(
-                title: "Keybinds",
-                subtitle: "Keyboard shortcuts."
-            )
 
             ShortcutSectionCard(
                 title: "Playback Controls",
@@ -905,8 +828,7 @@ private struct ShortcutPane: View {
 
             SettingsCard(title: "Keyboard Lock", icon: "lock.fill") {
                 NativePickerRow(
-                    title: "Lock key",
-                    selectionText: settings.keyboardLockKey.displayName
+                    title: "Lock key"
                 ) {
                     Picker("Lock key", selection: $settings.keyboardLockKey) {
                         ForEach(AppSettings.KeyboardLockKey.allCases) { key in
@@ -915,10 +837,6 @@ private struct ShortcutPane: View {
                     }
                     .labelsHidden()
                 }
-
-                Text("The lock key disables playback shortcuts and player clicks until you press it again.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
             }
 
             Button("Reset All Keybinds to Default") {
@@ -941,6 +859,16 @@ private struct SettingsHeader: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+private struct SettingsDivider: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        Rectangle()
+            .fill(settings.separatorColor)
+            .frame(height: 1)
     }
 }
 
@@ -1080,6 +1008,23 @@ private struct NativePickerRow<PickerContent: View>: View {
             }
             Spacer()
             pickerContent
+        }
+    }
+}
+
+private struct NativeToggleRow: View {
+    let title: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Text(title)
+                .font(.headline)
+
+            Spacer()
+
+            Toggle(title, isOn: $isOn)
+                .labelsHidden()
         }
     }
 }
