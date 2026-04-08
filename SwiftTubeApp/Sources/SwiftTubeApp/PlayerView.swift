@@ -2147,7 +2147,7 @@ private struct PlayerStageSurface: View {
                 if coordinator.isScrubbing, let spec = coordinator.storyboard {
                     ScrubVideoOverlay(
                         spec: spec,
-                        time: coordinator.scrubPosition,
+                        time: coordinator.storyboardTime(for: coordinator.scrubPosition, spec: spec),
                         containerSize: geo.size
                     )
                         .allowsHitTesting(false)
@@ -3855,6 +3855,7 @@ private struct ScrubPreviewPositioned: View {
            let spec = coordinator.storyboard,
            coordinator.hasSeekableTimeline {
             let hoverTime = coordinator.scrubberTime(forFraction: fraction)
+            let storyboardTime = coordinator.storyboardTime(for: hoverTime, spec: spec)
 
             // Tile display dimensions (independent of raw storyboard pixel size).
             let dispW = previewDisplayWidth
@@ -3878,7 +3879,7 @@ private struct ScrubPreviewPositioned: View {
 
             ScrubPreviewBubble(
                 spec: spec,
-                time: hoverTime,
+                time: storyboardTime,
                 displayWidth: dispW,
                 displayHeight: dispH,
                 timestampText: timestampText(for: hoverTime)

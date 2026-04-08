@@ -3953,6 +3953,7 @@ private func extractStoryboard(from playerData: Any) -> StoryboardSpec? {
         urls: (0..<fileCount).map { urlBase.replacingOccurrences(of: "$M", with: String($0)) + sighSuffix },
         tileWidth: best.1,
         tileHeight: best.2,
+        frameCount: best.3,
         cols: best.4,
         rows: best.5,
         intervalSeconds: Double(best.6) / 1000

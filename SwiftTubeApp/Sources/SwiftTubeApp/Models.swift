@@ -554,14 +554,21 @@ struct StoryboardSpec: Codable, Sendable {
     let urls: [String]           // one URL per sprite-sheet file (file index = array index)
     let tileWidth: Int
     let tileHeight: Int
+    let frameCount: Int
     let cols: Int
     let rows: Int
     let intervalSeconds: Double
 
+    var coveredDurationSeconds: Double {
+        guard frameCount > 0, intervalSeconds > 0 else { return 0 }
+        return Double(frameCount) * intervalSeconds
+    }
+
     /// Returns the sprite-sheet URL, column, and row for the tile that covers `seconds`.
     func tileInfo(at seconds: Double) -> (url: URL, col: Int, row: Int)? {
-        guard intervalSeconds > 0, cols > 0, rows > 0, !urls.isEmpty else { return nil }
+        guard intervalSeconds > 0, cols > 0, rows > 0, frameCount > 0, !urls.isEmpty else { return nil }
         let frameIndex = Int(seconds / intervalSeconds)
+        guard frameIndex >= 0, frameIndex < frameCount else { return nil }
         let framesPerFile = cols * rows
         let fileIndex = frameIndex / framesPerFile
         guard fileIndex < urls.count else { return nil }

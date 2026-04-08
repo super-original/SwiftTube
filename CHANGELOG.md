@@ -8,9 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
-## 0.13.14
+## 0.13.15
 
 - Reworked live DVR scrubbing to read MPV's actual seekable live-range window instead of pretending livestreams always run from `0...duration`, which keeps the thumb moving across the real cached range, makes the `LIVE` button seek to the true edge, and lets live hover math use the same DVR coordinates.
+- Fixed live storyboard preview lookup so hover and drag thumbnails stay relative to the current DVR window instead of falling off the end of the storyboard timeline, and made live-edge thumb pinning less jittery while playback rides the moving live window.
 
 ## 0.13.13
 

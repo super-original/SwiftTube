@@ -398,6 +398,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private let layoutState: PlayerLayoutState
     private let liveEdgeThresholdSeconds = 3.0
+    private let liveEdgeStickyThresholdSeconds = 8.0
     private var lastNonZeroVolume = 0.9
     @Published private(set) var isScrubbing = false
     private var wasPlayingBeforeScrub = false
@@ -537,7 +538,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     var isAtLiveEdge: Bool {
         guard isLivePlayback else { return false }
-        return liveLatencySeconds <= liveEdgeThresholdSeconds
+        let liveLag = liveLatencySeconds
+        if liveLag <= liveEdgeThresholdSeconds {
+            return true
+        }
+        // Keep the thumb pinned to the edge while playback hovers a few seconds
+        // behind a moving live window instead of oscillating between states.
+        return isPlaying && !isScrubbing && liveLag <= liveEdgeStickyThresholdSeconds
     }
 
     var liveLatencyText: String {
@@ -590,6 +597,19 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     var hasSeekableTimeline: Bool {
         scrubberSpan > 0.001
+    }
+
+    func storyboardTime(for absoluteTime: Double, spec: StoryboardSpec) -> Double {
+        let relativeTime: Double
+        if isLivePlayback {
+            relativeTime = absoluteTime - scrubberLowerBound
+        } else {
+            relativeTime = absoluteTime
+        }
+
+        let safeTime = max(relativeTime, 0)
+        let maxStoryboardTime = max(spec.coveredDurationSeconds - spec.intervalSeconds, 0)
+        return min(safeTime, maxStoryboardTime)
     }
 
     var displayedScrubPosition: Double {
