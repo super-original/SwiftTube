@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.20
+
+- Fixed active livestream startup by preferring YouTube's HLS live manifest over the paired DASH manifest, which the FFmpeg/mpv stack can fail to open before playback becomes ready.
+
 ## 0.13.19
 
 - Added an mpv startup timeout for initial media loads and replacement loads so bad livestream sources fail fast instead of leaving the player stuck on `Loading video...` forever.

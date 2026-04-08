@@ -832,7 +832,8 @@ actor SwiftTubeBackend {
         let nativePlaybackStreams = isLive ? playerAPIStreams : playerStreams
         let nativePlaybackBundle = buildPlaybackBundle(
             streams: nativePlaybackStreams,
-            subtitles: playerSubtitles
+            subtitles: playerSubtitles,
+            preferHLSManifest: isLive
         )
 
         let preferredYTDLPPlayback: YTDLPPlaybackData?
@@ -867,7 +868,8 @@ actor SwiftTubeBackend {
             if let preferredYTDLPPlayback, useYTDLPStreams {
                 return buildPlaybackBundle(
                     streams: preferredYTDLPPlayback.streams,
-                    subtitles: playerSubtitles + preferredYTDLPPlayback.subtitles
+                    subtitles: playerSubtitles + preferredYTDLPPlayback.subtitles,
+                    preferHLSManifest: isLive
                 )
             }
             return nativePlaybackBundle
@@ -1432,11 +1434,12 @@ private func deduplicatedSubtitles(_ subtitles: [SubtitleTrack]) -> [SubtitleTra
 
 private func buildPlaybackBundle(
     streams: [StreamInfo],
-    subtitles: [SubtitleTrack]
+    subtitles: [SubtitleTrack],
+    preferHLSManifest: Bool = false
 ) -> PlaybackBundle {
     PlaybackBundle(
         streams: streams,
-        preferredManifestStream: bestManifestStream(in: streams),
+        preferredManifestStream: bestManifestStream(in: streams, preferHLS: preferHLSManifest),
         preferredMuxedStream: bestMuxedStream(in: streams),
         preferredVideoStream: bestVideoStream(in: streams),
         preferredAudioStream: bestAudioStream(in: streams),
@@ -1461,10 +1464,10 @@ private func shouldPreferNativePlayback(bundle: PlaybackBundle, streams: [Stream
     return muxedCandidates.count > 1 && bundle.preferredMuxedStream != nil
 }
 
-private func bestManifestStream(in streams: [StreamInfo]) -> StreamInfo? {
+private func bestManifestStream(in streams: [StreamInfo], preferHLS: Bool = false) -> StreamInfo? {
     streams
         .filter { $0.streamKind == "manifest" && $0.hasVideo }
-        .max(by: { manifestStreamScore($0) < manifestStreamScore($1) })
+        .max(by: { manifestStreamScore($0, preferHLS: preferHLS) < manifestStreamScore($1, preferHLS: preferHLS) })
 }
 
 private func bestMuxedStream(in streams: [StreamInfo]) -> StreamInfo? {
@@ -4753,9 +4756,18 @@ private func codecScore(_ codec: String?) -> Int {
     return 1
 }
 
-private func manifestStreamScore(_ stream: StreamInfo) -> (Int, Int, Int, Int, Int, Int) {
-    (
-        stream.formatId == "dash-manifest" ? 1 : 0,
+private func manifestStreamScore(_ stream: StreamInfo, preferHLS: Bool = false) -> (Int, Int, Int, Int, Int, Int) {
+    let manifestProtocolPreference: Int
+    if preferHLS {
+        // YouTube's live HLS manifests load reliably through mpv/FFmpeg, while
+        // the paired live DASH manifest often fails before the player becomes ready.
+        manifestProtocolPreference = stream.container?.lowercased() == "m3u8" ? 1 : 0
+    } else {
+        manifestProtocolPreference = stream.formatId == "dash-manifest" ? 1 : 0
+    }
+
+    return (
+        manifestProtocolPreference,
         stream.hasAudio ? 1 : 0,
         stream.hasVideo ? 1 : 0,
         stream.height ?? 0,
