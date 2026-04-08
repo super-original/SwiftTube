@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.18
+
+- Stopped active livestream startup from waiting on `yt-dlp` when native live manifests are already available, so the player can open YouTube’s `WEB_PARENT_TOOLS` HLS stream immediately instead of hanging behind fallback extraction work.
+- Added a hard timeout to the optional `yt-dlp` playback extraction path so helper stalls degrade to native playback fallback instead of pinning the app on `Loading video...`.
+
 ## 0.13.17
 
 - Fixed the 0.13.16 regression where active livestreams could sit on `Loading video...` forever by keeping watch-page live data for DVR and storyboard metadata while routing actual live playback back through the proven `WEB_PARENT_TOOLS` HLS manifest path.

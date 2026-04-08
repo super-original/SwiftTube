@@ -774,9 +774,6 @@ actor SwiftTubeBackend {
         let watchPageTask = Task<String?, Never> {
             try? await self.api.watchPage(videoID: videoID, authenticated: authenticated)
         }
-        let publicYTDLPTask = Task<YTDLPPlaybackData?, Error> {
-            try await self.cachedYTDLPPlayback(videoID: videoID, cookieFileURL: nil, cacheScope: "public")
-        }
 
         let watchData = try await watchTask
         let playerData = try await playerTask
@@ -838,16 +835,25 @@ actor SwiftTubeBackend {
             subtitles: playerSubtitles
         )
 
-        let publicPlayback = try await publicYTDLPTask.value
         let preferredYTDLPPlayback: YTDLPPlaybackData?
-        if let publicPlayback, publicPlayback.streams.isEmpty == false {
-            preferredYTDLPPlayback = publicPlayback
-        } else if authenticated {
-            preferredYTDLPPlayback = try await cachedYTDLPPlayback(
+        let shouldProbeYTDLP = !isLive || nativePlaybackBundle.bestStream == nil
+        if shouldProbeYTDLP {
+            let publicPlayback = try? await cachedYTDLPPlayback(
                 videoID: videoID,
-                cookieFileURL: await authManager.playbackCookieFileURL(),
-                cacheScope: "auth"
+                cookieFileURL: nil,
+                cacheScope: "public"
             )
+            if let publicPlayback, publicPlayback.streams.isEmpty == false {
+                preferredYTDLPPlayback = publicPlayback
+            } else if authenticated {
+                preferredYTDLPPlayback = try? await cachedYTDLPPlayback(
+                    videoID: videoID,
+                    cookieFileURL: await authManager.playbackCookieFileURL(),
+                    cacheScope: "auth"
+                )
+            } else {
+                preferredYTDLPPlayback = nil
+            }
         } else {
             preferredYTDLPPlayback = nil
         }
@@ -944,7 +950,11 @@ actor SwiftTubeBackend {
             return cached
         }
 
-        let playback = try await extractYTDLPPlayback(videoID: videoID, cookieFileURL: cookieFileURL)
+        let playback = try await extractYTDLPPlayback(
+            videoID: videoID,
+            cookieFileURL: cookieFileURL,
+            timeout: ytDLPPlaybackTimeoutSeconds
+        )
         if let playback, playback.streams.isEmpty == false {
             playbackCache[cacheKey] = playback
         }
@@ -1308,7 +1318,13 @@ private struct LiveManifestMetadata {
     let storyboardTimeline: LiveStoryboardTimeline?
 }
 
-private func extractYTDLPPlayback(videoID: String, cookieFileURL: URL?) async throws -> YTDLPPlaybackData? {
+private let ytDLPPlaybackTimeoutSeconds: TimeInterval = 12
+
+private func extractYTDLPPlayback(
+    videoID: String,
+    cookieFileURL: URL?,
+    timeout: TimeInterval? = nil
+) async throws -> YTDLPPlaybackData? {
     let ytDLPPath: URL
     do {
         ytDLPPath = try YTDLPTool.resolvePath()
@@ -1329,7 +1345,12 @@ private func extractYTDLPPlayback(videoID: String, cookieFileURL: URL?) async th
         arguments.insert(contentsOf: ["--cookies", cookieFile.path], at: 0)
     }
 
-    let result = try await ProcessRunner.run(executableURL: ytDLPPath, arguments: arguments)
+    let result = try await ProcessRunner.run(
+        executableURL: ytDLPPath,
+        arguments: arguments,
+        timeout: timeout,
+        timeoutMessage: "yt-dlp timed out while extracting playback data."
+    )
     guard result.exitCode == 0, let data = result.output.data(using: .utf8) else { return nil }
 
     guard let payload = try JSONSerialization.jsonObject(with: data) as? JSONDictionary else {

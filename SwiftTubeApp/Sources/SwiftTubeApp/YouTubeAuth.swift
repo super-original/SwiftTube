@@ -301,7 +301,9 @@ struct ProcessOutput: Sendable {
 enum ProcessRunner {
     static func run(
         executableURL: URL,
-        arguments: [String]
+        arguments: [String],
+        timeout: TimeInterval? = nil,
+        timeoutMessage: String? = nil
     ) async throws -> ProcessOutput {
         let process = Process()
         process.executableURL = executableURL
@@ -315,22 +317,70 @@ enum ProcessRunner {
             pipe.fileHandleForReading.readDataToEndOfFile()
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { process in
-                Task {
-                    let data = await outputTask.value
-                    let output = String(data: data, encoding: .utf8) ?? ""
-                    continuation.resume(returning: ProcessOutput(exitCode: process.terminationStatus, output: output))
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                final class ResumeState: @unchecked Sendable {
+                    let lock = NSLock()
+                    var didResume = false
+                }
+                let state = ResumeState()
+
+                @Sendable func finish(_ result: Result<ProcessOutput, Error>) {
+                    state.lock.lock()
+                    defer { state.lock.unlock() }
+                    guard !state.didResume else { return }
+                    state.didResume = true
+
+                    switch result {
+                    case .success(let output):
+                        continuation.resume(returning: output)
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+
+                let timeoutTask = timeout.map { timeout in
+                    Task.detached(priority: .utility) {
+                        let duration = max(timeout, 0)
+                        let nanoseconds = UInt64(duration * 1_000_000_000)
+                        try? await Task.sleep(nanoseconds: nanoseconds)
+                        guard !Task.isCancelled else { return }
+                        if process.isRunning {
+                            process.terminate()
+                        }
+
+                        let data = await outputTask.value
+                        let output = String(data: data, encoding: .utf8) ?? ""
+                        let message = timeoutMessage ?? "Process timed out."
+                        let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                        finish(.failure(BackendClientError(
+                            message: trimmedOutput.isEmpty ? message : "\(message) \(trimmedOutput)"
+                        )))
+                    }
+                }
+
+                process.terminationHandler = { process in
+                    Task {
+                        timeoutTask?.cancel()
+                        let data = await outputTask.value
+                        let output = String(data: data, encoding: .utf8) ?? ""
+                        finish(.success(ProcessOutput(exitCode: process.terminationStatus, output: output)))
+                    }
+                }
+
+                do {
+                    try process.run()
+                } catch {
+                    timeoutTask?.cancel()
+                    outputTask.cancel()
+                    finish(.failure(error))
                 }
             }
-
-            do {
-                try process.run()
-            } catch {
-                outputTask.cancel()
-                continuation.resume(throwing: error)
+        }, onCancel: {
+            if process.isRunning {
+                process.terminate()
             }
-        }
+        })
     }
 
     static func runSync(
