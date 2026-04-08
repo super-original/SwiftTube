@@ -793,11 +793,14 @@ actor SwiftTubeBackend {
             }
         }
 
-        let playerStreams = mergeStreams(
-            parseStreams(from: watchPagePlayerData, defaultHeaders: api.streamRequestHeaders(for: .web)),
+        let playerAPIStreams = mergeStreams(
             parseStreams(from: playerData, defaultHeaders: api.streamRequestHeaders(for: .webParentTools)),
             parseStreams(from: webPlayerData, defaultHeaders: api.streamRequestHeaders(for: .web)),
             parseStreams(from: mwebPlayerData, defaultHeaders: api.streamRequestHeaders(for: .mweb))
+        )
+        let playerStreams = mergeStreams(
+            parseStreams(from: watchPagePlayerData, defaultHeaders: api.streamRequestHeaders(for: .web)),
+            playerAPIStreams
         )
         let playerSubtitles = deduplicatedSubtitles(
             extractSubtitles(from: watchPagePlayerData)
@@ -816,10 +819,6 @@ actor SwiftTubeBackend {
             ?? extractVideoAccessIssue(from: playerData, fallbackTags: playbackTags)
             ?? extractVideoAccessIssue(from: webPlayerData, fallbackTags: playbackTags)
             ?? extractVideoAccessIssue(from: mwebPlayerData, fallbackTags: playbackTags)
-        let nativePlaybackBundle = buildPlaybackBundle(
-            streams: playerStreams,
-            subtitles: playerSubtitles
-        )
 
         let details = playerData["videoDetails"] as? JSONDictionary
         let webDetails = webPlayerData["videoDetails"] as? JSONDictionary
@@ -833,6 +832,11 @@ actor SwiftTubeBackend {
         let liveManifestMetadata = isLive
             ? await loadLiveManifestMetadata(from: watchPagePlayerData.isEmpty ? playerData : watchPagePlayerData, api: api)
             : nil
+        let nativePlaybackStreams = isLive ? playerAPIStreams : playerStreams
+        let nativePlaybackBundle = buildPlaybackBundle(
+            streams: nativePlaybackStreams,
+            subtitles: playerSubtitles
+        )
 
         let publicPlayback = try await publicYTDLPTask.value
         let preferredYTDLPPlayback: YTDLPPlaybackData?
@@ -851,7 +855,7 @@ actor SwiftTubeBackend {
         let useYTDLPStreams = (preferredYTDLPPlayback?.streams.isEmpty == false)
             && !(isLive && nativePlaybackBundle.bestStream != nil)
         let resolvedStreams = (useYTDLPStreams ? preferredYTDLPPlayback?.streams : nil)
-            ?? playerStreams
+            ?? nativePlaybackStreams
 
         let playbackBundle: PlaybackBundle = {
             if let preferredYTDLPPlayback, useYTDLPStreams {

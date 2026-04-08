@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.17
+
+- Fixed the 0.13.16 regression where active livestreams could sit on `Loading video...` forever by keeping watch-page live data for DVR and storyboard metadata while routing actual live playback back through the proven `WEB_PARENT_TOOLS` HLS manifest path.
+
 ## 0.13.16
 
 - Switched active livestream playback to prefer the watch-page `ytInitialPlayerResponse` path, which exposes the same native HLS and DASH manifests YouTube’s own watch page uses instead of falling back to the weaker live extraction path.
