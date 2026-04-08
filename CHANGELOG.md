@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.19
+
+- Added an mpv startup timeout for initial media loads and replacement loads so bad livestream sources fail fast instead of leaving the player stuck on `Loading video...` forever.
+- Made automatic startup walk multiple live playback candidates, so if the first manifest stalls the player now falls through to the next viable stream instead of giving up on the entire livestream open.
+
 ## 0.13.18
 
 - Stopped active livestream startup from waiting on `yt-dlp` when native live manifests are already available, so the player can open YouTube’s `WEB_PARENT_TOOLS` HLS stream immediately instead of hanging behind fallback extraction work.

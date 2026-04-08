@@ -285,6 +285,10 @@ private func automaticStartupMPVSortKey(for stream: StreamInfo) -> (Int, Int, In
 }
 
 private func automaticStartupMPVSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
+    automaticStartupMPVSelections(for: playback).first
+}
+
+private func automaticStartupMPVSelections(for playback: VideoPlayback) -> [ManualPlaybackSelection] {
     let audioStream = preferredStartupMPVAudioStream(for: playback)
     let preferredHeight = AppSettings.shared.defaultQuality.preferredHeight
 
@@ -307,15 +311,24 @@ private func automaticStartupMPVSelection(for playback: VideoPlayback) -> Manual
                 || (audioStream != nil && !hasConflictingHeaders(video: stream, audio: audioStream))
         }
 
-    if playback.isLive {
-        if let selection = buildSelection(for: playback.preferredManifestStream) {
-            return selection
-        }
+    var orderedSelections: [ManualPlaybackSelection] = []
+    var seenSelections = Set<ManualPlaybackSelection>()
 
-        if let manifestCandidate = candidates
+    func appendSelection(for stream: StreamInfo?) {
+        guard let selection = buildSelection(for: stream) else { return }
+        if seenSelections.insert(selection).inserted {
+            orderedSelections.append(selection)
+        }
+    }
+
+    if playback.isLive {
+        appendSelection(for: playback.preferredManifestStream)
+
+        let manifestCandidates = candidates
             .filter({ $0.streamKind == "manifest" })
-            .max(by: { automaticStartupMPVSortKey(for: $0) < automaticStartupMPVSortKey(for: $1) }) {
-            return buildSelection(for: manifestCandidate)
+            .sorted(by: { automaticStartupMPVSortKey(for: $0) > automaticStartupMPVSortKey(for: $1) })
+        for manifestCandidate in manifestCandidates {
+            appendSelection(for: manifestCandidate)
         }
     }
 
@@ -323,21 +336,23 @@ private func automaticStartupMPVSelection(for playback: VideoPlayback) -> Manual
     if let preferredHeight {
         let atOrBelow = candidates.filter { ($0.height ?? 0) <= preferredHeight }
         if let best = atOrBelow.max(by: { automaticStartupMPVSortKey(for: $0) < automaticStartupMPVSortKey(for: $1) }) {
-            return buildSelection(for: best)
+            appendSelection(for: best)
         }
         // Nothing at/below; fall back to the lowest stream above as a safety net.
         if let fallback = candidates.min(by: { ($0.height ?? 0) < ($1.height ?? 0) }) {
-            return buildSelection(for: fallback)
+            appendSelection(for: fallback)
         }
     }
 
-    if let selection = buildSelection(for: playback.preferredVideoStream) { return selection }
-    if let selection = buildSelection(for: playback.preferredMuxedStream) { return selection }
-    if let selection = buildSelection(for: playback.bestStream) { return selection }
+    appendSelection(for: playback.preferredVideoStream)
+    appendSelection(for: playback.preferredMuxedStream)
+    appendSelection(for: playback.bestStream)
 
-    return candidates
-        .max { automaticStartupMPVSortKey(for: $0) < automaticStartupMPVSortKey(for: $1) }
-        .map { ManualPlaybackSelection(stream: $0, audioStream: $0.hasAudio ? nil : audioStream) }
+    for candidate in candidates.sorted(by: { automaticStartupMPVSortKey(for: $0) > automaticStartupMPVSortKey(for: $1) }) {
+        appendSelection(for: candidate)
+    }
+
+    return orderedSelections
 }
 
 @MainActor
@@ -1138,7 +1153,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             scheduleMPVStop(mpvEngine, pauseFirst: true)
             mpvEngine = nil
 
-            guard let selection = automaticStartupMPVSelection(for: playback) else {
+            let startupSelections = automaticStartupMPVSelections(for: playback)
+            guard let firstSelection = startupSelections.first else {
                 PlaybackDebugLogger.log(
                     "prepare playback missing startup source id=\(playback.id) streams=\(playback.streams.count)"
                 )
@@ -1150,24 +1166,49 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 throw URLError(.badURL)
             }
 
-            let request = try mpvRequest(for: selection)
-            PlaybackDebugLogger.log(
-                "prepare playback start id=\(playback.id) video=\(debugDescription(for: selection.stream)) audio=\(debugDescription(for: selection.audioStream))"
-            )
+            let startupLimit = playback.isLive ? min(startupSelections.count, 4) : 1
+            let candidateSelections = Array(startupSelections.prefix(startupLimit))
+            var preparedEngine: MPVPlaybackEngine?
+            var preparedSelection = firstSelection
+            var lastPreparationError: Error?
 
-            let engine = MPVPlaybackEngine(request: request)
-            engine.onPlaybackEnded = { [weak self] in
-                self?.handlePlaybackEndedEvent()
+            for (index, selection) in candidateSelections.enumerated() {
+                let request = try mpvRequest(for: selection)
+                PlaybackDebugLogger.log(
+                    "prepare playback attempt \(index + 1)/\(candidateSelections.count) id=\(playback.id) video=\(debugDescription(for: selection.stream)) audio=\(debugDescription(for: selection.audioStream))"
+                )
+
+                let engine = MPVPlaybackEngine(request: request)
+                engine.onPlaybackEnded = { [weak self] in
+                    self?.handlePlaybackEndedEvent()
+                }
+                mpvEngine = engine
+
+                do {
+                    let startTime = initialStartTime
+                    try await engine.prepare(startTime: startTime, autoPlay: false)
+                    preparedEngine = engine
+                    preparedSelection = selection
+                    break
+                } catch {
+                    lastPreparationError = error
+                    PlaybackDebugLogger.log(
+                        "prepare playback attempt failed id=\(playback.id) index=\(index + 1) error=\(error.localizedDescription)"
+                    )
+                    mpvEngine = nil
+                    scheduleMPVStop(engine)
+                }
             }
-            mpvEngine = engine
 
-            let startTime = initialStartTime
-            try await engine.prepare(startTime: startTime, autoPlay: false)
+            guard let engine = preparedEngine else {
+                throw lastPreparationError ?? URLError(.cannotOpenFile)
+            }
             guard !Task.isCancelled else { return }
             engine.setVolume(volume)
             engine.setRate(effectivePlaybackSpeed)
             engine.play()
 
+            let startTime = initialStartTime
             currentTime = startTime
             scrubPosition = startTime
             duration = 0
@@ -1176,7 +1217,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             startPollingMPVState(using: engine)
             refreshQualityOptions(for: playback)
             loadSubtitleTracks(for: playback, engine: engine)
-            if let optionID = manualQualityOptionID(for: selection) {
+            if let optionID = manualQualityOptionID(for: preparedSelection) {
                 selectedQualityOptionID = optionID
             }
             startHideMonitorIfNeeded()
@@ -1185,6 +1226,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 PlaybackDebugLogger.log(
                     "prepare playback failed id=\(playback.id) error=\(error.localizedDescription)"
                 )
+                scheduleMPVStop(mpvEngine)
+                mpvEngine = nil
                 errorMessage = "Failed to prepare video."
             }
         }

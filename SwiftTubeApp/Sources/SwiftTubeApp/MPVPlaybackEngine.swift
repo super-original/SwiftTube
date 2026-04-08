@@ -12,6 +12,7 @@ struct MPVPlaybackSnapshot {
 
 @MainActor
 final class MPVPlaybackEngine: NSObject {
+    private static let initialLoadTimeoutSeconds: TimeInterval = 12
     let id = UUID()
 
     let renderController = MPVRenderViewController()
@@ -49,7 +50,11 @@ final class MPVPlaybackEngine: NSObject {
         try command(["loadfile", request.video.url.absoluteString, "replace", "-1"])
         let loadWaitTask = makeFileLoadedTask(for: handle)
         self.loadWaitTask = loadWaitTask
-        try await loadWaitTask.value
+        try await waitForLoadTask(
+            loadWaitTask,
+            timeout: Self.initialLoadTimeoutSeconds,
+            context: "initial"
+        )
         self.loadWaitTask = nil
         didLoadFile = true
         if let audio = request.audio {
@@ -152,7 +157,11 @@ final class MPVPlaybackEngine: NSObject {
 
         let loadWaitTask = makeFileLoadedTask(for: mpv, isReplace: true)
         self.loadWaitTask = loadWaitTask
-        try await loadWaitTask.value
+        try await waitForLoadTask(
+            loadWaitTask,
+            timeout: Self.initialLoadTimeoutSeconds,
+            context: "replace"
+        )
         self.loadWaitTask = nil
         didLoadFile = true
 
@@ -328,6 +337,39 @@ private extension MPVPlaybackEngine {
         guard let mpv else { return }
         var value: Int32 = paused ? 1 : 0
         mpv_set_property(mpv, MPVProperty.pause, MPV_FORMAT_FLAG, &value)
+    }
+
+    func waitForLoadTask(
+        _ task: Task<Void, Error>,
+        timeout: TimeInterval,
+        context: String
+    ) async throws {
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    try await task.value
+                }
+                group.addTask {
+                    let clampedTimeout = max(timeout, 0)
+                    try await Task.sleep(nanoseconds: UInt64(clampedTimeout * 1_000_000_000))
+                    throw NSError(
+                        domain: "SwiftTube.MPV",
+                        code: -12,
+                        userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for mpv to \(context)-load media."]
+                    )
+                }
+
+                _ = try await group.next()
+                group.cancelAll()
+            }
+        } catch {
+            task.cancel()
+            if let mpv {
+                mpv_wakeup(mpv)
+            }
+            PlaybackDebugLogger.log("mpv load wait failed context=\(context) error=\(error.localizedDescription)")
+            throw error
+        }
     }
 
     func check(_ status: Int32) throws {
