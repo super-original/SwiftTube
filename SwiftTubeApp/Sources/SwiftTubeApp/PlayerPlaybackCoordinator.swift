@@ -571,15 +571,24 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var scrubberLowerBound: Double {
-        if isLivePlayback, let liveSeekableRange {
-            return liveSeekableRange.lowerBound
+        if isLivePlayback {
+            if let liveWindowDurationSeconds = currentPlayback?.liveWindowDurationSeconds,
+               liveWindowDurationSeconds > 0 {
+                return max(scrubberUpperBound - liveWindowDurationSeconds, 0)
+            }
+            if let liveSeekableRange {
+                return liveSeekableRange.lowerBound
+            }
         }
         return 0
     }
 
     var scrubberUpperBound: Double {
-        if isLivePlayback, let liveSeekableRange {
-            return liveSeekableRange.upperBound
+        if isLivePlayback {
+            if let liveSeekableRange {
+                return max(liveSeekableRange.upperBound, currentTime)
+            }
+            return max(currentTime, duration)
         }
         return max(duration, 0)
     }

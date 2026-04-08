@@ -771,9 +771,9 @@ actor SwiftTubeBackend {
         async let playerTask = api.player(videoID: videoID, profile: .webParentTools, authenticated: authenticated)
         async let webPlayerTask = api.player(videoID: videoID, profile: .web, authenticated: authenticated)
         async let mwebPlayerTask = api.player(videoID: videoID, profile: .mweb, authenticated: authenticated)
-        let watchPageTask = authenticated
-            ? Task<String?, Never> { try? await self.api.watchPage(videoID: videoID, authenticated: true) }
-            : nil
+        let watchPageTask = Task<String?, Never> {
+            try? await self.api.watchPage(videoID: videoID, authenticated: authenticated)
+        }
         let publicYTDLPTask = Task<YTDLPPlaybackData?, Error> {
             try await self.cachedYTDLPPlayback(videoID: videoID, cookieFileURL: nil, cacheScope: "public")
         }
@@ -782,6 +782,8 @@ actor SwiftTubeBackend {
         let playerData = try await playerTask
         let webPlayerData = (try? await webPlayerTask) ?? [:]
         let mwebPlayerData = (try? await mwebPlayerTask) ?? [:]
+        let watchPageHTML = await watchPageTask.value
+        let watchPagePlayerData = watchPageHTML.flatMap(extractInitialPlayerResponse) ?? [:]
 
         let metadata = extractWatchMetadata(from: watchData)
         var playlistOptions: [PlaylistOption] = []
@@ -792,28 +794,45 @@ actor SwiftTubeBackend {
         }
 
         let playerStreams = mergeStreams(
+            parseStreams(from: watchPagePlayerData, defaultHeaders: api.streamRequestHeaders(for: .web)),
             parseStreams(from: playerData, defaultHeaders: api.streamRequestHeaders(for: .webParentTools)),
             parseStreams(from: webPlayerData, defaultHeaders: api.streamRequestHeaders(for: .web)),
             parseStreams(from: mwebPlayerData, defaultHeaders: api.streamRequestHeaders(for: .mweb))
         )
         let playerSubtitles = deduplicatedSubtitles(
-            extractSubtitles(from: playerData)
+            extractSubtitles(from: watchPagePlayerData)
+                + extractSubtitles(from: playerData)
                 + extractSubtitles(from: webPlayerData)
                 + extractSubtitles(from: mwebPlayerData)
         )
         let playbackTags = deduplicatedVideoTags(
             extractVideoTags(from: watchData),
+            extractVideoTags(from: watchPagePlayerData),
             extractVideoTags(from: playerData),
             extractVideoTags(from: webPlayerData),
             extractVideoTags(from: mwebPlayerData)
         )
-        let accessIssue = extractVideoAccessIssue(from: playerData, fallbackTags: playbackTags)
+        let accessIssue = extractVideoAccessIssue(from: watchPagePlayerData, fallbackTags: playbackTags)
+            ?? extractVideoAccessIssue(from: playerData, fallbackTags: playbackTags)
             ?? extractVideoAccessIssue(from: webPlayerData, fallbackTags: playbackTags)
             ?? extractVideoAccessIssue(from: mwebPlayerData, fallbackTags: playbackTags)
         let nativePlaybackBundle = buildPlaybackBundle(
             streams: playerStreams,
             subtitles: playerSubtitles
         )
+
+        let details = playerData["videoDetails"] as? JSONDictionary
+        let webDetails = webPlayerData["videoDetails"] as? JSONDictionary
+        let mwebDetails = mwebPlayerData["videoDetails"] as? JSONDictionary
+        let watchPageDetails = watchPagePlayerData["videoDetails"] as? JSONDictionary
+        let liveBroadcastDetails = [watchPagePlayerData, playerData, webPlayerData, mwebPlayerData].compactMap {
+            (($0["microformat"] as? JSONDictionary)?["playerMicroformatRenderer"] as? JSONDictionary)?["liveBroadcastDetails"] as? JSONDictionary
+        }
+        let isLive = liveBroadcastDetails.contains { ($0["isLiveNow"] as? Bool) == true }
+        let isUpcoming = [watchPageDetails, details, webDetails, mwebDetails].contains { ($0?["isUpcoming"] as? Bool) == true }
+        let liveManifestMetadata = isLive
+            ? await loadLiveManifestMetadata(from: watchPagePlayerData.isEmpty ? playerData : watchPagePlayerData, api: api)
+            : nil
 
         let publicPlayback = try await publicYTDLPTask.value
         let preferredYTDLPPlayback: YTDLPPlaybackData?
@@ -829,11 +848,13 @@ actor SwiftTubeBackend {
             preferredYTDLPPlayback = nil
         }
 
-        let resolvedStreams = ((preferredYTDLPPlayback?.streams.isEmpty == false) ? preferredYTDLPPlayback?.streams : nil)
+        let useYTDLPStreams = (preferredYTDLPPlayback?.streams.isEmpty == false)
+            && !(isLive && nativePlaybackBundle.bestStream != nil)
+        let resolvedStreams = (useYTDLPStreams ? preferredYTDLPPlayback?.streams : nil)
             ?? playerStreams
 
         let playbackBundle: PlaybackBundle = {
-            if let preferredYTDLPPlayback, preferredYTDLPPlayback.streams.isEmpty == false {
+            if let preferredYTDLPPlayback, useYTDLPStreams {
                 return buildPlaybackBundle(
                     streams: preferredYTDLPPlayback.streams,
                     subtitles: playerSubtitles + preferredYTDLPPlayback.subtitles
@@ -845,13 +866,17 @@ actor SwiftTubeBackend {
         if resolvedStreams.isEmpty, accessIssue == nil {
             throw BackendClientError(message: "No playable streams found")
         }
-        let details = playerData["videoDetails"] as? JSONDictionary
-        let webDetails = webPlayerData["videoDetails"] as? JSONDictionary
-        let mwebDetails = mwebPlayerData["videoDetails"] as? JSONDictionary
-        let title: String? = metadata["title"] ?? preferredYTDLPPlayback?.title ?? (details?["title"] as? String)
-        let duration = metadata["durationText"] ?? preferredYTDLPPlayback?.durationText ?? metadataDurationText(from: details)
+
+        let title: String? = metadata["title"]
+            ?? preferredYTDLPPlayback?.title
+            ?? (watchPageDetails?["title"] as? String)
+            ?? (details?["title"] as? String)
+        let duration = metadata["durationText"]
+            ?? preferredYTDLPPlayback?.durationText
+            ?? metadataDurationText(from: watchPageDetails)
+            ?? metadataDurationText(from: details)
         let durationSeconds = parseDurationSeconds(from: duration)
-        let tracking = extractWatchTracking(from: await watchPageTask?.value, fallbackDuration: durationSeconds)
+        let tracking = extractWatchTracking(from: watchPageHTML, fallbackDuration: durationSeconds)
         if let tracking {
             trackingCache[videoID] = tracking
         }
@@ -862,11 +887,9 @@ actor SwiftTubeBackend {
             durationSeconds: durationSeconds
         )
         let relatedItems = await mergeStoredProgress(into: extractRelatedVideos(from: watchData, currentVideoID: videoID))
-        let liveBroadcastDetails = [playerData, webPlayerData, mwebPlayerData].compactMap {
-            (($0["microformat"] as? JSONDictionary)?["playerMicroformatRenderer"] as? JSONDictionary)?["liveBroadcastDetails"] as? JSONDictionary
-        }
-        let isLive = liveBroadcastDetails.contains { ($0["isLiveNow"] as? Bool) == true }
-        let isUpcoming = [details, webDetails, mwebDetails].contains { ($0?["isUpcoming"] as? Bool) == true }
+        let storyboard = extractStoryboard(from: watchPagePlayerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
+            ?? extractStoryboard(from: webPlayerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
+            ?? extractStoryboard(from: playerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
 
         return VideoPlayback(
             id: videoID,
@@ -893,7 +916,7 @@ actor SwiftTubeBackend {
             bestStreamUrl: (playbackBundle.bestStream ?? bestStream)?.url,
             bestStream: playbackBundle.bestStream ?? bestStream,
             subtitles: deduplicatedSubtitles(playbackBundle.subtitles),
-            storyboard: extractStoryboard(from: webPlayerData.isEmpty ? playerData : webPlayerData) ?? extractStoryboard(from: playerData),
+            storyboard: storyboard,
             sponsorSegments: [],
             progress: progress,
             resumeStartTimeSeconds: progress?.bestResumeSeconds,
@@ -906,6 +929,7 @@ actor SwiftTubeBackend {
             accessIssue: accessIssue,
             isLive: isLive,
             isUpcoming: isUpcoming,
+            liveWindowDurationSeconds: liveManifestMetadata?.windowDurationSeconds,
             liveChat: liveChatSession
         )
     }
@@ -1273,6 +1297,11 @@ private struct YTDLPPlaybackData {
     let durationText: String?
     let streams: [StreamInfo]
     let subtitles: [SubtitleTrack]
+}
+
+private struct LiveManifestMetadata {
+    let windowDurationSeconds: Double?
+    let storyboardTimeline: LiveStoryboardTimeline?
 }
 
 private func extractYTDLPPlayback(videoID: String, cookieFileURL: URL?) async throws -> YTDLPPlaybackData? {
@@ -3906,11 +3935,40 @@ private func extractComments(from data: Any, limit: Int = 20) -> [CommentItem] {
     return comments
 }
 
-private func extractStoryboard(from playerData: Any) -> StoryboardSpec? {
+private func extractStoryboard(from playerData: Any, liveTimeline: LiveStoryboardTimeline? = nil) -> StoryboardSpec? {
     guard let playerData = playerData as? JSONDictionary else { return nil }
-    guard let spec = ((((playerData["storyboards"] as? JSONDictionary)?["playerStoryboardSpecRenderer"] as? JSONDictionary)?["spec"] as? String)), !spec.isEmpty else {
-        return nil
+
+    if let liveSpec = ((((playerData["storyboards"] as? JSONDictionary)?["playerLiveStoryboardSpecRenderer"] as? JSONDictionary)?["spec"] as? String)),
+       liveSpec.isEmpty == false,
+       let liveTimeline {
+        let fields = liveSpec.components(separatedBy: "#")
+        guard fields.count >= 5,
+              let tileWidth = Int(fields[1]),
+              let tileHeight = Int(fields[2]),
+              let cols = Int(fields[3]),
+              let rows = Int(fields[4]),
+              tileWidth > 0,
+              tileHeight > 0,
+              cols > 0,
+              rows > 0 else {
+            return nil
+        }
+
+        return StoryboardSpec(
+            urls: [],
+            urlPattern: fields[0],
+            tileWidth: tileWidth,
+            tileHeight: tileHeight,
+            frameCount: liveTimeline.segmentDurations.count,
+            cols: cols,
+            rows: rows,
+            intervalSeconds: liveTimeline.segmentDurations.first ?? 0,
+            liveTimeline: liveTimeline
+        )
     }
+
+    guard let spec = ((((playerData["storyboards"] as? JSONDictionary)?["playerStoryboardSpecRenderer"] as? JSONDictionary)?["spec"] as? String)),
+          !spec.isEmpty else { return nil }
 
     let parts = spec.split(separator: "|").map(String.init)
     guard parts.count >= 2 else { return nil }
@@ -3951,13 +4009,117 @@ private func extractStoryboard(from playerData: Any) -> StoryboardSpec? {
 
     return StoryboardSpec(
         urls: (0..<fileCount).map { urlBase.replacingOccurrences(of: "$M", with: String($0)) + sighSuffix },
+        urlPattern: nil,
         tileWidth: best.1,
         tileHeight: best.2,
         frameCount: best.3,
         cols: best.4,
         rows: best.5,
-        intervalSeconds: Double(best.6) / 1000
+        intervalSeconds: Double(best.6) / 1000,
+        liveTimeline: nil
     )
+}
+
+private func loadLiveManifestMetadata(from playerData: JSONDictionary, api: YouTubeAPI) async -> LiveManifestMetadata? {
+    guard let streamingData = playerData["streamingData"] as? JSONDictionary,
+          let dashManifestURLString = streamingData["dashManifestUrl"] as? String,
+          let dashManifestURL = URL(string: dashManifestURLString),
+          dashManifestURLString.isEmpty == false,
+          let manifest = try? await api.fetchText(from: dashManifestURL, authenticated: false) else {
+        return nil
+    }
+
+    return LiveManifestMetadata(
+        windowDurationSeconds: parseLiveManifestWindowDuration(from: manifest),
+        storyboardTimeline: parseLiveStoryboardTimeline(from: manifest)
+    )
+}
+
+private func parseLiveManifestWindowDuration(from manifest: String) -> Double? {
+    guard let depth = firstMatch(in: manifest, pattern: #"timeShiftBufferDepth="([^"]+)""#, group: 1) else {
+        return nil
+    }
+    return parseISO8601DurationSeconds(depth)
+}
+
+private func parseLiveStoryboardTimeline(from manifest: String) -> LiveStoryboardTimeline? {
+    guard
+        let startNumberString = firstMatch(in: manifest, pattern: #"<SegmentList\b[^>]*startNumber="(\d+)""#, group: 1),
+        let startNumber = Int(startNumberString),
+        let timescaleString = firstMatch(in: manifest, pattern: #"<SegmentList\b[^>]*timescale="(\d+)""#, group: 1),
+        let timescale = Double(timescaleString),
+        timescale > 0,
+        let timelineBody = firstMatch(in: manifest, pattern: #"<SegmentTimeline>(.*?)</SegmentTimeline>"#, group: 1, options: [.dotMatchesLineSeparators])
+    else {
+        return nil
+    }
+
+    let pattern = #"<S\b[^>]*d="(\d+)"(?:[^>]*r="(-?\d+)")?[^>]*/?>"#
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let nsRange = NSRange(timelineBody.startIndex..<timelineBody.endIndex, in: timelineBody)
+
+    var segmentDurations: [Double] = []
+    regex.enumerateMatches(in: timelineBody, options: [], range: nsRange) { match, _, _ in
+        guard let match,
+              let durationRange = Range(match.range(at: 1), in: timelineBody),
+              let durationUnits = Double(timelineBody[durationRange]) else {
+            return
+        }
+
+        let repeatCount: Int
+        if let repeatRange = Range(match.range(at: 2), in: timelineBody),
+           let rawRepeatCount = Int(timelineBody[repeatRange]),
+           rawRepeatCount >= 0 {
+            repeatCount = rawRepeatCount
+        } else {
+            repeatCount = 0
+        }
+
+        let durationSeconds = durationUnits / timescale
+        segmentDurations.append(contentsOf: repeatElement(durationSeconds, count: repeatCount + 1))
+    }
+
+    guard segmentDurations.isEmpty == false else { return nil }
+    return LiveStoryboardTimeline(
+        firstSequence: startNumber,
+        segmentDurations: segmentDurations,
+        trailingHiddenSegmentCount: 18
+    )
+}
+
+private func parseISO8601DurationSeconds(_ value: String) -> Double? {
+    guard value.hasPrefix("PT") else { return nil }
+    let pattern = #"^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$"#
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let nsRange = NSRange(value.startIndex..<value.endIndex, in: value)
+    guard let match = regex.firstMatch(in: value, options: [], range: nsRange) else { return nil }
+
+    func component(_ index: Int) -> Double {
+        guard let range = Range(match.range(at: index), in: value) else { return 0 }
+        return Double(value[range]) ?? 0
+    }
+
+    let hours = component(1)
+    let minutes = component(2)
+    let seconds = component(3)
+    let total = (hours * 3600) + (minutes * 60) + seconds
+    return total > 0 ? total : nil
+}
+
+private func firstMatch(
+    in source: String,
+    pattern: String,
+    group: Int = 1,
+    options: NSRegularExpression.Options = []
+) -> String? {
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
+    let nsRange = NSRange(source.startIndex..<source.endIndex, in: source)
+    guard let match = regex.firstMatch(in: source, options: [], range: nsRange),
+          group < match.numberOfRanges,
+          let range = Range(match.range(at: group), in: source) else {
+        return nil
+    }
+    return String(source[range])
 }
 
 private func findPlaylistOption(in options: [PlaylistOption], playlistID: String) -> PlaylistOption? {

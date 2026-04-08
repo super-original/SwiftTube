@@ -2145,12 +2145,15 @@ private struct PlayerStageSurface: View {
                 // During scrubbing, cover the video with a storyboard tile scaled to
                 // fill — same image data the hover popup uses, already cached, instant.
                 if coordinator.isScrubbing, let spec = coordinator.storyboard {
-                    ScrubVideoOverlay(
-                        spec: spec,
-                        time: coordinator.storyboardTime(for: coordinator.scrubPosition, spec: spec),
-                        containerSize: geo.size
-                    )
-                        .allowsHitTesting(false)
+                    let storyboardTime = coordinator.storyboardTime(for: coordinator.scrubPosition, spec: spec)
+                    if spec.tileInfo(at: storyboardTime) != nil {
+                        ScrubVideoOverlay(
+                            spec: spec,
+                            time: storyboardTime,
+                            containerSize: geo.size
+                        )
+                            .allowsHitTesting(false)
+                    }
                 }
 
                 if coordinator.shouldShowPlaybackErrorOverlay,
@@ -3856,36 +3859,37 @@ private struct ScrubPreviewPositioned: View {
            coordinator.hasSeekableTimeline {
             let hoverTime = coordinator.scrubberTime(forFraction: fraction)
             let storyboardTime = coordinator.storyboardTime(for: hoverTime, spec: spec)
+            if spec.tileInfo(at: storyboardTime) != nil {
+                // Tile display dimensions (independent of raw storyboard pixel size).
+                let dispW = previewDisplayWidth
+                let dispH = spec.tileWidth > 0
+                    ? previewDisplayWidth * CGFloat(spec.tileHeight) / CGFloat(spec.tileWidth)
+                    : previewDisplayWidth * 9 / 16
 
-            // Tile display dimensions (independent of raw storyboard pixel size).
-            let dispW = previewDisplayWidth
-            let dispH = spec.tileWidth > 0
-                ? previewDisplayWidth * CGFloat(spec.tileHeight) / CGFloat(spec.tileWidth)
-                : previewDisplayWidth * 9 / 16
+                // Horizontal centre of the hovered position on stage.
+                // Layout: edgePad | controlBarPad(14) | timeLabel(54) | spacing(12) | [track] | …
+                let edgePad = CGFloat(edgeToEdge ? 20 : 18) + sidePad
+                let statusWidth = coordinator.isLivePlayback ? liveIndicatorWidth : timeLabelWidth
+                let innerOffset: CGFloat = 14 + statusWidth + 12 + 10
+                let trackLeft = edgePad + innerOffset
+                let trackRight = stageSize.width - edgePad - innerOffset
+                let thumbX = trackLeft + fraction * max(0, trackRight - trackLeft)
+                let clampedX = min(max(thumbX, dispW / 2 + 8), stageSize.width - dispW / 2 - 8)
 
-            // Horizontal centre of the hovered position on stage.
-            // Layout: edgePad | controlBarPad(14) | timeLabel(54) | spacing(12) | [track] | …
-            let edgePad = CGFloat(edgeToEdge ? 20 : 18) + sidePad
-            let statusWidth = coordinator.isLivePlayback ? liveIndicatorWidth : timeLabelWidth
-            let innerOffset: CGFloat = 14 + statusWidth + 12 + 10
-            let trackLeft = edgePad + innerOffset
-            let trackRight = stageSize.width - edgePad - innerOffset
-            let thumbX = trackLeft + fraction * max(0, trackRight - trackLeft)
-            let clampedX = min(max(thumbX, dispW / 2 + 8), stageSize.width - dispW / 2 - 8)
+                // Vertical: just above the scrubber row.
+                let bottomPad = CGFloat(edgeToEdge ? 20 : 18)
+                let popupY = stageSize.height - bottomPad - scrubberRowHeight - 10 - dispH / 2
 
-            // Vertical: just above the scrubber row.
-            let bottomPad = CGFloat(edgeToEdge ? 20 : 18)
-            let popupY = stageSize.height - bottomPad - scrubberRowHeight - 10 - dispH / 2
-
-            ScrubPreviewBubble(
-                spec: spec,
-                time: storyboardTime,
-                displayWidth: dispW,
-                displayHeight: dispH,
-                timestampText: timestampText(for: hoverTime)
-            )
-                .fixedSize()
-                .position(x: clampedX, y: popupY)
+                ScrubPreviewBubble(
+                    spec: spec,
+                    time: storyboardTime,
+                    displayWidth: dispW,
+                    displayHeight: dispH,
+                    timestampText: timestampText(for: hoverTime)
+                )
+                    .fixedSize()
+                    .position(x: clampedX, y: popupY)
+            }
         }
     }
 

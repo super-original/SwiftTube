@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.16
+
+- Switched active livestream playback to prefer the watch-page `ytInitialPlayerResponse` path, which exposes the same native HLS and DASH manifests YouTube’s own watch page uses instead of falling back to the weaker live extraction path.
+- Parsed live DASH manifest metadata to recover YouTube’s full DVR window plus live storyboard segment timeline, so the scrubber can show the whole rewind buffer and hover previews can map onto the real live storyboard archive.
+- Matched YouTube’s live-preview behavior more closely by hiding storyboard hover tiles right at the live edge where the newest storyboard files have not landed yet.
+
 ## 0.13.15
 
 - Reworked live DVR scrubbing to read MPV's actual seekable live-range window instead of pretending livestreams always run from `0...duration`, which keeps the thumb moving across the real cached range, makes the `LIVE` button seek to the true edge, and lets live hover math use the same DVR coordinates.

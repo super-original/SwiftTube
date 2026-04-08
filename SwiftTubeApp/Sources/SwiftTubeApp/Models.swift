@@ -550,30 +550,80 @@ struct TranscriptResponse: Codable, Sendable {
     let segments: [TranscriptSegment]
 }
 
+struct LiveStoryboardTimeline: Codable, Hashable, Sendable {
+    let firstSequence: Int
+    let segmentDurations: [Double]
+    let trailingHiddenSegmentCount: Int
+
+    var coveredDurationSeconds: Double {
+        segmentDurations.reduce(0) { $0 + max($1, 0) }
+    }
+
+    var lastSequence: Int? {
+        guard segmentDurations.isEmpty == false else { return nil }
+        return firstSequence + segmentDurations.count - 1
+    }
+
+    func sequence(at seconds: Double) -> Int? {
+        guard let lastSequence else { return nil }
+
+        let latestVisibleSequence = lastSequence - max(trailingHiddenSegmentCount, 0)
+        guard latestVisibleSequence >= firstSequence else { return nil }
+
+        var remaining = max(seconds, 0)
+        for (offset, duration) in segmentDurations.enumerated() {
+            let clampedDuration = max(duration, 0.001)
+            let sequence = firstSequence + offset
+            if remaining < clampedDuration || offset == segmentDurations.count - 1 {
+                return sequence <= latestVisibleSequence ? sequence : nil
+            }
+            remaining -= clampedDuration
+        }
+
+        return nil
+    }
+}
+
 struct StoryboardSpec: Codable, Sendable {
     let urls: [String]           // one URL per sprite-sheet file (file index = array index)
+    let urlPattern: String?
     let tileWidth: Int
     let tileHeight: Int
     let frameCount: Int
     let cols: Int
     let rows: Int
     let intervalSeconds: Double
+    let liveTimeline: LiveStoryboardTimeline?
 
     var coveredDurationSeconds: Double {
+        if let liveTimeline {
+            return liveTimeline.coveredDurationSeconds
+        }
         guard frameCount > 0, intervalSeconds > 0 else { return 0 }
         return Double(frameCount) * intervalSeconds
     }
 
     /// Returns the sprite-sheet URL, column, and row for the tile that covers `seconds`.
     func tileInfo(at seconds: Double) -> (url: URL, col: Int, row: Int)? {
-        guard intervalSeconds > 0, cols > 0, rows > 0, frameCount > 0, !urls.isEmpty else { return nil }
+        let framesPerFile = cols * rows
+        guard cols > 0, rows > 0, frameCount > 0, framesPerFile > 0 else { return nil }
+
+        if let liveTimeline, let urlPattern {
+            guard let sequence = liveTimeline.sequence(at: seconds) else { return nil }
+            let fileIndex = sequence / framesPerFile
+            let posInFile = sequence % framesPerFile
+            guard let url = URL(string: urlPattern.replacingOccurrences(of: "$M", with: String(fileIndex))) else {
+                return nil
+            }
+            return (url, posInFile % cols, posInFile / cols)
+        }
+
+        guard intervalSeconds > 0, !urls.isEmpty else { return nil }
         let frameIndex = Int(seconds / intervalSeconds)
         guard frameIndex >= 0, frameIndex < frameCount else { return nil }
-        let framesPerFile = cols * rows
         let fileIndex = frameIndex / framesPerFile
-        guard fileIndex < urls.count else { return nil }
+        guard fileIndex < urls.count, let url = URL(string: urls[fileIndex]) else { return nil }
         let posInFile = frameIndex % framesPerFile
-        guard let url = URL(string: urls[fileIndex]) else { return nil }
         return (url, posInFile % cols, posInFile / cols)
     }
 }
@@ -738,6 +788,7 @@ struct VideoPlayback: Codable, Sendable {
     let accessIssue: VideoAccessIssue?
     let isLive: Bool
     let isUpcoming: Bool
+    let liveWindowDurationSeconds: Double?
     let liveChat: LiveChatSession?
 
     var channelAvatarURL: URL? {
@@ -798,6 +849,7 @@ struct VideoPlayback: Codable, Sendable {
             accessIssue: accessIssue,
             isLive: isLive,
             isUpcoming: isUpcoming,
+            liveWindowDurationSeconds: liveWindowDurationSeconds,
             liveChat: liveChat
         )
     }
