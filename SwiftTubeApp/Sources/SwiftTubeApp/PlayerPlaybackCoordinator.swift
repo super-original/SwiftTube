@@ -284,6 +284,29 @@ private func automaticStartupMPVSortKey(for stream: StreamInfo) -> (Int, Int, In
     )
 }
 
+private func liveManifestStartupSortKey(for stream: StreamInfo) -> [Int] {
+    let protocolPreference = stream.container?.lowercased() == "m3u8" ? 1 : 0
+    let sourcePreference: Int
+    switch stream.httpHeaders?["X-YouTube-Client-Name"] {
+    case "88":
+        sourcePreference = 2
+    case "1":
+        sourcePreference = 1
+    default:
+        sourcePreference = 0
+    }
+
+    return [
+        protocolPreference,
+        sourcePreference,
+        stream.height ?? 0,
+        stream.hasAudio ? 1 : 0,
+        stream.fps ?? 0,
+        stream.bitrate ?? 0,
+        playbackCodecScore(for: stream.videoCodec)
+    ]
+}
+
 private func automaticStartupMPVSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
     automaticStartupMPVSelections(for: playback).first
 }
@@ -326,7 +349,7 @@ private func automaticStartupMPVSelections(for playback: VideoPlayback) -> [Manu
 
         let manifestCandidates = candidates
             .filter({ $0.streamKind == "manifest" })
-            .sorted(by: { automaticStartupMPVSortKey(for: $0) > automaticStartupMPVSortKey(for: $1) })
+            .sorted(by: { liveManifestStartupSortKey(for: $1).lexicographicallyPrecedes(liveManifestStartupSortKey(for: $0)) })
         for manifestCandidate in manifestCandidates {
             appendSelection(for: manifestCandidate)
         }

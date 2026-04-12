@@ -790,13 +790,17 @@ actor SwiftTubeBackend {
             }
         }
 
+        let watchPageStreams = parseStreams(from: watchPagePlayerData, defaultHeaders: api.streamRequestHeaders(for: .web))
+        let webParentToolsStreams = parseStreams(from: playerData, defaultHeaders: api.streamRequestHeaders(for: .webParentTools))
+        let webStreams = parseStreams(from: webPlayerData, defaultHeaders: api.streamRequestHeaders(for: .web))
+        let mwebStreams = parseStreams(from: mwebPlayerData, defaultHeaders: api.streamRequestHeaders(for: .mweb))
         let playerAPIStreams = mergeStreams(
-            parseStreams(from: playerData, defaultHeaders: api.streamRequestHeaders(for: .webParentTools)),
-            parseStreams(from: webPlayerData, defaultHeaders: api.streamRequestHeaders(for: .web)),
-            parseStreams(from: mwebPlayerData, defaultHeaders: api.streamRequestHeaders(for: .mweb))
+            webParentToolsStreams,
+            webStreams,
+            mwebStreams
         )
         let playerStreams = mergeStreams(
-            parseStreams(from: watchPagePlayerData, defaultHeaders: api.streamRequestHeaders(for: .web)),
+            watchPageStreams,
             playerAPIStreams
         )
         let playerSubtitles = deduplicatedSubtitles(
@@ -812,10 +816,15 @@ actor SwiftTubeBackend {
             extractVideoTags(from: webPlayerData),
             extractVideoTags(from: mwebPlayerData)
         )
-        let accessIssue = extractVideoAccessIssue(from: watchPagePlayerData, fallbackTags: playbackTags)
-            ?? extractVideoAccessIssue(from: playerData, fallbackTags: playbackTags)
-            ?? extractVideoAccessIssue(from: webPlayerData, fallbackTags: playbackTags)
-            ?? extractVideoAccessIssue(from: mwebPlayerData, fallbackTags: playbackTags)
+        let accessIssue = resolveVideoAccessIssue(
+            from: [
+                PlaybackIssueSource(data: watchPagePlayerData, streams: watchPageStreams),
+                PlaybackIssueSource(data: playerData, streams: webParentToolsStreams),
+                PlaybackIssueSource(data: webPlayerData, streams: webStreams),
+                PlaybackIssueSource(data: mwebPlayerData, streams: mwebStreams),
+            ],
+            fallbackTags: playbackTags
+        )
 
         let details = playerData["videoDetails"] as? JSONDictionary
         let webDetails = webPlayerData["videoDetails"] as? JSONDictionary
@@ -829,7 +838,13 @@ actor SwiftTubeBackend {
         let liveManifestMetadata = isLive
             ? await loadLiveManifestMetadata(from: watchPagePlayerData.isEmpty ? playerData : watchPagePlayerData, api: api)
             : nil
-        let nativePlaybackStreams = isLive ? playerAPIStreams : playerStreams
+        let livePlaybackStreams = mergeStreams(
+            webParentToolsStreams,
+            watchPageStreams.filter { $0.streamKind == "manifest" },
+            webStreams,
+            mwebStreams
+        )
+        let nativePlaybackStreams = isLive ? livePlaybackStreams : playerStreams
         let nativePlaybackBundle = buildPlaybackBundle(
             streams: nativePlaybackStreams,
             subtitles: playerSubtitles,
@@ -1308,6 +1323,11 @@ private struct PlaybackBundle {
     }
 }
 
+private struct PlaybackIssueSource {
+    let data: JSONDictionary
+    let streams: [StreamInfo]
+}
+
 private struct YTDLPPlaybackData {
     let title: String?
     let durationText: String?
@@ -1321,6 +1341,26 @@ private struct LiveManifestMetadata {
 }
 
 private let ytDLPPlaybackTimeoutSeconds: TimeInterval = 12
+
+private func resolveVideoAccessIssue(
+    from sources: [PlaybackIssueSource],
+    fallbackTags: [VideoTag]
+) -> VideoAccessIssue? {
+    let hasPlayableSource = sources.contains { source in
+        let bundle = buildPlaybackBundle(streams: source.streams, subtitles: [])
+        return bundle.bestStream != nil || pickBestStream(in: source.streams) != nil
+    }
+
+    guard !hasPlayableSource else { return nil }
+
+    for source in sources {
+        if let issue = extractVideoAccessIssue(from: source.data, fallbackTags: []) {
+            return issue
+        }
+    }
+
+    return extractVideoAccessIssue(from: nil, fallbackTags: fallbackTags)
+}
 
 private func extractYTDLPPlayback(
     videoID: String,
@@ -1467,7 +1507,10 @@ private func shouldPreferNativePlayback(bundle: PlaybackBundle, streams: [Stream
 private func bestManifestStream(in streams: [StreamInfo], preferHLS: Bool = false) -> StreamInfo? {
     streams
         .filter { $0.streamKind == "manifest" && $0.hasVideo }
-        .max(by: { manifestStreamScore($0, preferHLS: preferHLS) < manifestStreamScore($1, preferHLS: preferHLS) })
+        .max(by: {
+            manifestStreamScore($0, preferHLS: preferHLS)
+                .lexicographicallyPrecedes(manifestStreamScore($1, preferHLS: preferHLS))
+        })
 }
 
 private func bestMuxedStream(in streams: [StreamInfo]) -> StreamInfo? {
@@ -3982,16 +4025,23 @@ private func extractStoryboard(from playerData: Any, liveTimeline: LiveStoryboar
             return nil
         }
 
+        let framesPerSheet = cols * rows
+        let adjustedLiveTimeline = LiveStoryboardTimeline(
+            firstSequence: liveTimeline.firstSequence,
+            segmentDurations: liveTimeline.segmentDurations,
+            trailingHiddenSegmentCount: max(liveTimeline.trailingHiddenSegmentCount, framesPerSheet * 2)
+        )
+
         return StoryboardSpec(
             urls: [],
             urlPattern: fields[0],
             tileWidth: tileWidth,
             tileHeight: tileHeight,
-            frameCount: liveTimeline.segmentDurations.count,
+            frameCount: adjustedLiveTimeline.segmentDurations.count,
             cols: cols,
             rows: rows,
-            intervalSeconds: liveTimeline.segmentDurations.first ?? 0,
-            liveTimeline: liveTimeline
+            intervalSeconds: adjustedLiveTimeline.segmentDurations.first ?? 0,
+            liveTimeline: adjustedLiveTimeline
         )
     }
 
@@ -4756,7 +4806,18 @@ private func codecScore(_ codec: String?) -> Int {
     return 1
 }
 
-private func manifestStreamScore(_ stream: StreamInfo, preferHLS: Bool = false) -> (Int, Int, Int, Int, Int, Int) {
+private func manifestSourcePreference(_ stream: StreamInfo) -> Int {
+    switch stream.httpHeaders?["X-YouTube-Client-Name"] {
+    case "88":
+        return 2
+    case "1":
+        return 1
+    default:
+        return 0
+    }
+}
+
+private func manifestStreamScore(_ stream: StreamInfo, preferHLS: Bool = false) -> [Int] {
     let manifestProtocolPreference: Int
     if preferHLS {
         // YouTube's live HLS manifests load reliably through mpv/FFmpeg, while
@@ -4766,14 +4827,15 @@ private func manifestStreamScore(_ stream: StreamInfo, preferHLS: Bool = false) 
         manifestProtocolPreference = stream.formatId == "dash-manifest" ? 1 : 0
     }
 
-    return (
+    return [
         manifestProtocolPreference,
+        preferHLS ? manifestSourcePreference(stream) : 0,
         stream.hasAudio ? 1 : 0,
         stream.hasVideo ? 1 : 0,
         stream.height ?? 0,
         stream.fps ?? 0,
         stream.bitrate ?? 0
-    )
+    ]
 }
 
 private func streamScore(_ stream: StreamInfo) -> (Int, Int, Int, Int, Int) {

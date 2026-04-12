@@ -2653,7 +2653,7 @@ private struct PlayerControlBar: View {
     private let qualityButtonMinWidth: CGFloat = 104
     private let volumeIconContentHeight: CGFloat = 22
     private let timeLabelWidth: CGFloat = 54
-    private let liveIndicatorWidth: CGFloat = 66
+    private let liveIndicatorWidth: CGFloat = 88
 
     var body: some View {
         VStack(spacing: 10) {
@@ -2826,8 +2826,9 @@ private struct PlayerControlBar: View {
     @ViewBuilder
     private var trailingScrubberStatus: some View {
         if coordinator.isLivePlayback {
-            Color.clear
-                .frame(width: liveIndicatorWidth, height: 1)
+            Text(coordinator.remainingTimeText)
+                .foregroundStyle(.secondary)
+                .frame(width: liveIndicatorWidth, alignment: .trailing)
         } else {
             Text(coordinator.remainingTimeText)
                 .foregroundStyle(.secondary)
@@ -3848,7 +3849,7 @@ private struct ScrubPreviewPositioned: View {
 
     // Must match constants in PlayerControlBar.
     private let timeLabelWidth: CGFloat = 54
-    private let liveIndicatorWidth: CGFloat = 66
+    private let liveIndicatorWidth: CGFloat = 88
     private let scrubberRowHeight: CGFloat = 38
     // Fixed display width for the preview tile; height is derived from the tile's aspect ratio.
     private let previewDisplayWidth: CGFloat = 136

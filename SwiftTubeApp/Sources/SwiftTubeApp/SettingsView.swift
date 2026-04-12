@@ -60,10 +60,22 @@ struct SettingsView: View {
         } detail: {
             settingsDetail
         }
-        .navigationSplitViewStyle(.balanced)
-        .frame(width: 980, height: 650)
+        .frame(
+            minWidth: SettingsWindowSupport.minSize.width,
+            idealWidth: 980,
+            maxWidth: SettingsWindowSupport.maxSize.width,
+            minHeight: SettingsWindowSupport.minSize.height,
+            idealHeight: 650,
+            maxHeight: SettingsWindowSupport.maxSize.height
+        )
         .background(settings.windowBackgroundColor.ignoresSafeArea())
         .preferredColorScheme(settings.preferredColorScheme)
+        .background(
+            WindowAccessor { window in
+                guard let window else { return }
+                SettingsWindowSupport.configure(window)
+            }
+        )
     }
 
     private var settingsSidebar: some View {
@@ -75,12 +87,19 @@ struct SettingsView: View {
                 }
             }
         )) {
-            Section("App") {
+            Section {
                 ForEach(SettingsPane.appSection) { pane in
                     Label(pane.title, systemImage: pane.systemImage)
                         .tag(pane)
                 }
+            } header: {
+                Text("SwiftTube")
+                    .font(.system(size: 34, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .padding(.top, 4)
+                    .padding(.bottom, 6)
             }
+            .collapsible(false)
 
             Section("Player") {
                 ForEach(SettingsPane.playbackSection) { pane in
@@ -88,6 +107,7 @@ struct SettingsView: View {
                         .tag(pane)
                 }
             }
+            .collapsible(false)
 
             Section("About") {
                 ForEach(SettingsPane.aboutSection) { pane in
@@ -95,9 +115,12 @@ struct SettingsView: View {
                         .tag(pane)
                 }
             }
+            .collapsible(false)
         }
         .listStyle(.sidebar)
-        .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
+        .scrollDisabled(true)
+        .removeSidebarToggle()
+        .navigationSplitViewColumnWidth(min: 220, ideal: 220, max: 220)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 

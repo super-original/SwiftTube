@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 private struct SettingsWindowCommands: Commands {
@@ -20,6 +21,10 @@ struct SwiftTubeApp: App {
     @StateObject private var authSession = AuthSessionModel()
     @ObservedObject private var settings = AppSettings.shared
 
+    init() {
+        NSSplitViewItem.swizzleSwiftTubeSettingsCanCollapse()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -39,12 +44,13 @@ struct SwiftTubeApp: App {
             SettingsWindowCommands()
         }
 
-        WindowGroup(id: "settings") {
+        Window("SwiftTube", id: "settings") {
             SettingsView()
                 .preferredColorScheme(settings.preferredColorScheme)
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
+        .windowResizability(.contentSize)
         .defaultSize(width: 980, height: 650)
     }
 }

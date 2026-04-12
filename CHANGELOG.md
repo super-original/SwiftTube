@@ -8,6 +8,13 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.13.21
+
+- Fixed the remaining post-`0.13.16` live startup regressions by keeping `WEB_PARENT_TOOLS` HLS as the first live playback candidate, only falling back to watch-page live manifests when the proven path is missing, and making live startup order explicitly prefer the reliable HLS source YouTube still serves today.
+- Stopped false `This video can’t be played` banners from watch-page and mobile player responses like `The page needs to be reloaded.` whenever another player source already returned real playable streams.
+- Tightened live DVR fidelity by sizing the hidden storyboard buffer from the actual live sprite-sheet shape, exposing the reverse live offset beside the scrubber, and keeping hover previews aligned with the real live archive window.
+- Rebuilt the settings window into a bounded native settings shell with a fixed-width non-collapsible sidebar, app-name header, removed sidebar toggle, and zoom/max-size behavior instead of broken fullscreen expansion.
+
 ## 0.13.20
 
 - Fixed active livestream startup by preferring YouTube's HLS live manifest over the paired DASH manifest, which the FFmpeg/mpv stack can fail to open before playback becomes ready.
