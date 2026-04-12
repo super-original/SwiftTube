@@ -51,6 +51,6 @@ struct SwiftTubeApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
         .windowResizability(.contentSize)
-        .defaultSize(width: 980, height: 650)
+        .defaultSize(width: SettingsWindowSupport.fixedSize.width, height: SettingsWindowSupport.fixedSize.height)
     }
 }

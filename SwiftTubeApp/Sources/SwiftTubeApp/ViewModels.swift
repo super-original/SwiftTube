@@ -254,6 +254,7 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var suggestions: [String] = []
     @Published private(set) var linkPreview: LinkPreview? = nil
     @Published private(set) var isLoadingSuggestions = false
+    @Published private(set) var hasSuspendedResults = false
 
     private var continuation: String? = nil
     @Published private(set) var lastQuery: String = ""
@@ -311,6 +312,7 @@ final class SearchViewModel: ObservableObject {
         suggestions = []
         linkPreview = nil
         isLoadingSuggestions = false
+        hasSuspendedResults = false
     }
 
     func clearToolbarInput() {
@@ -407,6 +409,20 @@ final class SearchViewModel: ObservableObject {
     func dismissResults() {
         dismissAssist()
         isActive = false
+        hasSuspendedResults = false
+    }
+
+    func suspendResultsForNavigation() {
+        guard isActive, !results.isEmpty else { return }
+        dismissAssist()
+        isActive = false
+        hasSuspendedResults = true
+    }
+
+    func resumeSuspendedResultsIfNeeded() {
+        guard hasSuspendedResults, !results.isEmpty else { return }
+        isActive = true
+        hasSuspendedResults = false
     }
 
     func loadMoreIfNeeded(currentVideo: VideoItem) {

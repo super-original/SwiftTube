@@ -14,7 +14,9 @@ private struct ActiveWatchSyncSession: Sendable {
     let videoID: String
     let cpn: String
     let tracking: WatchTrackingSnapshot
-    var lastWatchtimeSecond: Double
+    var lastObservedSecond: Double?
+    var pendingSegmentStartSecond: Double?
+    var pendingSegmentEndSecond: Double?
     var sentInitialPlayback = false
 }
 
@@ -41,29 +43,32 @@ actor SwiftTubeBackend {
     }
 
     func authStatus() async throws -> AuthStatusResponse {
-        guard await authManager.currentMaterial() != nil else {
-            return .signedOut
+        if await authManager.currentMaterial() == nil {
+            if (try? await authManager.refreshLastUsedBrowserSession()) == nil {
+                return await authManager.signedOutStatus()
+            }
         }
 
         do {
             try await api.validateAuthentication()
+            let payload = try await api.browse(browseID: "FEwhat_to_watch", authenticated: true)
+            let avatarURL = extractSignedInAvatarURL(from: payload)
+            try? await authManager.updateAvatarURL(avatarURL)
             return await authManager.authStatus()
         } catch {
             _ = try? await authManager.clear()
-            return AuthStatusResponse(
-                authenticated: false,
-                browser: nil,
-                browserLabel: nil,
-                message: error.localizedDescription
-            )
+            return await authManager.signedOutStatus(message: error.localizedDescription)
         }
     }
 
     func connectBrowserAuth(browser: String) async throws -> AuthStatusResponse {
-        let status = try await authManager.connect(browser: browser)
+        _ = try await authManager.connect(browser: browser)
         do {
             try await api.validateAuthentication()
-            return status
+            let payload = try await api.browse(browseID: "FEwhat_to_watch", authenticated: true)
+            let avatarURL = extractSignedInAvatarURL(from: payload)
+            try? await authManager.updateAvatarURL(avatarURL)
+            return await authManager.authStatus()
         } catch {
             _ = try? await authManager.clear()
             throw error
@@ -111,7 +116,9 @@ actor SwiftTubeBackend {
             }
 
             if !fallbackItems.isEmpty {
-                note = "History is off on YouTube. Showing Explore picks instead."
+                note = usingAuth
+                    ? "History is off on YouTube. Showing Explore picks instead."
+                    : "You’re logged out. Showing Explore picks instead."
                 items = fallbackItems
                 token = nil
             }
@@ -1244,7 +1251,9 @@ actor SwiftTubeBackend {
             videoID: videoID,
             cpn: randomPlaybackNonce(),
             tracking: tracking,
-            lastWatchtimeSecond: 0
+            lastObservedSecond: nil,
+            pendingSegmentStartSecond: nil,
+            pendingSegmentEndSecond: nil
         )
 
         let durationSeconds = duration ?? tracking.durationSeconds
@@ -1255,6 +1264,12 @@ actor SwiftTubeBackend {
             normalizedCurrentTime = max(currentTime, 0)
         }
         let conservativeCurrentTime = max(floor(normalizedCurrentTime), 0)
+        let watchtimeCurrentTime: Double
+        if let durationSeconds, durationSeconds > 1 {
+            watchtimeCurrentTime = min(conservativeCurrentTime, max(floor(durationSeconds - 1), 0))
+        } else {
+            watchtimeCurrentTime = conservativeCurrentTime
+        }
 
         if !session.sentInitialPlayback, conservativeCurrentTime >= 1 {
             if let playbackURL = trackedURL(
@@ -1269,26 +1284,80 @@ actor SwiftTubeBackend {
             }
         }
 
-        let shouldFlush = didFinish
-            || conservativeCurrentTime - session.lastWatchtimeSecond >= 10
-            || (session.lastWatchtimeSecond == 0 && conservativeCurrentTime >= 3)
-        if shouldFlush,
-           let watchtimeURL = trackedURL(
-                from: tracking.watchtimeURL,
-                cpn: session.cpn,
-                currentTime: conservativeCurrentTime,
-                startTime: session.lastWatchtimeSecond,
-                endTime: conservativeCurrentTime
-           ) {
-            try? await api.sendTrackingEvent(url: watchtimeURL, videoID: videoID, authenticated: true)
-            session.lastWatchtimeSecond = conservativeCurrentTime
+        let continuityThresholdSeconds = 4.5
+        let flushChunkThresholdSeconds = 10.0
+        let initialFlushThresholdSeconds = 3.0
+
+        if let lastObservedSecond = session.lastObservedSecond {
+            let delta = watchtimeCurrentTime - lastObservedSecond
+
+            if delta >= 0.75, delta <= continuityThresholdSeconds {
+                if session.pendingSegmentStartSecond == nil {
+                    session.pendingSegmentStartSecond = lastObservedSecond
+                }
+                session.pendingSegmentEndSecond = watchtimeCurrentTime
+            } else if delta > continuityThresholdSeconds || delta < -0.75 {
+                if let watchtimeURL = pendingWatchtimeURL(
+                    session: session,
+                    currentTime: lastObservedSecond,
+                    threshold: initialFlushThresholdSeconds
+                ) {
+                    try? await api.sendTrackingEvent(url: watchtimeURL, videoID: videoID, authenticated: true)
+                }
+                session.pendingSegmentStartSecond = watchtimeCurrentTime
+                session.pendingSegmentEndSecond = watchtimeCurrentTime
+            }
+        } else {
+            session.pendingSegmentStartSecond = watchtimeCurrentTime
+            session.pendingSegmentEndSecond = watchtimeCurrentTime
         }
 
-        if didFinish || isEffectivelyFinished(currentTime: conservativeCurrentTime, duration: durationSeconds) {
+        let pendingSegmentDuration = max(
+            (session.pendingSegmentEndSecond ?? watchtimeCurrentTime) - (session.pendingSegmentStartSecond ?? watchtimeCurrentTime),
+            0
+        )
+        let shouldFlushPendingSegment = didFinish
+            || isEffectivelyFinished(currentTime: watchtimeCurrentTime, duration: durationSeconds)
+            || pendingSegmentDuration >= flushChunkThresholdSeconds
+            || ((session.pendingSegmentStartSecond ?? watchtimeCurrentTime) <= 0 && pendingSegmentDuration >= initialFlushThresholdSeconds)
+
+        if shouldFlushPendingSegment,
+           let watchtimeURL = pendingWatchtimeURL(
+                session: session,
+                currentTime: didFinish
+                    ? (durationSeconds.map { max(floor($0 - 1), 0) } ?? watchtimeCurrentTime)
+                    : watchtimeCurrentTime,
+                threshold: 1.5
+           ) {
+            try? await api.sendTrackingEvent(url: watchtimeURL, videoID: videoID, authenticated: true)
+            session.pendingSegmentStartSecond = watchtimeCurrentTime
+            session.pendingSegmentEndSecond = watchtimeCurrentTime
+        }
+
+        session.lastObservedSecond = watchtimeCurrentTime
+
+        if didFinish || isEffectivelyFinished(currentTime: watchtimeCurrentTime, duration: durationSeconds) {
             activeWatchSyncSessions.removeValue(forKey: videoID)
         } else {
             activeWatchSyncSessions[videoID] = session
         }
+    }
+
+    private func pendingWatchtimeURL(
+        session: ActiveWatchSyncSession,
+        currentTime: Double,
+        threshold: Double
+    ) -> URL? {
+        guard let startTime = session.pendingSegmentStartSecond else { return nil }
+        let endTime = max(session.pendingSegmentEndSecond ?? currentTime, currentTime)
+        guard endTime - startTime >= threshold else { return nil }
+        return trackedURL(
+            from: session.tracking.watchtimeURL,
+            cpn: session.cpn,
+            currentTime: endTime,
+            startTime: startTime,
+            endTime: endTime
+        )
     }
 
     private func playlistBrowseID(for playlistID: String) -> String {
@@ -1459,17 +1528,53 @@ private func mergeStreams(_ groups: [StreamInfo]...) -> [StreamInfo] {
 }
 
 private func deduplicatedSubtitles(_ subtitles: [SubtitleTrack]) -> [SubtitleTrack] {
-    var seen = Set<String>()
-    var merged: [SubtitleTrack] = []
+    var mergedByKey: [String: SubtitleTrack] = [:]
+    var order: [String] = []
 
     for subtitle in subtitles {
-        let key = "\(subtitle.language)|\(subtitle.url)|\(subtitle.isAutoGenerated)"
-        if seen.insert(key).inserted {
-            merged.append(subtitle)
+        let key = normalizedSubtitleKey(for: subtitle)
+        if let existing = mergedByKey[key] {
+            if preferredSubtitleTrack(existing: existing, candidate: subtitle) == subtitle {
+                mergedByKey[key] = subtitle
+            }
+        } else {
+            mergedByKey[key] = subtitle
+            order.append(key)
         }
     }
 
-    return merged
+    return order.compactMap { mergedByKey[$0] }
+}
+
+private func normalizedSubtitleKey(for subtitle: SubtitleTrack) -> String {
+    let language = subtitle.language
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .replacingOccurrences(of: "_", with: "-")
+    let label = subtitle.label
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .replacingOccurrences(of: "(auto-generated)", with: "")
+        .replacingOccurrences(of: "(auto)", with: "")
+        .replacingOccurrences(of: "(orig)", with: "")
+        .replacingOccurrences(of: "(original)", with: "")
+        .replacingOccurrences(of: "  ", with: " ")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return "\(language)|\(label)"
+}
+
+private func preferredSubtitleTrack(existing: SubtitleTrack, candidate: SubtitleTrack) -> SubtitleTrack {
+    if existing.isAutoGenerated != candidate.isAutoGenerated {
+        return existing.isAutoGenerated ? candidate : existing
+    }
+
+    let existingLabelLength = existing.label.trimmingCharacters(in: .whitespacesAndNewlines).count
+    let candidateLabelLength = candidate.label.trimmingCharacters(in: .whitespacesAndNewlines).count
+    if candidateLabelLength != existingLabelLength {
+        return candidateLabelLength < existingLabelLength ? candidate : existing
+    }
+
+    return candidate.url < existing.url ? candidate : existing
 }
 
 private func buildPlaybackBundle(
@@ -4430,6 +4535,21 @@ private func trackedURL(
 
     components.queryItems = items
     return components.url
+}
+
+private func extractSignedInAvatarURL(from data: Any) -> String? {
+    var resolvedURL: String?
+
+    visitJSONObjects(in: data) { node in
+        if let renderer = node["topbarMenuButtonRenderer"] as? JSONDictionary,
+           let url = bestThumbnailURL(thumbnails(from: renderer["avatar"])) {
+            resolvedURL = url
+            return .stop
+        }
+        return .continue
+    }
+
+    return resolvedURL
 }
 
 private func randomPlaybackNonce() -> String {

@@ -138,6 +138,7 @@ private struct PlayerSurfaceBoundsKey: PreferenceKey {
 }
 
 private enum PlayerSidePanelTab: String, CaseIterable, Identifiable {
+    case playlist
     case suggestions
     case liveChat
 
@@ -145,6 +146,8 @@ private enum PlayerSidePanelTab: String, CaseIterable, Identifiable {
 
     func title(liveChatTitle: String) -> String {
         switch self {
+        case .playlist:
+            return "Playlist"
         case .suggestions:
             return "Suggestions"
         case .liveChat:
@@ -164,6 +167,7 @@ struct PlayerScreen: View {
     @State private var isSharePopoverPresented = false
     @State private var isPlaylistPopoverPresented = false
     @State private var isPlaylistRailExpanded = true
+    @State private var prefersRelativeUploadedTime = false
     @State private var selectedSidePanelTab: PlayerSidePanelTab = .suggestions
     @State private var playerStageHeight: CGFloat = 0
     @State private var headerSectionHeight: CGFloat = 0
@@ -193,27 +197,30 @@ struct PlayerScreen: View {
             GeometryReader { proxy in
                 if let rect = surfaceRect(anchor: anchor, proxy: proxy) {
                     let errorMessage = viewModel.errorMessage ?? playbackCoordinator.errorMessage
-                    PlayerStageSurface(
-                        coordinator: playbackCoordinator,
-                        isLoading: viewModel.isLoading,
-                        errorMessage: errorMessage,
-                        immersive: usesImmersiveLayout,
-                        retry: viewModel.load
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: usesImmersiveLayout ? 0 : 22))
-                    .shadow(color: usesImmersiveLayout ? .clear : .black.opacity(0.18), radius: 22, y: 10)
-                    .frame(width: rect.width, height: rect.height)
-                    .position(x: rect.midX, y: rect.midY)
+                    ZStack(alignment: .topLeading) {
+                        PlayerStageSurface(
+                            coordinator: playbackCoordinator,
+                            isLoading: viewModel.isLoading,
+                            errorMessage: errorMessage,
+                            immersive: usesImmersiveLayout,
+                            retry: viewModel.load
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: usesImmersiveLayout ? 0 : 22))
+                        .shadow(color: usesImmersiveLayout ? .clear : .black.opacity(0.18), radius: 22, y: 10)
+                        .frame(width: rect.width, height: rect.height)
+                        .position(x: rect.midX, y: rect.midY)
+
+                        if usesImmersiveLayout, layoutState.isSidePanelVisible {
+                            fullscreenSidePanel
+                                .frame(width: secondaryPanelWidth, height: rect.height)
+                                .position(
+                                    x: proxy.size.width - immersiveSidePanelTrailingPadding - (secondaryPanelWidth / 2),
+                                    y: rect.midY
+                                )
+                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                        }
+                    }
                 }
-            }
-        }
-        .overlay(alignment: .trailing) {
-            if layoutState.isFullscreen, layoutState.isSidePanelVisible {
-                fullscreenSidePanel
-                    .frame(width: secondaryPanelWidth)
-                    .padding(.vertical, 18)
-                    .padding(.trailing, 18)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .background(
@@ -288,6 +295,14 @@ private extension PlayerScreen {
         368
     }
 
+    var immersiveSidePanelGap: CGFloat {
+        14
+    }
+
+    var immersiveSidePanelTrailingPadding: CGFloat {
+        18
+    }
+
     var playback: VideoPlayback? {
         viewModel.playback
     }
@@ -314,6 +329,21 @@ private extension PlayerScreen {
 
     var activePlaylistFeed: PlaylistFeed? {
         navigation.activePlaylistFeed
+    }
+
+    var activePlaylistSummary: PlaylistSummary? {
+        guard let reference = navigation.activePlaylistReference else { return nil }
+        if let summary = libraryPlaylists.first(where: { $0.playlistId == reference.playlistId }) {
+            return summary
+        }
+        return PlaylistSummary(
+            playlistId: reference.playlistId,
+            title: reference.title,
+            privacy: nil,
+            itemCountText: nil,
+            updatedText: nil,
+            thumbnails: []
+        )
     }
 
     var hasActivePlaylistContext: Bool {
@@ -349,14 +379,34 @@ private extension PlayerScreen {
         return items
     }
 
+    var uploadedTimeOptions: (displayed: String, alternate: String?)? {
+        let exact = playback?.publishedDateText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let relative = (playback?.publishedTimeText ?? video.publishedTimeText)?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let resolvedExact = exact?.isEmpty == false ? exact : nil
+        let resolvedRelative = relative?.isEmpty == false ? relative : nil
+
+        if let resolvedExact, let resolvedRelative, resolvedExact != resolvedRelative {
+            if prefersRelativeUploadedTime {
+                return (resolvedRelative, resolvedExact)
+            }
+            return (resolvedExact, resolvedRelative)
+        }
+
+        if let resolvedExact {
+            return (resolvedExact, nil)
+        }
+        if let resolvedRelative {
+            return (resolvedRelative, nil)
+        }
+        return nil
+    }
+
     var statsOverviewItems: [(title: String, value: String)] {
         var items: [(String, String)] = []
 
         if let views = playback?.viewCountText ?? video.viewCountText, !views.isEmpty {
             items.append(("Views", views))
-        }
-        if let published = playback?.publishedDateText ?? playback?.publishedTimeText ?? video.publishedTimeText, !published.isEmpty {
-            items.append(("Uploaded", published))
         }
 
         return items
@@ -376,14 +426,23 @@ private extension PlayerScreen {
     }
 
     var effectiveSidePanelTab: PlayerSidePanelTab {
-        if selectedSidePanelTab == .liveChat, playback?.liveChat == nil {
-            return .suggestions
-        }
-        return selectedSidePanelTab
+        availableSidePanelTabs.contains(selectedSidePanelTab) ? selectedSidePanelTab : (availableSidePanelTabs.first ?? .suggestions)
     }
 
     var usesTabbedSidePanel: Bool {
-        playback?.liveChat != nil
+        availableSidePanelTabs.count > 1
+    }
+
+    var availableSidePanelTabs: [PlayerSidePanelTab] {
+        var tabs: [PlayerSidePanelTab] = []
+        if hasActivePlaylistContext {
+            tabs.append(.playlist)
+        }
+        tabs.append(.suggestions)
+        if playback?.liveChat != nil {
+            tabs.append(.liveChat)
+        }
+        return tabs
     }
 
     var liveChatTabTitle: String {
@@ -439,7 +498,7 @@ private extension PlayerScreen {
 
             VStack(alignment: .leading, spacing: 24) {
                 mainColumn
-                    .frame(maxWidth: standardPlayerColumnMaxWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 sidePanel
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -460,7 +519,9 @@ private extension PlayerScreen {
 
     func surfaceRect(anchor: Anchor<CGRect>?, proxy: GeometryProxy) -> CGRect? {
         if layoutState.isFullscreen {
-            let sideInset = layoutState.isSidePanelVisible ? secondaryPanelWidth + 32 : 0
+            let sideInset = layoutState.isSidePanelVisible
+                ? secondaryPanelWidth + immersiveSidePanelGap + immersiveSidePanelTrailingPadding
+                : 0
             return CGRect(
                 x: 0,
                 y: 0,
@@ -470,7 +531,10 @@ private extension PlayerScreen {
         }
         if layoutState.isTheaterMode, let anchor {
             let anchorRect = proxy[anchor]
-            let w = proxy.size.width
+            let sideInset = layoutState.isSidePanelVisible
+                ? secondaryPanelWidth + immersiveSidePanelGap + immersiveSidePanelTrailingPadding
+                : 0
+            let w = max(proxy.size.width - sideInset, 0)
             let h = min(w * 9.0 / 16.0, proxy.size.height)
             return CGRect(x: 0, y: anchorRect.minY, width: w, height: h)
         }
@@ -523,26 +587,42 @@ private extension PlayerScreen {
 
     var sidePanel: some View {
         Group {
-            if usesTabbedSidePanel {
+            if usesImmersiveLayout {
+                EmptyView()
+            } else if usesTabbedSidePanel {
                 WatchSecondaryPanel(
-                    isFullscreen: layoutState.isFullscreen,
+                    isImmersive: false,
+                    tabs: availableSidePanelTabs,
                     selectedTab: Binding(
                         get: { effectiveSidePanelTab },
                         set: { selectedSidePanelTab = $0 }
                     ),
-                    liveChatContent: AnyView(liveChatPanelContent),
+                    playlistContent: hasActivePlaylistContext && activePlaylistFeed != nil ? AnyView(playlistPanelContent) : nil,
+                    liveChatContent: playback?.liveChat != nil ? AnyView(liveChatPanelContent) : nil,
                     suggestionsContent: AnyView(suggestionsPanelContent),
                     liveChatTitle: liveChatTabTitle,
-                    standardLiveChatHeight: standardLiveChatHeight
+                    standardPanelHeight: standardLiveChatHeight
                 )
             } else {
-                suggestionsPanelContent
+                standaloneSuggestionsPanel
             }
         }
     }
 
     var fullscreenSidePanel: some View {
-        sidePanel
+        WatchSecondaryPanel(
+            isImmersive: true,
+            tabs: availableSidePanelTabs,
+            selectedTab: Binding(
+                get: { effectiveSidePanelTab },
+                set: { selectedSidePanelTab = $0 }
+            ),
+            playlistContent: hasActivePlaylistContext && activePlaylistFeed != nil ? AnyView(playlistPanelContent) : nil,
+            liveChatContent: playback?.liveChat != nil ? AnyView(liveChatPanelContent) : nil,
+            suggestionsContent: AnyView(suggestionsPanelContent),
+            liveChatTitle: liveChatTabTitle,
+            standardPanelHeight: standardLiveChatHeight
+        )
             .background(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .fill(Color.black.opacity(0.86))
@@ -784,6 +864,17 @@ private extension PlayerScreen {
                 ForEach(Array(statsOverviewItems.enumerated()), id: \.offset) { _, item in
                     CompactVideoStatPill(title: item.title, value: item.value)
                 }
+
+                if let uploadedTimeOptions {
+                    CompactVideoStatPill(
+                        title: "Uploaded",
+                        value: uploadedTimeOptions.displayed,
+                        alternateValue: uploadedTimeOptions.alternate
+                    ) {
+                        guard uploadedTimeOptions.alternate != nil else { return }
+                        prefersRelativeUploadedTime.toggle()
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -808,7 +899,8 @@ private extension PlayerScreen {
     }
 
     var playlistPopoverSize: CGSize {
-        CGSize(width: 280, height: min(max(CGFloat(max(viewModel.playlistOptions.count, 1)) * 42 + 24, 96), 320))
+        let rowCount = CGFloat(max(viewModel.playlistOptions.count, 1))
+        return CGSize(width: 280, height: min(max((rowCount * 48) + 16, 84), 300))
     }
 
     var playlistPopoverContent: some View {
@@ -845,12 +937,14 @@ private extension PlayerScreen {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.white.opacity(0.06))
             )
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     func playerPopoverPlaylistRow(option: PlaylistOption) -> some View {
@@ -878,12 +972,14 @@ private extension PlayerScreen {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(option.saved ? Color.blue.opacity(0.14) : Color.white.opacity(0.06))
             )
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     var shareURL: URL {
@@ -990,6 +1086,10 @@ private extension PlayerScreen {
     func expandedPlaylistQueue(feed: PlaylistFeed) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
+                if let playlist = activePlaylistSummary {
+                    PlaylistSidebarArtwork(playlist: playlist)
+                }
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text(feed.title)
                         .font(.title3.weight(.bold))
@@ -1199,11 +1299,17 @@ private extension PlayerScreen {
 
     func monitorPlaybackProgress() async {
         guard viewModel.playback != nil else { return }
+        var lastReportedSecond = -1.0
 
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard !Task.isCancelled else { return }
             guard viewModel.playback != nil else { continue }
+            guard playbackCoordinator.isPlaying, !playbackCoordinator.isScrubbing else { continue }
+
+            let currentSecond = floor(playbackCoordinator.currentTime)
+            guard currentSecond > lastReportedSecond else { continue }
+            lastReportedSecond = currentSecond
 
             viewModel.reportPlaybackProgress(
                 currentTime: playbackCoordinator.currentTime,
@@ -1501,6 +1607,9 @@ private extension PlayerScreen {
     }
 
     func defaultSidePanelTab(for playback: VideoPlayback) -> PlayerSidePanelTab {
+        if hasActivePlaylistContext {
+            return .playlist
+        }
         if playback.liveChat != nil {
             return .liveChat
         }
@@ -1508,11 +1617,33 @@ private extension PlayerScreen {
     }
 
     var suggestionsPanelContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if hasActivePlaylistContext, let activePlaylistFeed {
-                playlistQueueColumn(feed: activePlaylistFeed)
-            }
+        ScrollView {
+            suggestionsPanelBody
+                .padding(.trailing, 6)
+                .padding(.bottom, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
 
+    var standaloneSuggestionsPanel: some View {
+        suggestionsPanelContent
+            .frame(height: standardLiveChatHeight)
+    }
+
+    var playlistPanelContent: some View {
+        Group {
+            if let activePlaylistFeed {
+                playlistQueueColumn(feed: activePlaylistFeed)
+            } else {
+                Text("Playlist queue isn’t available right now.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+
+    var suggestionsPanelBody: some View {
+        Group {
             if recommendations.isEmpty {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(0..<4, id: \.self) { _ in
@@ -1730,78 +1861,74 @@ private final class LiveChatUsernameColorStore: ObservableObject {
 
 private struct WatchSecondaryPanel: View {
     @ObservedObject private var settings = AppSettings.shared
-    let isFullscreen: Bool
+    let isImmersive: Bool
+    let tabs: [PlayerSidePanelTab]
     @Binding var selectedTab: PlayerSidePanelTab
-    let liveChatContent: AnyView
+    let playlistContent: AnyView?
+    let liveChatContent: AnyView?
     let suggestionsContent: AnyView
     let liveChatTitle: String
-    let standardLiveChatHeight: CGFloat
-    @State private var tabBarHeight: CGFloat = 0
+    let standardPanelHeight: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 0) {
-                secondaryPanelTab(.suggestions, enabled: true)
-                secondaryPanelTab(.liveChat, enabled: true)
-            }
-            .padding(4)
-            .background(
-                GeometryReader { proxy in
+            if tabs.count > 1 {
+                HStack(spacing: 0) {
+                    ForEach(tabs) { tab in
+                        secondaryPanelTab(tab, enabled: true)
+                    }
+                }
+                .padding(4)
+                .background(
                     Capsule(style: .continuous)
                         .fill(settings.sidebarBackgroundColor.opacity(0.88))
-                        .onAppear { tabBarHeight = proxy.size.height }
-                        .onChange(of: proxy.size.height) { _, height in
-                            tabBarHeight = height
-                        }
-                }
-            )
+                )
+            }
 
             panelContent
         }
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: isImmersive ? .infinity : standardPanelHeight, alignment: .top)
     }
 
     @ViewBuilder
     private var panelContent: some View {
-        if isFullscreen {
-            switch selectedTab {
-            case .suggestions:
-                ScrollView {
-                    suggestionsContent
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(.bottom, 12)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            case .liveChat:
-                liveChatCard
+        switch selectedTab {
+        case .playlist:
+            if let playlistContent {
+                playlistContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-        } else {
-            switch selectedTab {
-            case .suggestions:
-                suggestionsContent
-            case .liveChat:
-                VStack(alignment: .leading, spacing: 16) {
-                    liveChatCard
-                        .frame(height: max(standardLiveChatHeight - tabBarHeight - 14, 320))
-                    suggestionsContent
-                }
+        case .suggestions:
+            suggestionsContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .liveChat:
+            if liveChatContent != nil {
+                liveChatCard
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
     }
 
     private var liveChatCard: some View {
-        liveChatContent
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(settings.cardBackgroundColor.opacity(0.9))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
-            )
+        Group {
+            if let liveChatContent {
+                liveChatContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                Text("Live chat isn’t available right now.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(settings.cardBackgroundColor.opacity(0.9))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
     }
 
     private func secondaryPanelTab(_ tab: PlayerSidePanelTab, enabled: Bool) -> some View {
@@ -1823,12 +1950,14 @@ private struct WatchSecondaryPanel: View {
             .foregroundStyle(selectedTab == tab ? Color.black : (enabled ? Color.primary : Color.secondary.opacity(0.7)))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
+            .contentShape(Rectangle())
             .background(
                 Capsule(style: .continuous)
                     .fill(selectedTab == tab ? Color.white : Color.clear)
             )
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
         .disabled(!enabled)
     }
 }
@@ -2139,7 +2268,7 @@ private struct PlayerStageSurface: View {
                     .fill(Color.black.opacity(0.94))
 
                 if let engine = coordinator.mpvEngine {
-                    MPVMetalRenderView(engine: engine, onLayoutChange: {})
+                    MPVMetalRenderView(engine: engine, onLayoutChange: coordinator.handlePlayerSurfaceLayoutChange)
                 }
 
                 // During scrubbing, cover the video with a storyboard tile scaled to
@@ -2565,6 +2694,21 @@ private struct PlayerChromeOverlay: View {
                     }
 
                     Spacer()
+
+                    if edgeToEdge {
+                        Button {
+                            coordinator.toggleSidePanel()
+                        } label: {
+                            Image(systemName: coordinator.sidebarPanelSymbolName)
+                                .font(.system(size: 14, weight: .semibold))
+                                .frame(width: 30, height: 30)
+                        }
+                        .buttonStyle(.glass(.regular.interactive()))
+                        .buttonBorderShape(.circle)
+                        .controlSize(.regular)
+                        .accessibilityLabel("Sidebar Panel")
+                        .accessibilityValue(coordinator.isSidePanelVisible ? "Visible" : "Hidden")
+                    }
                 }
                 .padding(.horizontal, (edgeToEdge ? 20 : 18) + sidePad)
                 .padding(.top, edgeToEdge ? 20 : 18)
@@ -2618,7 +2762,7 @@ private struct PlayerTopStatusOverlay: View {
             if coordinator.isSpacebarHoldSpeedActive {
                 PlayerStatusPill(
                     text: coordinator.spacebarHoldSpeedIndicatorText,
-                    systemImage: "hare.fill"
+                    systemImage: "forward.fill"
                 )
             }
         }
@@ -2664,7 +2808,6 @@ private struct PlayerControlBar: View {
                 subtitlesButton
                 qualityMenu
                 settingsMenu
-                sidebarToggle
                 theaterToggle
                 fullscreenButton
             }
@@ -3031,6 +3174,7 @@ private struct PlayerControlBar: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(
@@ -3041,6 +3185,7 @@ private struct PlayerControlBar: View {
             )
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     var playbackSpeedPopoverContent: some View {
@@ -3072,6 +3217,7 @@ private struct PlayerControlBar: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(
@@ -3082,6 +3228,7 @@ private struct PlayerControlBar: View {
             )
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     var qualityMenu: some View {
@@ -3165,6 +3312,7 @@ private struct PlayerControlBar: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
                 .background(
                     RoundedRectangle(cornerRadius: 12)
                         .fill(
@@ -3175,6 +3323,7 @@ private struct PlayerControlBar: View {
                 )
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     var theaterToggle: some View {
@@ -3188,19 +3337,6 @@ private struct PlayerControlBar: View {
         .controlSize(.regular)
         .accessibilityLabel("Theater Mode")
         .accessibilityValue(coordinator.isTheaterMode ? "On" : "Off")
-    }
-
-    var sidebarToggle: some View {
-        Button {
-            coordinator.toggleSidePanel()
-        } label: {
-            circularButtonLabel(symbol: coordinator.sidebarPanelSymbolName, fontSize: 14)
-        }
-        .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.circle)
-        .controlSize(.regular)
-        .accessibilityLabel("Sidebar Panel")
-        .accessibilityValue(coordinator.isSidePanelVisible ? "Visible" : "Hidden")
     }
 
     var fullscreenButton: some View {
@@ -3277,12 +3413,14 @@ private struct PlayerControlBar: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(disabled ? Color.clear : Color.primary.opacity(0.04))
             )
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .disabled(disabled)
     }
 
@@ -3332,10 +3470,10 @@ private struct PlayerControlBar: View {
     }
 
     private func listPopoverHeight(itemCount: Int) -> CGFloat {
-        let headerHeight: CGFloat = 44
-        let rowHeight: CGFloat = 38
-        let verticalPadding: CGFloat = 6
-        return min(max(headerHeight + (CGFloat(itemCount) * rowHeight) + verticalPadding, 112), 420)
+        let headerHeight: CGFloat = 42
+        let rowHeight: CGFloat = 34
+        let verticalPadding: CGFloat = 12
+        return min(max(headerHeight + (CGFloat(itemCount) * rowHeight) + verticalPadding, 108), 360)
     }
 }
 
@@ -3405,8 +3543,24 @@ private struct DetailCard<Content: View>: View {
 private struct CompactVideoStatPill: View {
     let title: String
     let value: String
+    var alternateValue: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
+        Group {
+            if let action {
+                Button(action: action) {
+                    label
+                }
+                .buttonStyle(.plain)
+            } else {
+                label
+            }
+        }
+        .accessibilityHint(alternateValue == nil ? "" : "Toggle uploaded date format")
+    }
+
+    private var label: some View {
         HStack(spacing: 8) {
             Text(title.uppercased())
                 .font(.caption2.weight(.bold))
@@ -3419,6 +3573,7 @@ private struct CompactVideoStatPill: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
+        .contentShape(Capsule())
         .background(
             Capsule()
                 .fill(Color.white.opacity(0.06))
@@ -3426,6 +3581,45 @@ private struct CompactVideoStatPill: View {
         .overlay(
             Capsule()
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+    }
+}
+
+private struct PlaylistSidebarArtwork: View {
+    let playlist: PlaylistSummary
+
+    var body: some View {
+        ZStack {
+            if playlist.referenceKind == .userPlaylist {
+                CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: 320, contentMode: .fill) {
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(Color.gray.opacity(0.22))
+                        .overlay(
+                            Image(systemName: "music.note.list")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        )
+                }
+            } else {
+                LinearGradient(
+                    colors: playlist.referenceKind == .watchLater
+                        ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
+                        : [BrandAssets.youtubeLightRed, BrandAssets.youtubeDarkRed],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .overlay(
+                    Image(systemName: playlist.referenceKind == .watchLater ? "clock.fill" : "hand.thumbsup.fill")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(.white)
+                )
+            }
+        }
+        .frame(width: 64, height: 64)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
         )
     }
 }

@@ -80,6 +80,22 @@ enum AppRoute: Equatable {
         }
         return nil
     }
+
+    var isWatchRoute: Bool {
+        if case .video = self {
+            return true
+        }
+        return false
+    }
+
+    var supportsSearchResultResume: Bool {
+        switch self {
+        case .video, .channel:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 @MainActor

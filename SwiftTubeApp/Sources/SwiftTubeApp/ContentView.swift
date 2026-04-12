@@ -96,12 +96,12 @@ struct ContentView: View {
             ToolbarSpacer(.fixed)
 
             ToolbarItemGroup(placement: .navigation) {
-                Button(action: navigation.goBack) {
+                Button(action: handleBackNavigation) {
                     Label("Back", systemImage: "chevron.left")
                 }
                 .disabled(!navigation.canGoBack)
 
-                Button(action: navigation.goForward) {
+                Button(action: handleForwardNavigation) {
                     Label("Forward", systemImage: "chevron.right")
                 }
                 .disabled(!navigation.canGoForward)
@@ -258,7 +258,7 @@ private extension ContentView {
 
     @ViewBuilder
     var currentScreen: some View {
-        if searchViewModel.isActive {
+        if searchViewModel.isActive, !navigation.currentRoute.isWatchRoute {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     searchContentView
@@ -789,6 +789,18 @@ private extension ContentView {
         syncHistorySearchQuery()
     }
 
+    func handleBackNavigation() {
+        let shouldResumeSearchAfterBack = searchViewModel.hasSuspendedResults && navigation.currentRoute.supportsSearchResultResume
+        navigation.goBack()
+        if shouldResumeSearchAfterBack {
+            searchViewModel.resumeSuspendedResultsIfNeeded()
+        }
+    }
+
+    func handleForwardNavigation() {
+        navigation.goForward()
+    }
+
     func handleToolbarQueryChange() {
         searchViewModel.handleQueryChange(scope: toolbarSearchScope)
         syncHistorySearchQuery()
@@ -803,8 +815,7 @@ private extension ContentView {
 
     func openVideoFromSearch(_ video: VideoItem) {
         isSearchFieldFocused = false
-        searchViewModel.dismissAssist()
-        searchViewModel.dismissResults()
+        searchViewModel.suspendResultsForNavigation()
         navigation.showVideo(video)
     }
 
@@ -815,8 +826,7 @@ private extension ContentView {
 
     func openChannelFromSearch(_ video: VideoItem) {
         isSearchFieldFocused = false
-        searchViewModel.dismissAssist()
-        searchViewModel.dismissResults()
+        searchViewModel.suspendResultsForNavigation()
         openChannel(from: video)
     }
 
@@ -2214,6 +2224,10 @@ private struct PlaylistLibraryScreen: View {
         GridItem(.adaptive(minimum: 240), spacing: 20, alignment: .top)
     ]
 
+    private var displayedPlaylists: [PlaylistSummary] {
+        viewModel.playlists.filter { $0.referenceKind == .userPlaylist }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -2222,7 +2236,9 @@ private struct PlaylistLibraryScreen: View {
 
                 content
             }
-            .padding(24)
+            .padding(.vertical, 24)
+            .padding(.leading, 32)
+            .padding(.trailing, 24)
         }
         .task {
             viewModel.loadInitial()
@@ -2231,7 +2247,7 @@ private struct PlaylistLibraryScreen: View {
 
     @ViewBuilder
     private var content: some View {
-        if viewModel.playlists.isEmpty {
+        if displayedPlaylists.isEmpty {
             if viewModel.isLoading {
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
                     ForEach(0..<6, id: \.self) { _ in
@@ -2249,7 +2265,7 @@ private struct PlaylistLibraryScreen: View {
             } else {
                 EmptyStateView(
                     title: "No playlists yet",
-                    message: "Your YouTube playlist library is empty.",
+                    message: "Your user-created playlists library is empty.",
                     actionTitle: "Refresh"
                 ) {
                     viewModel.reload()
@@ -2257,7 +2273,7 @@ private struct PlaylistLibraryScreen: View {
             }
         } else {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                ForEach(viewModel.playlists) { playlist in
+                ForEach(displayedPlaylists) { playlist in
                     Button {
                         navigation.showPlaylist(
                             PlaylistReference(
@@ -2271,7 +2287,11 @@ private struct PlaylistLibraryScreen: View {
                     }
                     .buttonStyle(.plain)
                     .onAppear {
-                        viewModel.loadMoreIfNeeded(currentPlaylist: playlist)
+                        guard playlist.id == displayedPlaylists.last?.id,
+                              let lastLoadedPlaylist = viewModel.playlists.last else {
+                            return
+                        }
+                        viewModel.loadMoreIfNeeded(currentPlaylist: lastLoadedPlaylist)
                     }
                 }
             }
@@ -2328,53 +2348,20 @@ private struct PlaylistFeedScreen: View {
 
     @ViewBuilder
     private var summaryColumn: some View {
+        let summaryPlaylist = libraryPlaylists.first(where: { $0.playlistId == viewModel.playlist.playlistId })
+            ?? PlaylistSummary(
+                playlistId: viewModel.playlist.playlistId,
+                title: viewModel.feed?.title ?? viewModel.playlist.title,
+                privacy: viewModel.feed?.privacy,
+                itemCountText: viewModel.feed?.itemCountText,
+                updatedText: nil,
+                thumbnails: []
+            )
+
         VStack(alignment: .leading, spacing: 18) {
             ZStack(alignment: .bottomTrailing) {
-                if viewModel.playlist.kind == .userPlaylist {
-                    CachedAsyncImage(url: viewModel.items.first?.thumbnailURL, maxPixelSize: 720) {
-                        RoundedRectangle(cornerRadius: 28)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color(red: 0.24, green: 0.40, blue: 0.54),
-                                        Color(red: 0.06, green: 0.13, blue: 0.20)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .overlay(
-                                Image(systemName: "music.note.list")
-                                    .font(.system(size: 42, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.86))
-                            )
-                    }
+                PlaylistFeedArtwork(playlist: summaryPlaylist)
                     .frame(width: 312, height: 312)
-                    .clipShape(RoundedRectangle(cornerRadius: 28))
-                } else {
-                    RoundedRectangle(cornerRadius: 28)
-                        .fill(
-                            LinearGradient(
-                                colors: viewModel.playlist.kind == .watchLater
-                                    ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
-                                    : [BrandAssets.youtubeLightRed, BrandAssets.youtubeDarkRed],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .overlay {
-                            VStack(spacing: 14) {
-                                Image(systemName: viewModel.playlist.kind == .watchLater ? "clock.fill" : "hand.thumbsup.fill")
-                                    .font(.system(size: 50, weight: .bold))
-                                Text(viewModel.playlist.title)
-                                    .font(.system(size: 28, weight: .bold))
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal, 28)
-                            }
-                            .foregroundStyle(.white)
-                        }
-                        .frame(width: 312, height: 312)
-                }
 
                 if let count = viewModel.feed?.itemCountText {
                     Text(count)
@@ -2690,6 +2677,58 @@ private struct PlaylistCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct PlaylistFeedArtwork: View {
+    let playlist: PlaylistSummary
+
+    var body: some View {
+        Group {
+            if playlist.referenceKind == .userPlaylist {
+                CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: 720, contentMode: .fill) {
+                    RoundedRectangle(cornerRadius: 28)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.24, green: 0.40, blue: 0.54),
+                                    Color(red: 0.06, green: 0.13, blue: 0.20)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            Image(systemName: "music.note.list")
+                                .font(.system(size: 42, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.86))
+                        )
+                }
+            } else {
+                RoundedRectangle(cornerRadius: 28)
+                    .fill(
+                        LinearGradient(
+                            colors: playlist.referenceKind == .watchLater
+                                ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
+                                : [BrandAssets.youtubeLightRed, BrandAssets.youtubeDarkRed],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay {
+                        VStack(spacing: 14) {
+                            Image(systemName: playlist.referenceKind == .watchLater ? "clock.fill" : "hand.thumbsup.fill")
+                                .font(.system(size: 50, weight: .bold))
+                            Text(playlist.title)
+                                .font(.system(size: 28, weight: .bold))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 28)
+                        }
+                        .foregroundStyle(.white)
+                    }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 28))
     }
 }
 
@@ -3028,10 +3067,29 @@ private struct AuthToolbarLabel: View {
     let status: AuthStatusResponse
 
     var body: some View {
-        Label {
+        HStack(spacing: 8) {
+            if status.authenticated {
+                Group {
+                    if let avatarURL = status.avatarURL {
+                        CachedAsyncImage(url: avatarURL, maxPixelSize: 96) {
+                            Image(systemName: "person.crop.circle.badge.checkmark")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Image(systemName: "person.crop.circle.badge.checkmark")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 22, height: 22)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.1), lineWidth: 1))
+            } else {
+                Image(systemName: "person.crop.circle.badge.plus")
+            }
+
             Text(status.authenticated ? (status.browserLabel ?? "YouTube") : "Connect YouTube")
-        } icon: {
-            Image(systemName: status.authenticated ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.plus")
         }
         .font(.caption)
     }
@@ -3040,6 +3098,19 @@ private struct AuthToolbarLabel: View {
 private struct AuthConnectionSheet: View {
     @EnvironmentObject private var authSession: AuthSessionModel
     @Environment(\.dismiss) private var dismiss
+
+    private var orderedBrowsers: [BrowserLoginOption] {
+        guard let preferredRawValue = authSession.status.browser,
+              let preferred = BrowserLoginOption(rawValue: preferredRawValue) else {
+            return BrowserLoginOption.allCases
+        }
+
+        return BrowserLoginOption.allCases.sorted { lhs, rhs in
+            if lhs == preferred { return true }
+            if rhs == preferred { return false }
+            return lhs.id < rhs.id
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -3051,7 +3122,7 @@ private struct AuthConnectionSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(BrowserLoginOption.allCases) { browser in
+                ForEach(orderedBrowsers) { browser in
                     Button {
                         Task {
                             let connected = await authSession.connect(using: browser)
@@ -3244,7 +3315,9 @@ private struct ToolbarSearchField: NSViewRepresentable {
                     // Also check the field editor (which might be slightly different)
                     let locationInEditor = fieldEditor.convert(event.locationInWindow, from: nil)
                     if !fieldEditor.bounds.contains(locationInEditor) {
-                        self.window?.makeFirstResponder(nil)
+                        DispatchQueue.main.async { [weak self] in
+                            self?.window?.makeFirstResponder(nil)
+                        }
                     }
                 }
                 return event

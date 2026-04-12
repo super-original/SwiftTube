@@ -105,11 +105,7 @@ struct VideoContextMenuContent: View {
 
         if let onRemoveFromWatchHistory {
             Button(role: .destructive, action: onRemoveFromWatchHistory) {
-                HStack(spacing: 10) {
-                    Image(systemName: "trash")
-                    Text("Remove from Watch History")
-                }
-                .foregroundStyle(.red)
+                Label("Remove from Watch History", systemImage: "trash")
             }
         }
 

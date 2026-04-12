@@ -860,12 +860,19 @@ struct AuthStatusResponse: Codable, Equatable, Sendable {
     let browser: String?
     let browserLabel: String?
     let message: String?
+    let avatarUrl: String?
+
+    var avatarURL: URL? {
+        guard let avatarUrl else { return nil }
+        return URL(string: avatarUrl)
+    }
 
     static let signedOut = AuthStatusResponse(
         authenticated: false,
         browser: nil,
         browserLabel: nil,
-        message: nil
+        message: nil,
+        avatarUrl: nil
     )
 }
 

@@ -1142,7 +1142,7 @@ private struct ShortcutRow: View {
         case .seekShortBack, .seekMediumBack, .seekLongBack: return "gobackward"
         case .seekShortForward, .seekMediumForward, .seekLongForward: return "goforward"
         case .frameBack, .frameForward: return "film"
-        case .theaterMode: return "rectangle.expand.vertical"
+        case .theaterMode: return "tv"
         case .fullscreen: return "arrow.up.left.and.arrow.down.right"
         case .subtitles: return "captions.bubble"
         case .likeVideo: return "hand.thumbsup"

@@ -12,6 +12,7 @@ private enum AuthConstants {
 struct AuthSessionConfig: Codable, Sendable {
     let browser: String
     let browserLabel: String
+    var avatarURL: String?
 }
 
 struct AuthMaterial: Sendable {
@@ -48,14 +49,25 @@ actor YouTubeAuthManager {
 
     func authStatus(message: String? = nil) -> AuthStatusResponse {
         guard let material else {
-            return .signedOut
+            return signedOutStatus(message: message)
         }
 
         return AuthStatusResponse(
             authenticated: true,
             browser: material.browser,
             browserLabel: material.browserLabel,
-            message: message ?? "Personalized recommendations and authenticated playback are on."
+            message: message ?? "Personalized recommendations and authenticated playback are on.",
+            avatarUrl: config?.avatarURL
+        )
+    }
+
+    func signedOutStatus(message: String? = nil) -> AuthStatusResponse {
+        AuthStatusResponse(
+            authenticated: false,
+            browser: config?.browser,
+            browserLabel: config?.browserLabel,
+            message: message,
+            avatarUrl: nil
         )
     }
 
@@ -70,7 +82,7 @@ actor YouTubeAuthManager {
         }
 
         try await YTDLPTool.exportCookies(from: browserKey, to: cookieFileURL)
-        let config = AuthSessionConfig(browser: browserKey, browserLabel: browserLabel)
+        let config = AuthSessionConfig(browser: browserKey, browserLabel: browserLabel, avatarURL: self.config?.avatarURL)
         let material = try Self.loadMaterial(config: config, cookieFileURL: cookieFileURL)
 
         self.config = config
@@ -79,11 +91,36 @@ actor YouTubeAuthManager {
         return authStatus()
     }
 
-    func clear() throws -> AuthStatusResponse {
-        material = nil
-        config = nil
+    func refreshLastUsedBrowserSession() async throws -> AuthStatusResponse {
+        guard let config else {
+            return signedOutStatus()
+        }
 
-        if FileManager.default.fileExists(atPath: configURL.path) {
+        try await YTDLPTool.exportCookies(from: config.browser, to: cookieFileURL)
+        let material = try Self.loadMaterial(config: config, cookieFileURL: cookieFileURL)
+        self.material = material
+        return authStatus()
+    }
+
+    func updateAvatarURL(_ avatarURL: String?) throws {
+        guard var config else { return }
+        guard config.avatarURL != avatarURL else { return }
+        config.avatarURL = avatarURL
+        self.config = config
+        try Self.saveConfig(config, to: configURL)
+    }
+
+    func clear(preserveBrowserChoice: Bool = true) throws -> AuthStatusResponse {
+        material = nil
+
+        if preserveBrowserChoice {
+            try? updateAvatarURL(nil)
+        } else {
+            config = nil
+        }
+
+        if !preserveBrowserChoice,
+           FileManager.default.fileExists(atPath: configURL.path) {
             try FileManager.default.removeItem(at: configURL)
         }
 
@@ -91,7 +128,7 @@ actor YouTubeAuthManager {
             try FileManager.default.removeItem(at: cookieFileURL)
         }
 
-        return .signedOut
+        return signedOutStatus()
     }
 
     func authHeaders(origin: String, url: URL) throws -> [String: String] {

@@ -3,8 +3,9 @@ import SwiftUI
 
 enum SettingsWindowSupport {
     static let windowIdentifier = NSUserInterfaceItemIdentifier("SwiftTubeSettingsWindow")
-    static let minSize = CGSize(width: 920, height: 620)
-    static let maxSize = CGSize(width: 1360, height: 920)
+    static let fixedSize = CGSize(width: 980, height: 650)
+    static let minSize = fixedSize
+    static let maxSize = fixedSize
 
     @MainActor
     static func configure(_ window: NSWindow) {
@@ -24,8 +25,9 @@ enum SettingsWindowSupport {
         window.collectionBehavior = collectionBehavior
 
         if let zoomButton = window.standardWindowButton(.zoomButton) {
-            zoomButton.target = window
-            zoomButton.action = #selector(NSWindow.performZoom(_:))
+            zoomButton.target = nil
+            zoomButton.action = nil
+            zoomButton.isEnabled = false
         }
     }
 }

@@ -8,6 +8,18 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.14.0 — Fix the Fucking App
+
+Theme: performance, optimization, and quality-of-life fixes.
+
+- Reworked auth/session recovery so SwiftTube remembers the last browser login path, reuses that browser when the session expires, shows the real signed-in YouTube avatar in the toolbar, and uses a proper logged-out fallback message instead of blaming history settings.
+- Fixed search and watch-page navigation regressions by making suggestion clicks submit correctly, preserving search-results state across video opens so back navigation returns to the actual results page, and restoring next-up pagination/scrolling when the suggestions rail gets long.
+- Rebuilt the watch side rail so playlist queue, suggestions, and live chat share one tab system, moved the sidebar toggle into the immersive top-right overlay, made theater mode behave like fullscreen without leaving windowed mode, widened the player in the awkward stacked watch layout, and fixed the standard suggestions/sidebar clipping bug.
+- Tightened player UI polish by adding the uploaded-date format toggle, switching theater and hold-speed icons to the requested symbols, widening row hit targets across popovers and panel tabs, shrinking the extra blank menu space in affected popovers, and restoring proper destructive styling for `Remove from Watch History`.
+- Improved playback fidelity by deduplicating noisy subtitle tracks, suppressing unmapped-key macOS error beeps while the player is focused, and adding a paused-resize MPV refresh path so app-driven size changes stop leaving held frames stretched until playback resumes.
+- Made watch-time syncing more accurate by matching YouTube’s `videostatsWatchtimeUrl` segment behavior more closely: paused/scrubbing playback no longer emits periodic syncs, large seek jumps no longer get reported as watched time, and contiguous watch ranges are flushed in bounded segments instead of blindly trusting raw playhead position jumps.
+- Fixed the settings window into a truly fixed-size shell with the broken green zoom button disabled, hid `Liked Videos` and `Watch Later` from the playlists library page, aligned playlist-detail artwork with the playlist library art, and documented that the repository’s multi-gigabyte size is coming primarily from local SwiftPM build artifacts in `SwiftTubeApp/.build`.
+
 ## 0.13.21
 
 - Fixed the remaining post-`0.13.16` live startup regressions by keeping `WEB_PARENT_TOOLS` HLS as the first live playback candidate, only falling back to watch-page live manifests when the proven path is missing, and making live startup order explicitly prefer the reliable HLS source YouTube still serves today.
