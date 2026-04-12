@@ -8,6 +8,13 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.14.2
+
+- Corrected the `0.14.1` sidebar regression by restoring plain standard-watch suggestions, putting standard live chat back into its own capped contained panel, and keeping the immersive fullscreen or theater rail as the place that owns the heavy sidebar container treatment.
+- Fixed auth-expiry propagation so when authenticated YouTube requests fail, SwiftTube now invalidates the stale session, refreshes auth state through the last-used browser automatically, and updates the UI instead of silently acting signed in until you press the browser button again.
+- Reworked the playlist side rail again so the playlist tab no longer nests its own full-height scroll view, uses a lighter divider-based row style, and scrolls through the shared immersive container instead of fighting it.
+- Rebuilt the full playlist page rows toward the history-page model by removing the bulky per-row cards, dropping the fake `Now Playing` / `Video N` labels, centering the index handle better, and tightening the overall list density.
+
 ## 0.14.1
 
 - Moved the auth avatar control to the far-right toolbar slot, removed the browser-name text from both signed-in and signed-out states, and dropped the old backend-status green dot so the top-right chrome is just the actual account control again.

@@ -2,6 +2,7 @@ import Foundation
 
 extension Notification.Name {
     static let playbackProgressDidUpdate = Notification.Name("SwiftTubePlaybackProgressDidUpdate")
+    static let authSessionDidChange = Notification.Name("SwiftTubeAuthSessionDidChange")
 }
 
 private struct WatchTrackingSnapshot: Sendable {
@@ -88,7 +89,7 @@ actor SwiftTubeBackend {
             do {
                 data = try await loadRecommendations(continuation: continuation, authenticated: true)
             } catch {
-                _ = try? await authManager.clear()
+                await invalidateAuthenticatedSession()
                 note = "Your saved YouTube session expired. Showing public picks instead."
                 data = try await loadRecommendations(continuation: continuation, authenticated: false)
             }
@@ -136,7 +137,7 @@ actor SwiftTubeBackend {
             do {
                 data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: true)
             } catch {
-                _ = try? await authManager.clear()
+                await invalidateAuthenticatedSession()
                 data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: false)
             }
         } else {
@@ -335,7 +336,7 @@ actor SwiftTubeBackend {
             do {
                 return try await buildVideoPlayback(videoID: videoID, authenticated: true)
             } catch {
-                _ = try? await authManager.clear()
+                await invalidateAuthenticatedSession()
             }
         }
 
@@ -390,7 +391,7 @@ actor SwiftTubeBackend {
                 )
             } catch {
                 if usingAuth {
-                    _ = try? await authManager.clear()
+                    await invalidateAuthenticatedSession()
                 }
                 throw error
             }
@@ -401,7 +402,7 @@ actor SwiftTubeBackend {
             do {
                 return try await buildCommentsResponse(videoID: videoID, authenticated: true)
             } catch {
-                _ = try? await authManager.clear()
+                await invalidateAuthenticatedSession()
             }
         }
 
@@ -487,26 +488,36 @@ actor SwiftTubeBackend {
 
     func fetchPlaylistLibrary(continuation: String? = nil) async throws -> PlaylistLibraryResponse {
         _ = try await requireAuthenticatedMaterial()
-        let data = try await api.browse(
-            browseID: continuation == nil ? "FEplaylist_aggregation" : nil,
-            continuation: continuation,
-            authenticated: true
-        )
-        return PlaylistLibraryResponse(
-            items: extractPlaylistSummaries(from: data),
-            continuation: extractContinuationToken(from: data)
-        )
+        do {
+            let data = try await api.browse(
+                browseID: continuation == nil ? "FEplaylist_aggregation" : nil,
+                continuation: continuation,
+                authenticated: true
+            )
+            return PlaylistLibraryResponse(
+                items: extractPlaylistSummaries(from: data),
+                continuation: extractContinuationToken(from: data)
+            )
+        } catch {
+            await invalidateAuthenticatedSession()
+            throw BackendClientError(message: "Your YouTube session expired. SwiftTube is reconnecting using the last browser session if possible.")
+        }
     }
 
     func fetchPlaylistFeed(id playlistID: String, continuation: String? = nil) async throws -> PlaylistFeed {
         _ = try await requireAuthenticatedMaterial()
         let browseID = playlistID.hasPrefix("VL") ? playlistID : "VL\(playlistID)"
-        let data = try await api.browse(
-            browseID: continuation == nil ? browseID : nil,
-            continuation: continuation,
-            authenticated: true
-        )
-        return await mergeStoredProgress(into: extractPlaylistFeed(from: data, playlistID: playlistID.removingPrefix("VL")))
+        do {
+            let data = try await api.browse(
+                browseID: continuation == nil ? browseID : nil,
+                continuation: continuation,
+                authenticated: true
+            )
+            return await mergeStoredProgress(into: extractPlaylistFeed(from: data, playlistID: playlistID.removingPrefix("VL")))
+        } catch {
+            await invalidateAuthenticatedSession()
+            throw BackendClientError(message: "Your YouTube session expired. SwiftTube is reconnecting using the last browser session if possible.")
+        }
     }
 
     func fetchRelatedVideos(id videoID: String, continuation: String? = nil) async throws -> RecommendationsResponse {
@@ -515,7 +526,7 @@ actor SwiftTubeBackend {
             do {
                 return try await buildRelatedResponse(videoID: videoID, continuation: continuation, authenticated: true)
             } catch {
-                _ = try? await authManager.clear()
+                await invalidateAuthenticatedSession()
             }
         }
 
@@ -1102,6 +1113,13 @@ actor SwiftTubeBackend {
             throw BackendClientError(message: "Sign in to YouTube to use this action.")
         }
         return material
+    }
+
+    private func invalidateAuthenticatedSession() async {
+        _ = try? await authManager.clear()
+        await MainActor.run {
+            NotificationCenter.default.post(name: .authSessionDidChange, object: nil)
+        }
     }
 
     private func loadRecommendations(continuation: String?, authenticated: Bool) async throws -> JSONDictionary {

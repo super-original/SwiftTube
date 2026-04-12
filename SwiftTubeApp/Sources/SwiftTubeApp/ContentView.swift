@@ -2452,7 +2452,7 @@ private struct PlaylistFeedScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: 4) {
                     ForEach(Array(viewModel.items.enumerated()), id: \.element) { index, video in
                         PlaylistReorderDropZone {
                             viewModel.reorderItem(withID: $0, toInsertionIndex: index)
@@ -2462,7 +2462,11 @@ private struct PlaylistFeedScreen: View {
                             video: video,
                             isCurrent: isCurrent(video),
                             isMutating: viewModel.mutationIDs.contains(video.playlistSetVideoId ?? ""),
-                            onPlay: { playPlaylist(startingWith: video) }
+                            onPlay: { playPlaylist(startingWith: video) },
+                            onOpenChannel: {
+                                guard let channel = video.channelReference else { return }
+                                navigation.showChannel(channel)
+                            }
                         )
                         .contextMenu {
                             VideoContextMenuContent(
@@ -2489,7 +2493,6 @@ private struct PlaylistFeedScreen: View {
                         .onAppear {
                             viewModel.loadMoreIfNeeded(currentVideo: video)
                         }
-                        .padding(.bottom, 14)
                     }
 
                     PlaylistReorderDropZone {
@@ -2795,121 +2798,65 @@ private struct PlaylistPrimaryActionButtonStyle: ButtonStyle {
 
 private struct PlaylistVideoRow: View {
     let video: VideoItem
-    let isCurrent: Bool
     let isMutating: Bool
-    var showLeadingAccessory: Bool = true
-    var showsBackground: Bool = true
+    let onOpenChannel: (() -> Void)?
 
-    private var metadataLine: String {
-        [video.channel, video.viewCountText, video.publishedTimeText]
-            .compactMap { $0 }
-            .joined(separator: " • ")
+    private var metadataChips: [String] {
+        [video.viewCountText, video.publishedTimeText]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            if showLeadingAccessory {
-                Group {
-                    if video.playlistCanMoveToTop || video.playlistCanMoveToBottom {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    } else if let indexText = video.playlistIndexText {
-                        Text(indexText)
-                            .font(.headline.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Image(systemName: "play.fill")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(width: 22, height: 130.5, alignment: .center)
-            }
-
-            ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 640) {
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(Color.gray.opacity(0.18))
-                        .overlay(
-                            Image(systemName: "play.rectangle.fill")
-                                .font(.system(size: 24))
-                                .foregroundStyle(.secondary)
-                        )
-                }
-                .frame(width: 232, height: 130.5)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
-                .overlay(alignment: .bottom) {
-                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 18, isEnabled: !video.isLive)
-                }
-
-                if let duration = video.durationText {
-                    Text(duration)
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(Color.black.opacity(0.74)))
-                        .foregroundStyle(.white)
-                        .padding(10)
-                }
-            }
+        HStack(alignment: .center, spacing: 16) {
+            HistoryVideoThumbnail(video: video)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(video.title)
                     .font(.title3.weight(.semibold))
                     .lineLimit(2)
+                    .multilineTextAlignment(.leading)
 
-                if !video.tags.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(video.tags) { tag in
-                                VideoTagBadgeView(tag: tag, font: .caption)
-                            }
-                        }
-                    }
+                VideoChannelIdentityLine(
+                    avatarURL: video.channelAvatarURL,
+                    channelID: video.channelId,
+                    channel: video.channel,
+                    avatarSize: 20,
+                    font: .system(size: 14, weight: .medium),
+                    onOpenChannel: onOpenChannel
+                )
+
+                if !video.tags.isEmpty || metadataChips.isEmpty == false {
+                    VideoMetadataChipRow(tags: video.tags, items: metadataChips)
                 }
 
-                if !metadataLine.isEmpty {
-                    Text(metadataLine)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack(spacing: 8) {
-                    if isCurrent {
-                        Label("Now Playing", systemImage: "play.fill")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.blue)
-                    } else if let indexText = video.playlistIndexText {
-                        Text("Video \(indexText)")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if isMutating {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
+                if isMutating {
+                    ProgressView()
+                        .controlSize(.small)
                 }
             }
+            .padding(.vertical, 3)
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(16)
-        .background(backgroundShape.fill(showsBackground ? (isCurrent ? Color.blue.opacity(0.12) : Color(NSColor.controlBackgroundColor)) : .clear))
-        .overlay(backgroundShape.stroke(showsBackground ? (isCurrent ? Color.blue.opacity(0.36) : Color.white.opacity(0.06)) : .clear, lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: 22))
-    }
 
-    private var backgroundShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 22)
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 private struct PlaylistFeedDraggableRow: View {
+    @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
     let isCurrent: Bool
     let isMutating: Bool
     let onPlay: () -> Void
+    let onOpenChannel: (() -> Void)?
 
     @State private var isHovered = false
 
@@ -2924,31 +2871,38 @@ private struct PlaylistFeedDraggableRow: View {
                 canReorder: canReorder,
                 fallbackText: video.playlistIndexText,
                 isCurrent: isCurrent,
-                fullHeight: 130.5
+                fullHeight: 128
             )
             .draggable(video.id)
 
-            Button(action: onPlay) {
-                PlaylistVideoRow(
-                    video: video,
-                    isCurrent: isCurrent,
-                    isMutating: isMutating,
-                    showLeadingAccessory: false,
-                    showsBackground: false
-                )
-            }
-            .buttonStyle(.plain)
+            PlaylistVideoRow(
+                video: video,
+                isMutating: isMutating,
+                onOpenChannel: onOpenChannel
+            )
         }
-        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: 22)
-                .fill(isCurrent ? Color.blue.opacity(0.12) : Color(NSColor.controlBackgroundColor))
+                .fill(
+                    isCurrent
+                        ? Color.accentColor.opacity(0.14)
+                        : (isHovered ? settings.hoverCardBackgroundColor : .clear)
+                )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 22)
-                .stroke(isCurrent ? Color.blue.opacity(0.36) : Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(
+                    isCurrent
+                        ? Color.accentColor.opacity(0.26)
+                        : Color.white.opacity(isHovered ? 0.08 : 0),
+                    lineWidth: 1
+                )
         )
         .contentShape(RoundedRectangle(cornerRadius: 22))
+        .onTapGesture(perform: onPlay)
         .onHover { hovering in
             isHovered = hovering
         }
@@ -2980,7 +2934,7 @@ private struct PlaylistRowHandle: View {
             }
         }
         .foregroundStyle(isCurrent ? .blue : .secondary)
-        .frame(width: 22, height: fullHeight, alignment: .center)
+        .frame(width: 30, height: fullHeight, alignment: .center)
         .contentShape(Rectangle())
     }
 }

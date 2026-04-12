@@ -444,6 +444,20 @@ private extension PlayerScreen {
         playback?.liveChat?.tabTitle ?? "Live Chat"
     }
 
+    var standardLiveChatHeight: CGFloat {
+        let measuredPrimaryHeight = playerStageHeight > 0 && headerSectionHeight > 0
+            ? playerStageHeight + 24 + headerSectionHeight
+            : 0
+        if measuredPrimaryHeight > 0 {
+            return max(measuredPrimaryHeight - 14, 500)
+        }
+
+        let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
+        let windowHeight = NSApp.keyWindow?.contentLayoutRect.height ?? screenHeight
+        let availableHeight = min(screenHeight, windowHeight)
+        return min(max(availableHeight - 164, 600), 940)
+    }
+
     var scrollContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             if usesImmersiveLayout {
@@ -559,7 +573,8 @@ private extension PlayerScreen {
                     playlistContent: hasActivePlaylistContext && activePlaylistFeed != nil ? AnyView(playlistPanelContent) : nil,
                     liveChatContent: playback?.liveChat != nil ? AnyView(liveChatPanelContent) : nil,
                     suggestionsContent: AnyView(suggestionsPanelContent),
-                    liveChatTitle: liveChatTabTitle
+                    liveChatTitle: liveChatTabTitle,
+                    standardLiveChatHeight: standardLiveChatHeight
                 )
             }
         }
@@ -576,7 +591,8 @@ private extension PlayerScreen {
             playlistContent: hasActivePlaylistContext && activePlaylistFeed != nil ? AnyView(playlistPanelContent) : nil,
             liveChatContent: playback?.liveChat != nil ? AnyView(liveChatPanelContent) : nil,
             suggestionsContent: AnyView(suggestionsPanelContent),
-            liveChatTitle: liveChatTabTitle
+            liveChatTitle: liveChatTabTitle,
+            standardLiveChatHeight: standardLiveChatHeight
         )
             .background(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -1076,61 +1092,59 @@ private extension PlayerScreen {
             Divider()
                 .overlay(Color.white.opacity(0.06))
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(navigation.activePlaylistItems.enumerated()), id: \.element) { index, queueVideo in
-                        PlaylistQueueDropZone {
-                            moveQueueVideo(withID: $0, toInsertionIndex: index)
-                        }
-
-                        Button {
-                            navigation.showVideo(queueVideo)
-                        } label: {
-                            PlaylistQueueRailRow(
-                                video: queueVideo,
-                                index: index + 1,
-                                isCurrent: navigation.activePlaylistCurrentVideoID == queueVideo.id,
-                                canReorder: canReorderQueueVideo(queueVideo)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .draggable(queueVideo.id)
-                        .contextMenu {
-                            VideoContextMenuContent(
-                                video: queueVideo,
-                                userPlaylists: movablePlaylistsForQueue(),
-                                onPlay: { navigation.showVideo(queueVideo) },
-                                onPlayFromHere: { navigation.showVideo(queueVideo) },
-                                onAddToWatchLater: navigation.activePlaylistReference?.kind == .watchLater ? nil : queueAddToWatchLater(videoID: queueVideo.id),
-                                onSaveToPlaylist: { playlistID in
-                                    queueSaveToPlaylist(videoID: queueVideo.id, playlistID: playlistID)
-                                },
-                                onMoveToPlaylist: queueVideo.playlistCanRemove ? { playlistID in
-                                    moveQueueVideo(queueVideo, to: playlistID)
-                                } : nil,
-                                onMoveToWatchLater: navigation.activePlaylistReference?.kind == .watchLater || !queueVideo.playlistCanRemove ? nil : {
-                                    moveQueueVideoToWatchLater(queueVideo)
-                                },
-                                onRemoveFromCurrentPlaylist: queueVideo.playlistCanRemove ? { removeQueueVideo(queueVideo) } : nil,
-                                onMoveToTop: queueVideo.playlistCanMoveToTop ? { moveQueueVideo(queueVideo, position: "top") } : nil,
-                                onMoveToBottom: queueVideo.playlistCanMoveToBottom ? { moveQueueVideo(queueVideo, position: "bottom") } : nil,
-                                onRemoveFromWatchHistory: nil
-                            )
-                        }
-                        if index < navigation.activePlaylistItems.count - 1 {
-                            Divider()
-                                .overlay(Color.white.opacity(0.05))
-                                .padding(.leading, 38)
-                                .padding(.vertical, 6)
-                        }
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(navigation.activePlaylistItems.enumerated()), id: \.element) { index, queueVideo in
+                    PlaylistQueueDropZone {
+                        moveQueueVideo(withID: $0, toInsertionIndex: index)
                     }
 
-                    PlaylistQueueDropZone {
-                        moveQueueVideo(withID: $0, toInsertionIndex: navigation.activePlaylistItems.count)
+                    Button {
+                        navigation.showVideo(queueVideo)
+                    } label: {
+                        PlaylistQueueRailRow(
+                            video: queueVideo,
+                            index: index + 1,
+                            isCurrent: navigation.activePlaylistCurrentVideoID == queueVideo.id,
+                            canReorder: canReorderQueueVideo(queueVideo)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .draggable(queueVideo.id)
+                    .contextMenu {
+                        VideoContextMenuContent(
+                            video: queueVideo,
+                            userPlaylists: movablePlaylistsForQueue(),
+                            onPlay: { navigation.showVideo(queueVideo) },
+                            onPlayFromHere: { navigation.showVideo(queueVideo) },
+                            onAddToWatchLater: navigation.activePlaylistReference?.kind == .watchLater ? nil : queueAddToWatchLater(videoID: queueVideo.id),
+                            onSaveToPlaylist: { playlistID in
+                                queueSaveToPlaylist(videoID: queueVideo.id, playlistID: playlistID)
+                            },
+                            onMoveToPlaylist: queueVideo.playlistCanRemove ? { playlistID in
+                                moveQueueVideo(queueVideo, to: playlistID)
+                            } : nil,
+                            onMoveToWatchLater: navigation.activePlaylistReference?.kind == .watchLater || !queueVideo.playlistCanRemove ? nil : {
+                                moveQueueVideoToWatchLater(queueVideo)
+                            },
+                            onRemoveFromCurrentPlaylist: queueVideo.playlistCanRemove ? { removeQueueVideo(queueVideo) } : nil,
+                            onMoveToTop: queueVideo.playlistCanMoveToTop ? { moveQueueVideo(queueVideo, position: "top") } : nil,
+                            onMoveToBottom: queueVideo.playlistCanMoveToBottom ? { moveQueueVideo(queueVideo, position: "bottom") } : nil,
+                            onRemoveFromWatchHistory: nil
+                        )
+                    }
+                    if index < navigation.activePlaylistItems.count - 1 {
+                        Divider()
+                            .overlay(Color.white.opacity(0.05))
+                            .padding(.leading, 42)
+                            .padding(.vertical, 4)
                     }
                 }
+
+                PlaylistQueueDropZone {
+                    moveQueueVideo(withID: $0, toInsertionIndex: navigation.activePlaylistItems.count)
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
@@ -1758,6 +1772,7 @@ private struct WatchSecondaryPanel: View {
     let liveChatContent: AnyView?
     let suggestionsContent: AnyView
     let liveChatTitle: String
+    let standardLiveChatHeight: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1776,10 +1791,8 @@ private struct WatchSecondaryPanel: View {
 
             panelContent
         }
-        .padding(16)
+        .padding(isImmersive ? 16 : 0)
         .frame(maxWidth: .infinity, maxHeight: isImmersive ? .infinity : nil, alignment: .top)
-        .background(panelBackground)
-        .overlay(panelBorder)
     }
 
     @ViewBuilder
@@ -1787,8 +1800,7 @@ private struct WatchSecondaryPanel: View {
         switch selectedTab {
         case .playlist:
             if let playlistContent {
-                playlistContent
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                scrollContainerIfNeeded(for: playlistContent)
             } else {
                 unavailableText("Playlist queue isn’t available right now.")
             }
@@ -1797,7 +1809,11 @@ private struct WatchSecondaryPanel: View {
         case .liveChat:
             if liveChatContent != nil {
                 liveChatCard
-                    .frame(maxWidth: .infinity, maxHeight: isImmersive ? .infinity : nil, alignment: .topLeading)
+                    .frame(
+                        maxWidth: .infinity,
+                        maxHeight: isImmersive ? .infinity : standardLiveChatHeight,
+                        alignment: .topLeading
+                    )
             } else {
                 unavailableText("Live chat isn’t available right now.")
             }
@@ -1832,22 +1848,15 @@ private struct WatchSecondaryPanel: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-    }
-
-    @ViewBuilder
-    private var panelBackground: some View {
-        if !isImmersive {
+        .padding(isImmersive ? 0 : 16)
+        .background(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(settings.cardBackgroundColor.opacity(0.94))
-        }
-    }
-
-    @ViewBuilder
-    private var panelBorder: some View {
-        if !isImmersive {
+                .fill(settings.cardBackgroundColor.opacity(isImmersive ? 0.0 : 0.94))
+        )
+        .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
-        }
+                .stroke(Color.white.opacity(isImmersive ? 0 : 0.06), lineWidth: 1)
+        )
     }
 
     private func secondaryPanelTab(_ tab: PlayerSidePanelTab, enabled: Bool) -> some View {
@@ -3544,7 +3553,6 @@ private struct PlaylistSidebarArtwork: View {
 }
 
 private struct PlaylistQueueRailRow: View {
-    @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
     let index: Int
     let isCurrent: Bool
@@ -3573,7 +3581,7 @@ private struct PlaylistQueueRailRow: View {
                 }
             }
             .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
-            .frame(width: 22, height: 72, alignment: .center)
+            .frame(width: 28, height: 76, alignment: .center)
 
             ZStack(alignment: .bottomTrailing) {
                 CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 480) {
@@ -3585,7 +3593,7 @@ private struct PlaylistQueueRailRow: View {
                                 .foregroundStyle(.secondary)
                         )
                 }
-                .frame(width: 128, height: 72)
+                .frame(width: 136, height: 76)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .overlay(alignment: .bottom) {
                     VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 14, isEnabled: !video.isLive)
@@ -3607,32 +3615,35 @@ private struct PlaylistQueueRailRow: View {
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(2)
 
-                if !video.tags.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(video.tags) { tag in
-                            VideoTagBadgeView(tag: tag, font: .caption2)
-                        }
-                    }
-                }
+                VideoChannelIdentityLine(
+                    avatarURL: video.channelAvatarURL,
+                    channelID: video.channelId,
+                    channel: video.channel,
+                    avatarSize: 18,
+                    font: .system(size: 12.5, weight: .medium),
+                    onOpenChannel: nil
+                )
 
-                if !statsLine.isEmpty {
-                    Text(statsLine)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                if !video.tags.isEmpty || !statsLine.isEmpty {
+                    VideoStatsMetadataLine(
+                        tags: video.tags,
+                        viewCountText: video.viewCountText,
+                        publishedTimeText: video.publishedTimeText,
+                        font: .system(size: 12.5, weight: .medium)
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 2)
+        .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(
                     isCurrent
                         ? Color.accentColor.opacity(0.16)
-                        : (isHovered ? settings.hoverCardBackgroundColor.opacity(0.72) : .clear)
+                        : (isHovered ? Color.white.opacity(0.05) : .clear)
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: 18))

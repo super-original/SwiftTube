@@ -32,14 +32,32 @@ final class AuthSessionModel: ObservableObject {
     @Published private(set) var errorMessage: String? = nil
     @Published var isSheetPresented = false
     @Published private(set) var contentRefreshID = UUID()
+    private var authStatusObserver: NSObjectProtocol?
+
+    init() {
+        authStatusObserver = NotificationCenter.default.addObserver(
+            forName: .authSessionDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.loadStatus()
+            }
+        }
+    }
 
     func loadStatus() async {
+        let previousStatus = status
         do {
             status = try await BackendClient.shared.fetchAuthStatus()
             errorMessage = nil
         } catch {
             status = .signedOut
             errorMessage = error.localizedDescription
+        }
+
+        if previousStatus != status {
+            contentRefreshID = UUID()
         }
     }
 
