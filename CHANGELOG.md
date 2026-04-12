@@ -8,6 +8,14 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.14.1
+
+- Moved the auth avatar control to the far-right toolbar slot, removed the browser-name text from both signed-in and signed-out states, and dropped the old backend-status green dot so the top-right chrome is just the actual account control again.
+- Fixed search-result opens that could collapse the results grid without navigating by routing to the destination first and only suspending the search surface on the next run loop.
+- Removed the remaining special theater-mode watch layout so theater now uses the same immersive player and edge-hover behavior as fullscreen, just without entering macOS fullscreen.
+- Rebuilt the side rail into a single shared panel surface: suggestions are no longer trapped in the old capped mini-scroll box, playlist mode keeps its artwork and loop/shuffle controls visible, and the old boxed/collapsible playlist queue was replaced with a cleaner lightweight list.
+- Tightened next-up loading by letting immersive suggestions scroll in one full-height rail again, adding a bottom sentinel for pagination, and backfilling missing recommendation channel identity from full video metadata when YouTube’s recommendation renderer omits the channel endpoint or avatar.
+
 ## 0.14.0 — Fix the Fucking App
 
 Theme: performance, optimization, and quality-of-life fixes.

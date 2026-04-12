@@ -2074,8 +2074,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private func handleScrollEvent(_ event: NSEvent) -> NSEvent? {
         guard let window, event.window === window else { return event }
-        // Only intercept when player overlay is active (not fullscreen which disables scroll anyway)
-        guard !layoutState.isFullscreen, mpvEngine != nil else { return event }
+        // Only intercept when the standard page layout is active.
+        guard !layoutState.isFullscreen, !layoutState.isTheaterMode, mpvEngine != nil else { return event }
         // Check cursor is within the player NSView frame
         guard let playerView = mpvEngine?.renderController.view,
               let superview = playerView.superview else { return event }

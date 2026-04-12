@@ -120,19 +120,17 @@ struct ContentView: View {
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
+                Button(action: refreshCurrentRoute) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(!backend.isRunning)
+
                 Button {
                     authSession.isSheetPresented = true
                 } label: {
                     AuthToolbarLabel(status: authSession.status)
                 }
                 .disabled(!backend.isRunning)
-
-                Button(action: refreshCurrentRoute) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(!backend.isRunning)
-
-                BackendToolbarStatus(state: backend.state)
             }
         }
         .task(id: backend.state) {
@@ -815,8 +813,10 @@ private extension ContentView {
 
     func openVideoFromSearch(_ video: VideoItem) {
         isSearchFieldFocused = false
-        searchViewModel.suspendResultsForNavigation()
         navigation.showVideo(video)
+        DispatchQueue.main.async {
+            searchViewModel.suspendResultsForNavigation()
+        }
     }
 
     func openChannel(from video: VideoItem) {
@@ -826,8 +826,10 @@ private extension ContentView {
 
     func openChannelFromSearch(_ video: VideoItem) {
         isSearchFieldFocused = false
-        searchViewModel.suspendResultsForNavigation()
         openChannel(from: video)
+        DispatchQueue.main.async {
+            searchViewModel.suspendResultsForNavigation()
+        }
     }
 
     func syncHistorySearchQuery() {
@@ -3023,75 +3025,33 @@ private struct BrandToolbarLabel: View {
     }
 }
 
-private struct BackendToolbarStatus: View {
-    let state: BackendState
-
-    private var label: String {
-        switch state {
-        case .running:
-            return "Online"
-        case .failed:
-            return "Error"
-        case .installing:
-            return "Installing"
-        case .starting:
-            return "Starting"
-        case .preparing:
-            return "Preparing"
-        case .idle:
-            return "Idle"
-        }
-    }
-
-    private var color: Color {
-        switch state {
-        case .running:
-            return Color.green
-        case .failed:
-            return Color.red
-        default:
-            return Color.orange
-        }
-    }
-
-    var body: some View {
-        Label(label, systemImage: "circle.fill")
-            .font(.caption)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .foregroundStyle(color, .secondary)
-    }
-}
-
 private struct AuthToolbarLabel: View {
     let status: AuthStatusResponse
 
     var body: some View {
-        HStack(spacing: 8) {
+        Group {
             if status.authenticated {
-                Group {
-                    if let avatarURL = status.avatarURL {
-                        CachedAsyncImage(url: avatarURL, maxPixelSize: 96) {
-                            Image(systemName: "person.crop.circle.badge.checkmark")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
+                if let avatarURL = status.avatarURL {
+                    CachedAsyncImage(url: avatarURL, maxPixelSize: 96) {
                         Image(systemName: "person.crop.circle.badge.checkmark")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(.secondary)
                     }
+                } else {
+                    Image(systemName: "person.crop.circle.badge.checkmark")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
-                .frame(width: 22, height: 22)
-                .clipShape(Circle())
-                .overlay(Circle().stroke(Color.white.opacity(0.1), lineWidth: 1))
             } else {
                 Image(systemName: "person.crop.circle.badge.plus")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.secondary)
             }
-
-            Text(status.authenticated ? (status.browserLabel ?? "YouTube") : "Connect YouTube")
         }
-        .font(.caption)
+        .frame(width: 22, height: 22)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Color.white.opacity(0.1), lineWidth: 1))
+        .contentShape(Circle())
     }
 }
 

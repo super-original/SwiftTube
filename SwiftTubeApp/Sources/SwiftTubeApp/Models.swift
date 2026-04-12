@@ -107,6 +107,32 @@ struct VideoItem: Codable, Identifiable, Hashable, Sendable {
     var isLive: Bool {
         tags.contains(where: \.isLive)
     }
+
+    func withResolvedChannelIdentity(
+        channel: String? = nil,
+        channelId: String? = nil,
+        channelAvatarUrl: String? = nil
+    ) -> VideoItem {
+        VideoItem(
+            id: id,
+            title: title,
+            channel: channel ?? self.channel,
+            channelId: channelId ?? self.channelId,
+            channelAvatarUrl: channelAvatarUrl ?? self.channelAvatarUrl,
+            viewCountText: viewCountText,
+            publishedTimeText: publishedTimeText,
+            durationText: durationText,
+            thumbnails: thumbnails,
+            playlistSetVideoId: playlistSetVideoId,
+            playlistIndexText: playlistIndexText,
+            playlistSelected: playlistSelected,
+            playlistCanRemove: playlistCanRemove,
+            playlistCanMoveToTop: playlistCanMoveToTop,
+            playlistCanMoveToBottom: playlistCanMoveToBottom,
+            progress: progress,
+            tags: tags
+        )
+    }
 }
 
 struct RecommendationsResponse: Codable, Sendable {

@@ -1496,6 +1496,7 @@ final class PlayerViewModel: ObservableObject {
     private var liveChatTask: Task<Void, Never>? = nil
     private var liveChatPollTask: Task<Void, Never>? = nil
     private var transcriptTask: Task<Void, Never>? = nil
+    private var recommendationIdentityTask: Task<Void, Never>? = nil
     private var lastReplaySyncOffsetMs: Int? = nil
     private var commentsContinuation: String? = nil
     private var recommendationsContinuation: String? = nil
@@ -1512,6 +1513,7 @@ final class PlayerViewModel: ObservableObject {
         liveChatTask?.cancel()
         liveChatPollTask?.cancel()
         transcriptTask?.cancel()
+        recommendationIdentityTask?.cancel()
         loadTask = Task {
             await fetchPlayback()
         }
@@ -1524,6 +1526,7 @@ final class PlayerViewModel: ObservableObject {
         liveChatTask?.cancel()
         liveChatPollTask?.cancel()
         transcriptTask?.cancel()
+        recommendationIdentityTask?.cancel()
     }
 
     func reportPlaybackProgress(
@@ -1570,6 +1573,7 @@ final class PlayerViewModel: ObservableObject {
         liveChatTask?.cancel()
         liveChatPollTask?.cancel()
         transcriptTask?.cancel()
+        recommendationIdentityTask?.cancel()
         liveChatMessages = []
         liveChatComposer = nil
         liveChatMode = .top
@@ -1597,6 +1601,7 @@ final class PlayerViewModel: ObservableObject {
             self.liveChatMode = playback.liveChat?.defaultMode ?? .top
             isLoading = false
             playbackLoadID = UUID()
+            hydrateRecommendationIdentityIfNeeded()
             loadSponsorSegments(for: playback)
             startCommentsLoad()
             startLiveChatLoadIfAvailable(for: playback)
@@ -1747,6 +1752,7 @@ final class PlayerViewModel: ObservableObject {
                 if !shouldAdvance {
                     recommendations = mergedRecommendations
                     self.recommendationsContinuation = response.continuation
+                    hydrateRecommendationIdentityIfNeeded()
                     break
                 }
 
@@ -1755,6 +1761,49 @@ final class PlayerViewModel: ObservableObject {
             }
         } catch {
             guard !Task.isCancelled else { return }
+        }
+    }
+
+    private func hydrateRecommendationIdentityIfNeeded() {
+        recommendationIdentityTask?.cancel()
+
+        let unresolvedRecommendations = recommendations
+            .filter {
+                ($0.channelId?.isEmpty != false) || ($0.channelAvatarUrl?.isEmpty != false)
+            }
+            .prefix(6)
+
+        guard unresolvedRecommendations.isEmpty == false else { return }
+
+        recommendationIdentityTask = Task { [weak self] in
+            guard let self else { return }
+
+            for recommendation in unresolvedRecommendations {
+                guard !Task.isCancelled else { return }
+
+                do {
+                    let playback = try await BackendClient.shared.fetchVideo(id: recommendation.id)
+                    guard !Task.isCancelled else { return }
+
+                    let resolvedItem = recommendation.withResolvedChannelIdentity(
+                        channel: playback.channel,
+                        channelId: playback.channelId,
+                        channelAvatarUrl: playback.channelAvatarUrl
+                    )
+
+                    if resolvedItem.channelId == recommendation.channelId,
+                       resolvedItem.channelAvatarUrl == recommendation.channelAvatarUrl,
+                       resolvedItem.channel == recommendation.channel {
+                        continue
+                    }
+
+                    if let index = recommendations.firstIndex(where: { $0.id == recommendation.id }) {
+                        recommendations[index] = resolvedItem
+                    }
+                } catch {
+                    guard !Task.isCancelled else { return }
+                }
+            }
         }
     }
 

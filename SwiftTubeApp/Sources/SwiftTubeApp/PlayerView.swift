@@ -166,7 +166,6 @@ struct PlayerScreen: View {
     @State private var isDescriptionExpanded = false
     @State private var isSharePopoverPresented = false
     @State private var isPlaylistPopoverPresented = false
-    @State private var isPlaylistRailExpanded = true
     @State private var prefersRelativeUploadedTime = false
     @State private var selectedSidePanelTab: PlayerSidePanelTab = .suggestions
     @State private var playerStageHeight: CGFloat = 0
@@ -188,9 +187,9 @@ struct PlayerScreen: View {
         ScrollView {
             scrollContent
         }
-        .scrollDisabled(layoutState.isFullscreen)
+        .scrollDisabled(usesImmersiveLayout)
         .background(
-            (layoutState.isFullscreen ? Color.black : AppSettings.shared.windowBackgroundColor)
+            (usesImmersiveLayout ? Color.black : AppSettings.shared.windowBackgroundColor)
                 .ignoresSafeArea()
         )
         .overlayPreferenceValue(PlayerSurfaceBoundsKey.self) { anchor in
@@ -429,10 +428,6 @@ private extension PlayerScreen {
         availableSidePanelTabs.contains(selectedSidePanelTab) ? selectedSidePanelTab : (availableSidePanelTabs.first ?? .suggestions)
     }
 
-    var usesTabbedSidePanel: Bool {
-        availableSidePanelTabs.count > 1
-    }
-
     var availableSidePanelTabs: [PlayerSidePanelTab] {
         var tabs: [PlayerSidePanelTab] = []
         if hasActivePlaylistContext {
@@ -449,35 +444,10 @@ private extension PlayerScreen {
         playback?.liveChat?.tabTitle ?? "Live Chat"
     }
 
-    var standardLiveChatHeight: CGFloat {
-        let measuredPrimaryHeight = playerStageHeight > 0 && headerSectionHeight > 0
-            ? playerStageHeight + 24 + headerSectionHeight
-            : 0
-        if measuredPrimaryHeight > 0 {
-            return max(measuredPrimaryHeight - 14, 500)
-        }
-
-        let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
-        let windowHeight = NSApp.keyWindow?.contentLayoutRect.height ?? screenHeight
-        let availableHeight = min(screenHeight, windowHeight)
-        return min(max(availableHeight - 164, 600), 940)
-    }
-
     var scrollContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if layoutState.isFullscreen {
-                // Fullscreen: surface fills viewport via surfaceRect
+            if usesImmersiveLayout {
                 Color.clear.frame(height: 0)
-            } else if layoutState.isTheaterMode {
-                // Transparent spacer reserves the 16:9 slot for the overlay.
-                // Must be clear — a black spacer would show below the overlay when scrolled.
-                Color.clear
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .anchorPreference(key: PlayerSurfaceBoundsKey.self, value: .bounds) { $0 }
-
-                standardContent
-                    .padding(24)
             } else {
                 standardContent
                     .padding(24)
@@ -507,9 +477,7 @@ private extension PlayerScreen {
 
     var mainColumn: some View {
         VStack(alignment: .leading, spacing: 24) {
-            if !layoutState.isTheaterMode {
-                standardPlayerStagePlaceholder
-            }
+            standardPlayerStagePlaceholder
             headerSection
             descriptionSection
             commentsSection
@@ -518,7 +486,7 @@ private extension PlayerScreen {
     }
 
     func surfaceRect(anchor: Anchor<CGRect>?, proxy: GeometryProxy) -> CGRect? {
-        if layoutState.isFullscreen {
+        if usesImmersiveLayout {
             let sideInset = layoutState.isSidePanelVisible
                 ? secondaryPanelWidth + immersiveSidePanelGap + immersiveSidePanelTrailingPadding
                 : 0
@@ -528,15 +496,6 @@ private extension PlayerScreen {
                 width: max(proxy.size.width - sideInset, 0),
                 height: proxy.size.height
             )
-        }
-        if layoutState.isTheaterMode, let anchor {
-            let anchorRect = proxy[anchor]
-            let sideInset = layoutState.isSidePanelVisible
-                ? secondaryPanelWidth + immersiveSidePanelGap + immersiveSidePanelTrailingPadding
-                : 0
-            let w = max(proxy.size.width - sideInset, 0)
-            let h = min(w * 9.0 / 16.0, proxy.size.height)
-            return CGRect(x: 0, y: anchorRect.minY, width: w, height: h)
         }
         return anchor.map { proxy[$0] }
     }
@@ -589,7 +548,7 @@ private extension PlayerScreen {
         Group {
             if usesImmersiveLayout {
                 EmptyView()
-            } else if usesTabbedSidePanel {
+            } else {
                 WatchSecondaryPanel(
                     isImmersive: false,
                     tabs: availableSidePanelTabs,
@@ -600,11 +559,8 @@ private extension PlayerScreen {
                     playlistContent: hasActivePlaylistContext && activePlaylistFeed != nil ? AnyView(playlistPanelContent) : nil,
                     liveChatContent: playback?.liveChat != nil ? AnyView(liveChatPanelContent) : nil,
                     suggestionsContent: AnyView(suggestionsPanelContent),
-                    liveChatTitle: liveChatTabTitle,
-                    standardPanelHeight: standardLiveChatHeight
+                    liveChatTitle: liveChatTabTitle
                 )
-            } else {
-                standaloneSuggestionsPanel
             }
         }
     }
@@ -620,8 +576,7 @@ private extension PlayerScreen {
             playlistContent: hasActivePlaylistContext && activePlaylistFeed != nil ? AnyView(playlistPanelContent) : nil,
             liveChatContent: playback?.liveChat != nil ? AnyView(liveChatPanelContent) : nil,
             suggestionsContent: AnyView(suggestionsPanelContent),
-            liveChatTitle: liveChatTabTitle,
-            standardPanelHeight: standardLiveChatHeight
+            liveChatTitle: liveChatTabTitle
         )
             .background(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -1075,16 +1030,6 @@ private extension PlayerScreen {
 
     func playlistQueueColumn(feed: PlaylistFeed) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            if isPlaylistRailExpanded {
-                expandedPlaylistQueue(feed: feed)
-            } else {
-                collapsedPlaylistQueue(feed: feed)
-            }
-        }
-    }
-
-    func expandedPlaylistQueue(feed: PlaylistFeed) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
                 if let playlist = activePlaylistSummary {
                     PlaylistSidebarArtwork(playlist: playlist)
@@ -1106,17 +1051,6 @@ private extension PlayerScreen {
                 }
 
                 Spacer(minLength: 12)
-
-                Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                        isPlaylistRailExpanded = false
-                    }
-                } label: {
-                    Image(systemName: "chevron.up")
-                        .font(.headline.weight(.semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
             }
 
             HStack(spacing: 10) {
@@ -1183,63 +1117,21 @@ private extension PlayerScreen {
                                 onRemoveFromWatchHistory: nil
                             )
                         }
-                        .padding(.bottom, 6)
+                        if index < navigation.activePlaylistItems.count - 1 {
+                            Divider()
+                                .overlay(Color.white.opacity(0.05))
+                                .padding(.leading, 38)
+                                .padding(.vertical, 6)
+                        }
                     }
 
                     PlaylistQueueDropZone {
                         moveQueueVideo(withID: $0, toInsertionIndex: navigation.activePlaylistItems.count)
                     }
                 }
-                .padding(.trailing, 6)
             }
-            .frame(height: playlistRailHeight)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(AppSettings.shared.cardBackgroundColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
-        )
-    }
-
-    func collapsedPlaylistQueue(feed: PlaylistFeed) -> some View {
-        Button {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                isPlaylistRailExpanded = true
-            }
-        } label: {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(queueCollapsedTitle(feed: feed))
-                        .font(.headline.weight(.semibold))
-                        .lineLimit(1)
-                    Text(activePlaylistPositionLine)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 12)
-
-                Image(systemName: "chevron.down")
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.blue.opacity(0.14))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     func handlePlaybackEnded() {
@@ -1523,10 +1415,6 @@ private extension PlayerScreen {
         video.playlistSetVideoId != nil
     }
 
-    var playlistRailHeight: CGFloat {
-        420
-    }
-
     var activePlaylistPositionLine: String {
         let count = navigation.activePlaylistItems.count
         guard count > 0 else { return "Playlist queue" }
@@ -1537,13 +1425,6 @@ private extension PlayerScreen {
         }
 
         return "\(navigation.activePlaylistTitle ?? "Playlist") • \(count) videos"
-    }
-
-    func queueCollapsedTitle(feed: PlaylistFeed) -> String {
-        if let nextVideo = navigation.nextVideoForActivePlaylist(), nextVideo.id != video.id {
-            return "Next: \(nextVideo.title)"
-        }
-        return feed.title
     }
 
     func movablePlaylistsForQueue() -> [PlaylistSummary] {
@@ -1617,17 +1498,8 @@ private extension PlayerScreen {
     }
 
     var suggestionsPanelContent: some View {
-        ScrollView {
-            suggestionsPanelBody
-                .padding(.trailing, 6)
-                .padding(.bottom, 8)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    var standaloneSuggestionsPanel: some View {
-        suggestionsPanelContent
-            .frame(height: standardLiveChatHeight)
+        suggestionsPanelBody
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     var playlistPanelContent: some View {
@@ -1645,16 +1517,21 @@ private extension PlayerScreen {
     var suggestionsPanelBody: some View {
         Group {
             if recommendations.isEmpty {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(0..<4, id: \.self) { _ in
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(0..<4, id: \.self) { index in
                         RoundedRectangle(cornerRadius: 14)
                             .fill(Color(NSColor.controlBackgroundColor).opacity(0.55))
                             .frame(height: 92)
+                        if index < 3 {
+                            Divider()
+                                .overlay(Color.white.opacity(0.05))
+                                .padding(.vertical, 10)
+                        }
                     }
                 }
             } else {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(recommendations, id: \.id) { relatedVideo in
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(recommendations.enumerated()), id: \.element.id) { index, relatedVideo in
                         RecommendationRow(
                             video: relatedVideo,
                             onOpenChannel: {
@@ -1687,13 +1564,26 @@ private extension PlayerScreen {
                         .onAppear {
                             viewModel.loadMoreRecommendationsIfNeeded(currentVideo: relatedVideo)
                         }
+
+                        if index < recommendations.count - 1 {
+                            Divider()
+                                .overlay(Color.white.opacity(0.05))
+                                .padding(.vertical, 8)
+                        }
                     }
 
                     if viewModel.isLoadingRecommendations {
                         ProgressView("Loading more videos...")
-                            .padding(.top, 4)
+                            .padding(.top, 12)
                             .frame(maxWidth: .infinity)
                     }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .onAppear {
+                            guard let lastRecommendation = recommendations.last else { return }
+                            viewModel.loadMoreRecommendationsIfNeeded(currentVideo: lastRecommendation)
+                        }
                 }
             }
         }
@@ -1868,7 +1758,6 @@ private struct WatchSecondaryPanel: View {
     let liveChatContent: AnyView?
     let suggestionsContent: AnyView
     let liveChatTitle: String
-    let standardPanelHeight: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1887,7 +1776,10 @@ private struct WatchSecondaryPanel: View {
 
             panelContent
         }
-        .frame(maxWidth: .infinity, maxHeight: isImmersive ? .infinity : standardPanelHeight, alignment: .top)
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: isImmersive ? .infinity : nil, alignment: .top)
+        .background(panelBackground)
+        .overlay(panelBorder)
     }
 
     @ViewBuilder
@@ -1897,16 +1789,40 @@ private struct WatchSecondaryPanel: View {
             if let playlistContent {
                 playlistContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                unavailableText("Playlist queue isn’t available right now.")
             }
         case .suggestions:
-            suggestionsContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            scrollContainerIfNeeded(for: suggestionsContent)
         case .liveChat:
             if liveChatContent != nil {
                 liveChatCard
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, maxHeight: isImmersive ? .infinity : nil, alignment: .topLeading)
+            } else {
+                unavailableText("Live chat isn’t available right now.")
             }
         }
+    }
+
+    @ViewBuilder
+    private func scrollContainerIfNeeded(for content: AnyView) -> some View {
+        if isImmersive {
+            ScrollView {
+                content
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            content
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    @ViewBuilder
+    private func unavailableText(_ text: String) -> some View {
+        Text(text)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var liveChatCard: some View {
@@ -1914,21 +1830,24 @@ private struct WatchSecondaryPanel: View {
             if let liveChatContent {
                 liveChatContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            } else {
-                Text("Live chat isn’t available right now.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .padding(16)
-        .background(
+    }
+
+    @ViewBuilder
+    private var panelBackground: some View {
+        if !isImmersive {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(settings.cardBackgroundColor.opacity(0.9))
-        )
-        .overlay(
+                .fill(settings.cardBackgroundColor.opacity(0.94))
+        }
+    }
+
+    @ViewBuilder
+    private var panelBorder: some View {
+        if !isImmersive {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(Color.white.opacity(0.06), lineWidth: 1)
-        )
+        }
     }
 
     private func secondaryPanelTab(_ tab: PlayerSidePanelTab, enabled: Bool) -> some View {
@@ -2308,9 +2227,9 @@ private struct PlayerStageSurface: View {
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
-                            let touchingFullscreenEdge = coordinator.isFullscreen
+                            let touchingImmersiveEdge = (coordinator.isFullscreen || coordinator.isTheaterMode)
                                 && (location.x <= 2 || location.x >= geo.size.width - 2)
-                            if touchingFullscreenEdge {
+                            if touchingImmersiveEdge {
                                 coordinator.setHovering(false)
                                 break
                             }
@@ -3625,6 +3544,7 @@ private struct PlaylistSidebarArtwork: View {
 }
 
 private struct PlaylistQueueRailRow: View {
+    @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
     let index: Int
     let isCurrent: Bool
@@ -3652,12 +3572,12 @@ private struct PlaylistQueueRailRow: View {
                         .font(.callout.monospacedDigit().weight(.semibold))
                 }
             }
-            .foregroundStyle(isCurrent ? .blue : .secondary)
-            .frame(width: 18, height: 67.5, alignment: .center)
+            .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
+            .frame(width: 22, height: 72, alignment: .center)
 
             ZStack(alignment: .bottomTrailing) {
                 CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 480) {
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: 14)
                         .fill(Color.gray.opacity(0.18))
                         .overlay(
                             Image(systemName: "play.rectangle.fill")
@@ -3665,10 +3585,10 @@ private struct PlaylistQueueRailRow: View {
                                 .foregroundStyle(.secondary)
                         )
                 }
-                .frame(width: 120, height: 67.5)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .frame(width: 128, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
                 .overlay(alignment: .bottom) {
-                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12, isEnabled: !video.isLive)
+                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 14, isEnabled: !video.isLive)
                 }
 
                 if let duration = video.durationText {
@@ -3684,7 +3604,7 @@ private struct PlaylistQueueRailRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(video.title)
-                    .font(.headline.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .lineLimit(2)
 
                 if !video.tags.isEmpty {
@@ -3704,14 +3624,16 @@ private struct PlaylistQueueRailRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(isCurrent ? Color.blue.opacity(0.14) : Color.white.opacity(isHovered ? 0.08 : 0.035))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(isCurrent ? Color.blue.opacity(0.32) : Color.white.opacity(isHovered ? 0.09 : 0.03), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    isCurrent
+                        ? Color.accentColor.opacity(0.16)
+                        : (isHovered ? settings.hoverCardBackgroundColor.opacity(0.72) : .clear)
+                )
         )
         .contentShape(RoundedRectangle(cornerRadius: 18))
         .animation(.easeOut(duration: 0.14), value: isHovered)
@@ -3912,7 +3834,7 @@ private struct RecommendationRow: View {
         HStack(alignment: .top, spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
                 CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 256) {
-                    RoundedRectangle(cornerRadius: 16)
+                    RoundedRectangle(cornerRadius: 14)
                         .fill(Color.gray.opacity(0.2))
                         .overlay(
                             Image(systemName: "play.rectangle.fill")
@@ -3920,10 +3842,10 @@ private struct RecommendationRow: View {
                                 .foregroundStyle(.secondary)
                         )
                 }
-                .frame(width: 160, height: 90)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .frame(width: 152, height: 85.5)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
                 .overlay(alignment: .bottom) {
-                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12, isEnabled: !video.isLive)
+                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 14, isEnabled: !video.isLive)
                 }
 
                 if let duration = video.durationText {
@@ -3942,7 +3864,7 @@ private struct RecommendationRow: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(video.title)
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .lineLimit(2)
 
                 VideoChannelIdentityLine(
@@ -3963,15 +3885,14 @@ private struct RecommendationRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(isHovered ? settings.hoverCardBackgroundColor : .clear)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 14))
-        .scaleEffect(isHovered ? 1.006 : 1)
-        .offset(y: isHovered ? -0.5 : 0)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.14)) {
                 isHovered = hovering
