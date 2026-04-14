@@ -89,9 +89,17 @@ actor SwiftTubeBackend {
             do {
                 data = try await loadRecommendations(continuation: continuation, authenticated: true)
             } catch {
-                await invalidateAuthenticatedSession()
-                note = "Your saved YouTube session expired. Showing public picks instead."
-                data = try await loadRecommendations(continuation: continuation, authenticated: false)
+                if await refreshAuthenticatedSessionIfPossible() {
+                    do {
+                        data = try await loadRecommendations(continuation: continuation, authenticated: true)
+                    } catch {
+                        note = "Your saved YouTube session expired. Showing public picks instead."
+                        data = try await loadRecommendations(continuation: continuation, authenticated: false)
+                    }
+                } else {
+                    note = "Your saved YouTube session expired. Showing public picks instead."
+                    data = try await loadRecommendations(continuation: continuation, authenticated: false)
+                }
             }
         } else {
             data = try await loadRecommendations(continuation: continuation, authenticated: false)
@@ -137,8 +145,15 @@ actor SwiftTubeBackend {
             do {
                 data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: true)
             } catch {
-                await invalidateAuthenticatedSession()
-                data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: false)
+                if await refreshAuthenticatedSessionIfPossible() {
+                    do {
+                        data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: true)
+                    } catch {
+                        data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: false)
+                    }
+                } else {
+                    data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: false)
+                }
             }
         } else {
             data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: false)
@@ -336,7 +351,11 @@ actor SwiftTubeBackend {
             do {
                 return try await buildVideoPlayback(videoID: videoID, authenticated: true)
             } catch {
-                await invalidateAuthenticatedSession()
+                if await refreshAuthenticatedSessionIfPossible() {
+                    do {
+                        return try await buildVideoPlayback(videoID: videoID, authenticated: true)
+                    } catch {}
+                }
             }
         }
 
@@ -499,7 +518,17 @@ actor SwiftTubeBackend {
                 continuation: extractContinuationToken(from: data)
             )
         } catch {
-            await invalidateAuthenticatedSession()
+            if await refreshAuthenticatedSessionIfPossible() {
+                let data = try await api.browse(
+                    browseID: continuation == nil ? "FEplaylist_aggregation" : nil,
+                    continuation: continuation,
+                    authenticated: true
+                )
+                return PlaylistLibraryResponse(
+                    items: extractPlaylistSummaries(from: data),
+                    continuation: extractContinuationToken(from: data)
+                )
+            }
             throw BackendClientError(message: "Your YouTube session expired. SwiftTube is reconnecting using the last browser session if possible.")
         }
     }
@@ -515,7 +544,14 @@ actor SwiftTubeBackend {
             )
             return await mergeStoredProgress(into: extractPlaylistFeed(from: data, playlistID: playlistID.removingPrefix("VL")))
         } catch {
-            await invalidateAuthenticatedSession()
+            if await refreshAuthenticatedSessionIfPossible() {
+                let data = try await api.browse(
+                    browseID: continuation == nil ? browseID : nil,
+                    continuation: continuation,
+                    authenticated: true
+                )
+                return await mergeStoredProgress(into: extractPlaylistFeed(from: data, playlistID: playlistID.removingPrefix("VL")))
+            }
             throw BackendClientError(message: "Your YouTube session expired. SwiftTube is reconnecting using the last browser session if possible.")
         }
     }
@@ -526,7 +562,11 @@ actor SwiftTubeBackend {
             do {
                 return try await buildRelatedResponse(videoID: videoID, continuation: continuation, authenticated: true)
             } catch {
-                await invalidateAuthenticatedSession()
+                if await refreshAuthenticatedSessionIfPossible() {
+                    do {
+                        return try await buildRelatedResponse(videoID: videoID, continuation: continuation, authenticated: true)
+                    } catch {}
+                }
             }
         }
 
@@ -1109,16 +1149,41 @@ actor SwiftTubeBackend {
     }
 
     private func requireAuthenticatedMaterial() async throws -> AuthMaterial {
-        guard let material = await authManager.currentMaterial() else {
-            throw BackendClientError(message: "Sign in to YouTube to use this action.")
+        if let material = await authManager.currentMaterial() {
+            return material
         }
-        return material
+
+        if await refreshAuthenticatedSessionIfPossible(),
+           let material = await authManager.currentMaterial() {
+            return material
+        }
+
+        throw BackendClientError(message: "Sign in to YouTube to use this action.")
     }
 
     private func invalidateAuthenticatedSession() async {
         _ = try? await authManager.clear()
+        await publishAuthSessionChange()
+    }
+
+    private func publishAuthSessionChange() async {
         await MainActor.run {
             NotificationCenter.default.post(name: .authSessionDidChange, object: nil)
+        }
+    }
+
+    private func refreshAuthenticatedSessionIfPossible() async -> Bool {
+        do {
+            _ = try await authManager.refreshLastUsedBrowserSession()
+            try await api.validateAuthentication()
+            let payload = try await api.browse(browseID: "FEwhat_to_watch", authenticated: true)
+            let avatarURL = extractSignedInAvatarURL(from: payload)
+            try? await authManager.updateAvatarURL(avatarURL)
+            await publishAuthSessionChange()
+            return true
+        } catch {
+            await invalidateAuthenticatedSession()
+            return false
         }
     }
 

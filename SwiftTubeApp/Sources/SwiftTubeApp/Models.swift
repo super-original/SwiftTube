@@ -108,6 +108,10 @@ struct VideoItem: Codable, Identifiable, Hashable, Sendable {
         tags.contains(where: \.isLive)
     }
 
+    var playlistIdentity: String {
+        playlistSetVideoId ?? id
+    }
+
     func withResolvedChannelIdentity(
         channel: String? = nil,
         channelId: String? = nil,

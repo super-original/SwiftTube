@@ -1098,7 +1098,7 @@ final class PlaylistFeedViewModel: ObservableObject {
                     feed = resolvedFeed
                 }
 
-                let mergeResult = appendUniqueItems(existing: mergedItems, incoming: response.items, id: \.id)
+                let mergeResult = appendUniqueItems(existing: mergedItems, incoming: response.items, id: \.playlistIdentity)
                 mergedItems = mergeResult.items
 
                 let shouldAdvance = mergeResult.appendedCount == 0
@@ -1376,7 +1376,7 @@ final class PlaylistFeedViewModel: ObservableObject {
 
     func reorderItem(withID draggedID: String, toInsertionIndex insertionIndex: Int) -> Bool {
         guard !isReordering,
-              let sourceIndex = items.firstIndex(where: { $0.id == draggedID }) else {
+              let sourceIndex = items.firstIndex(where: { $0.playlistIdentity == draggedID }) else {
             return false
         }
 

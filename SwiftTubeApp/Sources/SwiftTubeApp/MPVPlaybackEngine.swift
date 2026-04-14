@@ -227,6 +227,21 @@ final class MPVPlaybackEngine: NSObject {
         try await replaceFile(with: request, seekTo: time)
     }
 
+    func refreshPausedFrame(at time: Double) throws {
+        guard didLoadFile else {
+            throw NSError(
+                domain: "SwiftTube.MPV",
+                code: -3,
+                userInfo: [NSLocalizedDescriptionKey: "mpv file is not loaded yet."]
+            )
+        }
+
+        let resolvedTime = max(time, 0)
+        PlaybackDebugLogger.log("mpv refresh paused frame time=\(resolvedTime)")
+        try command(["seek", String(resolvedTime), "absolute", "exact"])
+        updateCachedState()
+    }
+
     func stopSafely() async {
         guard isStopping == false else { return }
         isStopping = true

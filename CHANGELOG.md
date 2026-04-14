@@ -8,6 +8,15 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.14.3
+
+- Stopped the player’s local keyboard monitor from eating app-level macOS shortcuts like `Command+Q` and `Command+W` while still silencing dead unmapped player key presses, and shrank the signed-out toolbar profile glyph so it no longer clips inside the circular slot.
+- Replaced the paused-resize full MPV file reload with a same-time paused-frame refresh path, and covered player reload states with a storyboard-based held-frame preview so quality switches stop flashing the video’s first frame.
+- Rewrapped the watch-page side rail so immersive fullscreen/theater tabs now sit inside the same contained card treatment as live chat, restored the playlist tab to that contained treatment on the standard page, removed the extra separators again, and tightened the live-chat bottom inset so the card stops getting clipped.
+- Fixed playlist identity and persistence by using YouTube’s playlist item `setVideoId` as the reorder identity, which stabilizes drag/drop for duplicate videos and makes playlist-feed continuation merging preserve the real playlist order.
+- Pushed page loading states closer to their real layouts by giving channel pages, playlist library, playlist feeds, and watch history dedicated skeletons instead of falling back to the generic recommendations placeholder grid.
+- Improved auth recovery again by retrying authenticated requests after refreshing the last-used browser session, so recommendations, playlist pages, and video loads can automatically recover from stale cookies instead of leaving the app half-signed-in or forcing a manual reconnect first.
+
 ## 0.14.2
 
 - Corrected the `0.14.1` sidebar regression by restoring plain standard-watch suggestions, putting standard live chat back into its own capped contained panel, and keeping the immersive fullscreen or theater rail as the place that owns the heavy sidebar container treatment.

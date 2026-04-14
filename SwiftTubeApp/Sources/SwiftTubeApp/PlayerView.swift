@@ -449,7 +449,7 @@ private extension PlayerScreen {
             ? playerStageHeight + 24 + headerSectionHeight
             : 0
         if measuredPrimaryHeight > 0 {
-            return max(measuredPrimaryHeight - 14, 500)
+            return max(measuredPrimaryHeight - 28, 480)
         }
 
         let screenHeight = NSScreen.main?.visibleFrame.height ?? 900
@@ -1089,11 +1089,8 @@ private extension PlayerScreen {
                 .tint(navigation.activePlaylistShuffleEnabled ? .blue : nil)
             }
 
-            Divider()
-                .overlay(Color.white.opacity(0.06))
-
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(navigation.activePlaylistItems.enumerated()), id: \.element) { index, queueVideo in
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(navigation.activePlaylistItems.enumerated()), id: \.element.playlistIdentity) { index, queueVideo in
                     PlaylistQueueDropZone {
                         moveQueueVideo(withID: $0, toInsertionIndex: index)
                     }
@@ -1109,7 +1106,7 @@ private extension PlayerScreen {
                         )
                     }
                     .buttonStyle(.plain)
-                    .draggable(queueVideo.id)
+                    .draggable(queueVideo.playlistIdentity)
                     .contextMenu {
                         VideoContextMenuContent(
                             video: queueVideo,
@@ -1131,12 +1128,6 @@ private extension PlayerScreen {
                             onMoveToBottom: queueVideo.playlistCanMoveToBottom ? { moveQueueVideo(queueVideo, position: "bottom") } : nil,
                             onRemoveFromWatchHistory: nil
                         )
-                    }
-                    if index < navigation.activePlaylistItems.count - 1 {
-                        Divider()
-                            .overlay(Color.white.opacity(0.05))
-                            .padding(.leading, 42)
-                            .padding(.vertical, 4)
                     }
                 }
 
@@ -1267,7 +1258,7 @@ private extension PlayerScreen {
         guard let playlistID = navigation.activePlaylistReference?.playlistId else { return false }
 
         let previousItems = navigation.activePlaylistItems
-        guard let sourceIndex = previousItems.firstIndex(where: { $0.id == draggedID }) else {
+        guard let sourceIndex = previousItems.firstIndex(where: { $0.playlistIdentity == draggedID }) else {
             return false
         }
 
@@ -1531,21 +1522,16 @@ private extension PlayerScreen {
     var suggestionsPanelBody: some View {
         Group {
             if recommendations.isEmpty {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(0..<4, id: \.self) { index in
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(0..<4, id: \.self) { _ in
                         RoundedRectangle(cornerRadius: 14)
                             .fill(Color(NSColor.controlBackgroundColor).opacity(0.55))
                             .frame(height: 92)
-                        if index < 3 {
-                            Divider()
-                                .overlay(Color.white.opacity(0.05))
-                                .padding(.vertical, 10)
-                        }
                     }
                 }
             } else {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(recommendations.enumerated()), id: \.element.id) { index, relatedVideo in
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(recommendations.enumerated()), id: \.element.id) { _, relatedVideo in
                         RecommendationRow(
                             video: relatedVideo,
                             onOpenChannel: {
@@ -1577,12 +1563,6 @@ private extension PlayerScreen {
                         }
                         .onAppear {
                             viewModel.loadMoreRecommendationsIfNeeded(currentVideo: relatedVideo)
-                        }
-
-                        if index < recommendations.count - 1 {
-                            Divider()
-                                .overlay(Color.white.opacity(0.05))
-                                .padding(.vertical, 8)
                         }
                     }
 
@@ -1800,15 +1780,24 @@ private struct WatchSecondaryPanel: View {
         switch selectedTab {
         case .playlist:
             if let playlistContent {
-                scrollContainerIfNeeded(for: playlistContent)
+                wrappedPanelContent(for: .playlist) {
+                    scrollContainerIfNeeded(for: playlistContent)
+                }
             } else {
                 unavailableText("Playlist queue isn’t available right now.")
             }
         case .suggestions:
-            scrollContainerIfNeeded(for: suggestionsContent)
+            wrappedPanelContent(for: .suggestions) {
+                scrollContainerIfNeeded(for: suggestionsContent)
+            }
         case .liveChat:
             if liveChatContent != nil {
-                liveChatCard
+                wrappedPanelContent(for: .liveChat) {
+                    if let liveChatContent {
+                        liveChatContent
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    }
+                }
                     .frame(
                         maxWidth: .infinity,
                         maxHeight: isImmersive ? .infinity : standardLiveChatHeight,
@@ -1834,29 +1823,35 @@ private struct WatchSecondaryPanel: View {
         }
     }
 
+    private func wrappedPanelContent<Content: View>(
+        for tab: PlayerSidePanelTab,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let shouldWrap = isImmersive || tab == .playlist || tab == .liveChat
+
+        return Group {
+            if shouldWrap {
+                content()
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .fill(settings.cardBackgroundColor.opacity(0.94))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                    )
+            } else {
+                content()
+            }
+        }
+    }
+
     @ViewBuilder
     private func unavailableText(_ text: String) -> some View {
         Text(text)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private var liveChatCard: some View {
-        Group {
-            if let liveChatContent {
-                liveChatContent
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
-        }
-        .padding(isImmersive ? 0 : 16)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(settings.cardBackgroundColor.opacity(isImmersive ? 0.0 : 0.94))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(isImmersive ? 0 : 0.06), lineWidth: 1)
-        )
     }
 
     private func secondaryPanelTab(_ tab: PlayerSidePanelTab, enabled: Bool) -> some View {
@@ -1926,7 +1921,7 @@ private struct LiveChatPanel: View {
                                     LiveChatMessageRow(message: message)
                                 }
                                 Color.clear
-                                    .frame(height: 1)
+                                    .frame(height: 12)
                                     .id("live-chat-bottom")
                             }
                         }
@@ -2197,6 +2192,20 @@ private struct PlayerStageSurface: View {
 
                 if let engine = coordinator.mpvEngine {
                     MPVMetalRenderView(engine: engine, onLayoutChange: coordinator.handlePlayerSurfaceLayoutChange)
+                }
+
+                if !coordinator.isScrubbing,
+                   coordinator.shouldShowPlaybackLoadingOverlay,
+                   let spec = coordinator.storyboard {
+                    let previewTime = coordinator.currentTime
+                    if spec.tileInfo(at: previewTime) != nil {
+                        ScrubVideoOverlay(
+                            spec: spec,
+                            time: previewTime,
+                            containerSize: geo.size
+                        )
+                            .allowsHitTesting(false)
+                    }
                 }
 
                 // During scrubbing, cover the video with a storyboard tile scaled to
@@ -3560,12 +3569,6 @@ private struct PlaylistQueueRailRow: View {
 
     @State private var isHovered = false
 
-    private var statsLine: String {
-        [video.channel, video.viewCountText, video.publishedTimeText]
-            .compactMap { $0 }
-            .joined(separator: " • ")
-    }
-
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Group {
@@ -3581,7 +3584,7 @@ private struct PlaylistQueueRailRow: View {
                 }
             }
             .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
-            .frame(width: 28, height: 76, alignment: .center)
+            .frame(width: 32, height: 85.5, alignment: .center)
 
             ZStack(alignment: .bottomTrailing) {
                 CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 480) {
@@ -3593,7 +3596,7 @@ private struct PlaylistQueueRailRow: View {
                                 .foregroundStyle(.secondary)
                         )
                 }
-                .frame(width: 136, height: 76)
+                .frame(width: 152, height: 85.5)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .overlay(alignment: .bottom) {
                     VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 14, isEnabled: !video.isLive)
@@ -3612,7 +3615,7 @@ private struct PlaylistQueueRailRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(video.title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .lineLimit(2)
 
                 VideoChannelIdentityLine(
@@ -3624,7 +3627,7 @@ private struct PlaylistQueueRailRow: View {
                     onOpenChannel: nil
                 )
 
-                if !video.tags.isEmpty || !statsLine.isEmpty {
+                if !video.tags.isEmpty || video.viewCountText != nil || video.publishedTimeText != nil {
                     VideoStatsMetadataLine(
                         tags: video.tags,
                         viewCountText: video.viewCountText,
@@ -3636,8 +3639,8 @@ private struct PlaylistQueueRailRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 2)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(

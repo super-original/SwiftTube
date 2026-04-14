@@ -681,7 +681,7 @@ private extension ContentView {
                 if historyViewModel.isLoading && historyViewModel.items.isEmpty {
                     LazyVStack(spacing: 14) {
                         ForEach(0..<6, id: \.self) { _ in
-                            PlaylistFeedPlaceholderRow()
+                            HistoryVideoRowPlaceholder()
                         }
                     }
                 } else if let error = historyViewModel.errorMessage {
@@ -901,67 +901,73 @@ private struct ChannelPageScreen: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    if let header = viewModel.header {
-                        ChannelHeaderView(
-                            header: header,
-                            selectedTab: route.tab,
-                            tabs: visibleTabs,
-                            searchQuery: route.searchQuery,
-                            filterOptions: viewModel.filterOptions,
-                            sortOptions: viewModel.sortOptions,
-                            subscription: viewModel.subscription,
+                    if viewModel.header == nil && viewModel.isLoading {
+                        ChannelPageLoadingState(
+                            route: route,
                             contentLayoutMode: contentLayoutMode,
-                            onSelectTab: { tab in
-                                navigation.showChannel(route.channel, tab: tab)
-                            },
-                        onSelectControl: { option in
-                            viewModel.selectSortOption(option)
-                        },
-                        onClearFilters: {
-                            viewModel.clearSelectedFilters()
-                        },
-                        onChangeLayoutMode: { mode in
-                            contentLayoutModeRaw = mode.rawValue
-                        },
-                            onToggleSubscription: {
-                                viewModel.toggleSubscription()
-                            }
+                            columns: gridColumns(for: contentWidth)
                         )
-                    }
-
-                    if route.tab == .about {
-                        ChannelAboutTabContent(
-                            about: viewModel.about,
-                            isLoading: viewModel.isLoadingAbout,
-                            errorMessage: viewModel.aboutErrorMessage,
-                            onRetry: {
-                                viewModel.reload(route: route)
-                            }
-                        )
-                    } else if viewModel.items.isEmpty {
-                        if viewModel.isLoading {
-                            PlaceholderCardGrid(columns: gridColumns(for: contentWidth))
-                        } else if let error = viewModel.errorMessage {
-                            EmptyStateView(
-                                title: "Couldn’t load channel",
-                                message: error,
-                                actionTitle: "Try Again"
-                            ) {
-                                viewModel.reload(route: route)
-                            }
-                        } else {
-                            EmptyStateView(
-                                title: emptyStateTitle,
-                                message: emptyStateMessage,
-                                actionTitle: route.tab == .search ? "Search Again" : "Refresh"
-                            ) {
-                                viewModel.reload(route: route)
-                            }
-                        }
-                    } else if route.tab == .posts {
-                        channelPostsContent(for: contentWidth)
                     } else {
-                        channelBrowseContent(for: contentWidth)
+                        if let header = viewModel.header {
+                            ChannelHeaderView(
+                                header: header,
+                                selectedTab: route.tab,
+                                tabs: visibleTabs,
+                                searchQuery: route.searchQuery,
+                                filterOptions: viewModel.filterOptions,
+                                sortOptions: viewModel.sortOptions,
+                                subscription: viewModel.subscription,
+                                contentLayoutMode: contentLayoutMode,
+                                onSelectTab: { tab in
+                                    navigation.showChannel(route.channel, tab: tab)
+                                },
+                                onSelectControl: { option in
+                                    viewModel.selectSortOption(option)
+                                },
+                                onClearFilters: {
+                                    viewModel.clearSelectedFilters()
+                                },
+                                onChangeLayoutMode: { mode in
+                                    contentLayoutModeRaw = mode.rawValue
+                                },
+                                onToggleSubscription: {
+                                    viewModel.toggleSubscription()
+                                }
+                            )
+                        }
+
+                        if route.tab == .about {
+                            ChannelAboutTabContent(
+                                about: viewModel.about,
+                                isLoading: viewModel.isLoadingAbout,
+                                errorMessage: viewModel.aboutErrorMessage,
+                                onRetry: {
+                                    viewModel.reload(route: route)
+                                }
+                            )
+                        } else if viewModel.items.isEmpty {
+                            if let error = viewModel.errorMessage {
+                                EmptyStateView(
+                                    title: "Couldn’t load channel",
+                                    message: error,
+                                    actionTitle: "Try Again"
+                                ) {
+                                    viewModel.reload(route: route)
+                                }
+                            } else {
+                                EmptyStateView(
+                                    title: emptyStateTitle,
+                                    message: emptyStateMessage,
+                                    actionTitle: route.tab == .search ? "Search Again" : "Refresh"
+                                ) {
+                                    viewModel.reload(route: route)
+                                }
+                            }
+                        } else if route.tab == .posts {
+                            channelPostsContent(for: contentWidth)
+                        } else {
+                            channelBrowseContent(for: contentWidth)
+                        }
                     }
                 }
                 .frame(width: contentWidth, alignment: .leading)
@@ -1172,6 +1178,72 @@ private struct ChannelPageScreen: View {
         default:
             return "YouTube didn’t return any items for this tab."
         }
+    }
+}
+
+private struct ChannelPageLoadingState: View {
+    let route: ChannelRoute
+    let contentLayoutMode: ChannelContentLayoutMode
+    let columns: [GridItem]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            RoundedRectangle(cornerRadius: 28)
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 220)
+
+            HStack(alignment: .top, spacing: 24) {
+                Circle()
+                    .fill(Color.white.opacity(0.08))
+                    .frame(width: 140, height: 140)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.white.opacity(0.10))
+                        .frame(width: 280, height: 34)
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.white.opacity(0.07))
+                        .frame(width: 180, height: 20)
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.white.opacity(0.06))
+                        .frame(maxWidth: 420)
+                        .frame(height: 18)
+                    RoundedRectangle(cornerRadius: 999)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 128, height: 42)
+                }
+            }
+            .redacted(reason: .placeholder)
+
+            HStack(spacing: 10) {
+                ForEach(0..<4, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 999)
+                        .fill(Color.white.opacity(index == 0 ? 0.14 : 0.08))
+                        .frame(width: index == 0 ? 128 : 104, height: 38)
+                }
+            }
+
+            if route.tab == .about {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(0..<6, id: \.self) { _ in
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white.opacity(0.07))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 18)
+                    }
+                }
+                .redacted(reason: .placeholder)
+            } else if contentLayoutMode == .grid {
+                PlaceholderCardGrid(columns: columns)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    ForEach(0..<6, id: \.self) { _ in
+                        HistoryVideoRowPlaceholder()
+                    }
+                }
+            }
+        }
+        .redacted(reason: .placeholder)
     }
 }
 
@@ -2251,11 +2323,7 @@ private struct PlaylistLibraryScreen: View {
     private var content: some View {
         if displayedPlaylists.isEmpty {
             if viewModel.isLoading {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                    ForEach(0..<6, id: \.self) { _ in
-                        PlaceholderCard()
-                    }
-                }
+                PlaylistLibraryPlaceholderGrid(columns: columns)
             } else if let error = viewModel.errorMessage {
                 EmptyStateView(
                     title: "Couldn’t load playlists",
@@ -2350,70 +2418,74 @@ private struct PlaylistFeedScreen: View {
 
     @ViewBuilder
     private var summaryColumn: some View {
-        let summaryPlaylist = libraryPlaylists.first(where: { $0.playlistId == viewModel.playlist.playlistId })
-            ?? PlaylistSummary(
-                playlistId: viewModel.playlist.playlistId,
-                title: viewModel.feed?.title ?? viewModel.playlist.title,
-                privacy: viewModel.feed?.privacy,
-                itemCountText: viewModel.feed?.itemCountText,
-                updatedText: nil,
-                thumbnails: []
-            )
+        if viewModel.isLoading && viewModel.items.isEmpty {
+            PlaylistFeedSummaryPlaceholder(title: viewModel.playlist.title)
+        } else {
+            let summaryPlaylist = libraryPlaylists.first(where: { $0.playlistId == viewModel.playlist.playlistId })
+                ?? PlaylistSummary(
+                    playlistId: viewModel.playlist.playlistId,
+                    title: viewModel.feed?.title ?? viewModel.playlist.title,
+                    privacy: viewModel.feed?.privacy,
+                    itemCountText: viewModel.feed?.itemCountText,
+                    updatedText: nil,
+                    thumbnails: []
+                )
 
-        VStack(alignment: .leading, spacing: 18) {
-            ZStack(alignment: .bottomTrailing) {
-                PlaylistFeedArtwork(playlist: summaryPlaylist)
-                    .frame(width: 312, height: 312)
+            VStack(alignment: .leading, spacing: 18) {
+                ZStack(alignment: .bottomTrailing) {
+                    PlaylistFeedArtwork(playlist: summaryPlaylist)
+                        .frame(width: 312, height: 312)
 
-                if let count = viewModel.feed?.itemCountText {
-                    Text(count)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .padding(14)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text(viewModel.feed?.title ?? viewModel.playlist.title)
-                    .font(.system(size: 34, weight: .bold))
-                    .fixedSize(horizontal: false, vertical: true)
-
-                let details = [viewModel.feed?.ownerText, viewModel.feed?.privacy, viewModel.feed?.itemCountText]
-                    .compactMap { $0 }
-                if !details.isEmpty {
-                    Text(details.joined(separator: " • "))
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            HStack(spacing: 12) {
-                Button {
-                    playPlaylist(startingWith: viewModel.items.first)
-                } label: {
-                    Label("Play All", systemImage: "play.fill")
-                        .font(.headline.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(PlaylistPrimaryActionButtonStyle())
-                .disabled(viewModel.items.isEmpty)
-
-                Button {
-                    if let randomVideo = viewModel.items.randomElement() {
-                        navigation.showVideo(
-                            randomVideo,
-                            playlistContext: (reference: viewModel.playlist, feed: resolvedFeedForSession)
-                        )
-                        navigation.activePlaylistShuffleEnabled = true
+                    if let count = viewModel.feed?.itemCountText {
+                        Text(count)
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .padding(14)
                     }
-                } label: {
-                    Label("Shuffle", systemImage: "shuffle")
-                        .font(.headline.weight(.bold))
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(PlaylistPrimaryActionButtonStyle())
-                .disabled(viewModel.items.isEmpty)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(viewModel.feed?.title ?? viewModel.playlist.title)
+                        .font(.system(size: 34, weight: .bold))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    let details = [viewModel.feed?.ownerText, viewModel.feed?.privacy, viewModel.feed?.itemCountText]
+                        .compactMap { $0 }
+                    if !details.isEmpty {
+                        Text(details.joined(separator: " • "))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        playPlaylist(startingWith: viewModel.items.first)
+                    } label: {
+                        Label("Play All", systemImage: "play.fill")
+                            .font(.headline.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PlaylistPrimaryActionButtonStyle())
+                    .disabled(viewModel.items.isEmpty)
+
+                    Button {
+                        if let randomVideo = viewModel.items.randomElement() {
+                            navigation.showVideo(
+                                randomVideo,
+                                playlistContext: (reference: viewModel.playlist, feed: resolvedFeedForSession)
+                            )
+                            navigation.activePlaylistShuffleEnabled = true
+                        }
+                    } label: {
+                        Label("Shuffle", systemImage: "shuffle")
+                            .font(.headline.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PlaylistPrimaryActionButtonStyle())
+                    .disabled(viewModel.items.isEmpty)
+                }
             }
         }
     }
@@ -2453,7 +2525,7 @@ private struct PlaylistFeedScreen: View {
                 }
             } else {
                 LazyVStack(spacing: 4) {
-                    ForEach(Array(viewModel.items.enumerated()), id: \.element) { index, video in
+                    ForEach(Array(viewModel.items.enumerated()), id: \.element.playlistIdentity) { index, video in
                         PlaylistReorderDropZone {
                             viewModel.reorderItem(withID: $0, toInsertionIndex: index)
                         }
@@ -2742,33 +2814,28 @@ private struct PlaylistFeedPlaceholderRow: View {
         HStack(alignment: .top, spacing: 14) {
             RoundedRectangle(cornerRadius: 11)
                 .fill(Color.white.opacity(0.08))
-                .frame(width: 22, height: 22)
-                .padding(.top, 22)
+                .frame(width: 28, height: 28)
+                .padding(.top, 50)
 
             RoundedRectangle(cornerRadius: 18)
                 .fill(Color.white.opacity(0.08))
-                .frame(width: 232, height: 130.5)
+                .frame(width: 228, height: 128)
 
             VStack(alignment: .leading, spacing: 12) {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.white.opacity(0.08))
-                    .frame(maxWidth: 320)
-                    .frame(height: 22)
+                    .frame(maxWidth: 360)
+                    .frame(height: 24)
                 RoundedRectangle(cornerRadius: 7)
                     .fill(Color.white.opacity(0.06))
-                    .frame(maxWidth: 240)
-                    .frame(height: 15)
+                    .frame(maxWidth: 220)
+                    .frame(height: 18)
                 RoundedRectangle(cornerRadius: 7)
                     .fill(Color.white.opacity(0.05))
-                    .frame(width: 86, height: 14)
+                    .frame(width: 170, height: 16)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 22)
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
         .redacted(reason: .placeholder)
     }
 }
@@ -2839,13 +2906,7 @@ private struct PlaylistVideoRow: View {
             }
             .padding(.vertical, 3)
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            Image(systemName: "chevron.right")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -2865,7 +2926,7 @@ private struct PlaylistFeedDraggableRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .center, spacing: 16) {
             PlaylistRowHandle(
                 isHovered: isHovered,
                 canReorder: canReorder,
@@ -2873,17 +2934,21 @@ private struct PlaylistFeedDraggableRow: View {
                 isCurrent: isCurrent,
                 fullHeight: 128
             )
-            .draggable(video.id)
+            .draggable(video.playlistIdentity)
 
             PlaylistVideoRow(
                 video: video,
                 isMutating: isMutating,
                 onOpenChannel: onOpenChannel
             )
+
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 22)
                 .fill(
@@ -2934,7 +2999,7 @@ private struct PlaylistRowHandle: View {
             }
         }
         .foregroundStyle(isCurrent ? .blue : .secondary)
-        .frame(width: 30, height: fullHeight, alignment: .center)
+        .frame(width: 32, height: fullHeight, alignment: .center)
         .contentShape(Rectangle())
     }
 }
@@ -2997,8 +3062,10 @@ private struct AuthToolbarLabel: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Image(systemName: "person.crop.circle.badge.plus")
-                    .font(.system(size: 18, weight: .semibold))
+                Image(systemName: "person.crop.circle")
+                    .resizable()
+                    .scaledToFit()
+                    .padding(1.5)
                     .foregroundStyle(.secondary)
             }
         }
@@ -3006,6 +3073,60 @@ private struct AuthToolbarLabel: View {
         .clipShape(Circle())
         .overlay(Circle().stroke(Color.white.opacity(0.1), lineWidth: 1))
         .contentShape(Circle())
+    }
+}
+
+private struct PlaylistLibraryPlaceholderGrid: View {
+    let columns: [GridItem]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+            ForEach(0..<6, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 12) {
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(Color.gray.opacity(0.18))
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.gray.opacity(0.22))
+                        .frame(height: 18)
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.gray.opacity(0.16))
+                        .frame(width: 160, height: 14)
+                }
+                .redacted(reason: .placeholder)
+            }
+        }
+    }
+}
+
+private struct PlaylistFeedSummaryPlaceholder: View {
+    let title: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            RoundedRectangle(cornerRadius: 28)
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 312, height: 312)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title)
+                    .font(.system(size: 34, weight: .bold))
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.white.opacity(0.08))
+                    .frame(width: 190, height: 16)
+            }
+            .redacted(reason: .placeholder)
+
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 999)
+                    .fill(Color.white.opacity(0.12))
+                    .frame(height: 46)
+                RoundedRectangle(cornerRadius: 999)
+                    .fill(Color.white.opacity(0.08))
+                    .frame(height: 46)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -4011,6 +4132,37 @@ private struct HistoryVideoRow: View {
             return "\(hours):\(String(format: "%02d", minutes)):\(String(format: "%02d", remainder))"
         }
         return "\(minutes):\(String(format: "%02d", remainder))"
+    }
+}
+
+private struct HistoryVideoRowPlaceholder: View {
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            RoundedRectangle(cornerRadius: 22)
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 228, height: 128)
+
+            VStack(alignment: .leading, spacing: 10) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.white.opacity(0.08))
+                    .frame(maxWidth: 340)
+                    .frame(height: 22)
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.white.opacity(0.06))
+                    .frame(width: 150, height: 16)
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.white.opacity(0.05))
+                    .frame(width: 210, height: 14)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.white.opacity(0.05))
+                .frame(width: 26, height: 26)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .redacted(reason: .placeholder)
     }
 }
 

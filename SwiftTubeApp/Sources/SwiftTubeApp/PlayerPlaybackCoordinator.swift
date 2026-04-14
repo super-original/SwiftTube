@@ -421,6 +421,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var actionFeedback: ActionFeedback? = nil
     @Published private(set) var feedbackGeneration = 0
     @Published var keyboardLocked = false
+    @Published private(set) var isRefreshingPausedSurface = false
     @Published private(set) var videoAspect: Double = 16.0 / 9.0
     @Published private(set) var storyboard: StoryboardSpec? = nil
     @Published private(set) var sponsorSegments: [SponsorBlockSegment] = []
@@ -531,7 +532,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var shouldShowPlaybackLoadingOverlay: Bool {
-        isPreparingInitialPlayback || mpvEngine == nil
+        isPreparingInitialPlayback || isSwitchingQuality || mpvEngine == nil
     }
 
     var playbackLoadingText: String {
@@ -773,6 +774,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         layoutState.isTheaterMode = false
         layoutState.isSidePanelVisible = false
         keyboardLocked = false
+        isRefreshingPausedSurface = false
         videoAspect = 16.0 / 9.0
         storyboard = nil
         sponsorSegments = []
@@ -1017,7 +1019,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         guard !isPlaying, !isScrubbing, !isPreparingInitialPlayback, !isLivePlayback else { return }
 
         pausedResizeRefreshTask?.cancel()
+        isRefreshingPausedSurface = true
         pausedResizeRefreshTask = Task { @MainActor [weak self, weak mpvEngine] in
+            defer {
+                self?.isRefreshingPausedSurface = false
+            }
             try? await Task.sleep(nanoseconds: 180_000_000)
             guard let self, let mpvEngine, !Task.isCancelled else { return }
             guard self.mpvEngine === mpvEngine,
@@ -1032,7 +1038,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             let selectedSubtitleID = selectedSubtitleOptionID
 
             do {
-                try await mpvEngine.reloadCurrentFile(seekTo: restoreTime)
+                try mpvEngine.refreshPausedFrame(at: restoreTime)
                 mpvEngine.pause()
                 if selectedSubtitleID == SubtitleOption.offID {
                     mpvEngine.setSubtitleVisibility(false)
@@ -2022,7 +2028,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             return nil
         }
 
-        guard !keyboardLocked else { return nil }
+        if keyboardLocked {
+            return shouldPassUnhandledKeyboardEventThrough(event) ? event : nil
+        }
 
         if event.keyCode == 49 {
             if event.type == .keyDown {
@@ -2053,13 +2061,21 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             }
         }
 
-        return nil
+        return shouldPassUnhandledKeyboardEventThrough(event) ? event : nil
     }
 
     private func matchesKeyboardLock(_ event: NSEvent) -> Bool {
         guard event.type == .keyDown || event.type == .keyUp else { return false }
         guard let keyCode = AppSettings.shared.keyboardLockKey.keyCode else { return false }
         return event.keyCode == keyCode && KeyBindingModifiers(event.modifierFlags).isEmpty
+    }
+
+    private func shouldPassUnhandledKeyboardEventThrough(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags.contains(.command) {
+            return true
+        }
+        return event.type == .keyUp
     }
 
     // MARK: - Scroll forwarding (NSEvent)
