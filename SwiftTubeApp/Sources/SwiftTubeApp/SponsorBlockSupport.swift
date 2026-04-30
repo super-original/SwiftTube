@@ -96,21 +96,21 @@ enum SponsorBlockCategory: String, CaseIterable, Codable, Identifiable, Sendable
     var description: String {
         switch self {
         case .sponsor:
-            return "Paid promotions, referral spots, and direct ads inside the video."
+            return "Paid promotions, referrals, and direct ads."
         case .selfpromo:
-            return "Unpaid self-promo, merch, donation mentions, or collaborator callouts."
+            return "Creator merch, monetized platforms, charity drives, or unpaid shout-outs."
         case .interaction:
-            return "Mid-video reminders to like, subscribe, follow, or comment."
+            return "Reminders to like, subscribe, follow, comment, or click."
         case .intro:
-            return "Intro stingers, pause cards, countdowns, or repeated non-essential animation."
+            return "Repeated intro animations, title cards, pauses, and opening jingles."
         case .outro:
-            return "Credits, endcards, or wrap-up once the core content is already over."
+            return "Endcards, credits, and outro sections after the main content."
         case .preview:
-            return "Recaps or previews that are not necessary for the current segment."
+            return "Previews or recaps where the information appears later."
         case .hook:
-            return "A short teaser before the real intro or main content starts."
+            return "Teasers, greetings, and goodbyes without new conclusions."
         case .filler:
-            return "Off-topic tangents or filler. This is aggressive, so it stays conservative by default."
+            return "Tangents, jokes, B-roll, fake sponsors, or other non-essential scenes."
         }
     }
 
@@ -137,13 +137,9 @@ enum SponsorBlockCategory: String, CaseIterable, Codable, Identifiable, Sendable
 
     var defaultBehavior: SponsorBlockBehavior {
         switch self {
-        case .sponsor:
-            return .auto
-        case .selfpromo, .interaction, .intro, .outro:
+        case .sponsor, .selfpromo, .interaction, .intro:
             return .manual
-        case .preview, .hook:
-            return .seekBar
-        case .filler:
+        case .outro, .preview, .hook, .filler:
             return .disabled
         }
     }

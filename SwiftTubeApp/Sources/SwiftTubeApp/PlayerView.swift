@@ -295,11 +295,11 @@ private extension PlayerScreen {
     }
 
     var immersiveSidePanelGap: CGFloat {
-        14
+        0
     }
 
     var immersiveSidePanelTrailingPadding: CGFloat {
-        18
+        0
     }
 
     var playback: VideoPlayback? {
@@ -595,14 +595,9 @@ private extension PlayerScreen {
             standardLiveChatHeight: standardLiveChatHeight
         )
             .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color.black.opacity(0.86))
+                Rectangle()
+                    .fill(Color.black.opacity(0.9))
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.34), radius: 24, y: 10)
     }
 
     var channelAndActionsSection: some View {
@@ -1771,7 +1766,7 @@ private struct WatchSecondaryPanel: View {
 
             panelContent
         }
-        .padding(isImmersive ? 16 : 0)
+        .padding(isImmersive ? 18 : 0)
         .frame(maxWidth: .infinity, maxHeight: isImmersive ? .infinity : nil, alignment: .top)
     }
 
@@ -1827,7 +1822,7 @@ private struct WatchSecondaryPanel: View {
         for tab: PlayerSidePanelTab,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        let shouldWrap = isImmersive || tab == .playlist || tab == .liveChat
+        let shouldWrap = !isImmersive && (tab == .playlist || tab == .liveChat)
 
         return Group {
             if shouldWrap {
@@ -2251,13 +2246,10 @@ private struct PlayerStageSurface: View {
                                 coordinator.setHovering(false)
                                 break
                             }
-                            let inVideo = pad < 1 || (location.x >= pad && location.x <= geo.size.width - pad)
-                            if inVideo {
-                                if coordinator.controlsVisible == false {
-                                    coordinator.setHovering(true)
-                                }
-                                coordinator.handlePointerMovement()
+                            if coordinator.controlsVisible == false {
+                                coordinator.setHovering(true)
                             }
+                            coordinator.handlePointerMovement()
                         case .ended:
                             break
                         }
@@ -2442,6 +2434,35 @@ private struct SponsorBlockTimelineOverlay: View {
 
                         Capsule(style: .continuous)
                             .fill(segment.categoryTint.opacity(0.96))
+                            .frame(width: width, height: trackHeight)
+                            .offset(x: startFraction * proxy.size.width)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(height: trackHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct BufferedTimelineOverlay: View {
+    let ranges: [ClosedRange<Double>]
+    let duration: Double
+
+    private let trackHeight: CGFloat = 5
+
+    var body: some View {
+        GeometryReader { proxy in
+            if duration > 0, !ranges.isEmpty {
+                ZStack(alignment: .leading) {
+                    ForEach(Array(ranges.enumerated()), id: \.offset) { _, range in
+                        let startFraction = max(min(range.lowerBound / duration, 1), 0)
+                        let endFraction = max(min(range.upperBound / duration, 1), startFraction)
+                        let width = max((endFraction - startFraction) * proxy.size.width, 2)
+
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.26))
                             .frame(width: width, height: trackHeight)
                             .offset(x: startFraction * proxy.size.width)
                     }
@@ -2718,6 +2739,7 @@ private struct PlayerControlBar: View {
     }
 
     @ObservedObject var coordinator: PlayerPlaybackCoordinator
+    @ObservedObject private var settings = AppSettings.shared
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Namespace private var playPauseNamespace
     @State private var isQualityPopoverPresented = false
@@ -2737,19 +2759,38 @@ private struct PlayerControlBar: View {
     private let liveIndicatorWidth: CGFloat = 88
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                playPauseButton
-                volumeControl
-                Spacer(minLength: 0)
-                subtitlesButton
-                qualityMenu
-                settingsMenu
-                theaterToggle
-                fullscreenButton
-            }
+        Group {
+            if settings.playerControlLayout == .compact {
+                VStack(spacing: 6) {
+                    compactScrubberControl
+                    HStack(spacing: 10) {
+                        playPauseButton
+                        volumeControl
+                        compactTimeStatus
+                        Spacer(minLength: 0)
+                        subtitlesButton
+                        qualityMenu
+                        settingsMenu
+                        theaterToggle
+                        fullscreenButton
+                    }
+                }
+            } else {
+                VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        playPauseButton
+                        volumeControl
+                        Spacer(minLength: 0)
+                        subtitlesButton
+                        qualityMenu
+                        settingsMenu
+                        theaterToggle
+                        fullscreenButton
+                    }
 
-            scrubberControl
+                    scrubberControl
+                }
+            }
         }
         .padding(.horizontal, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2812,54 +2853,7 @@ private struct PlayerControlBar: View {
         HStack(spacing: 12) {
             leadingScrubberStatus
 
-            // Keep this row structure aligned with the pre-refactor scrubber so
-            // the sponsor overlay shares the same native slider geometry.
-            ZStack {
-                SponsorBlockTimelineOverlay(
-                    segments: coordinator.visibleSponsorSegments,
-                    duration: coordinator.duration
-                )
-                .padding(.horizontal, 10)
-                .allowsHitTesting(false)
-
-                Slider(
-                    value: Binding(
-                        get: { coordinator.displayedScrubPosition },
-                        set: { coordinator.updateScrubPosition($0) }
-                    ),
-                    in: coordinator.scrubberRange,
-                    onEditingChanged: { isEditing in
-                        coordinator.setScrubbing(isEditing)
-                        // Always clear the hover fraction so scrubPreviewFraction falls
-                        // through to the isScrubbing path, which tracks scrubPosition
-                        // in real-time rather than the frozen initial hover position.
-                        coordinator.scrubHoverFraction = nil
-                    }
-                )
-                .disabled(!coordinator.hasSeekableTimeline)
-                .accessibilityLabel("Playback position")
-            }
-            // Measure the ZStack width (= Slider width) without affecting layout.
-            .background(
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear { updateMeasuredSliderWidth(geo.size.width) }
-                        .onChange(of: geo.size.width) { _, width in
-                            updateMeasuredSliderWidth(width)
-                        }
-                }
-            )
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let loc):
-                    guard coordinator.hasSeekableTimeline, sliderWidth > 0 else { return }
-                    let trackInset: CGFloat = 10
-                    let trackW = max(1, sliderWidth - trackInset * 2)
-                    coordinator.scrubHoverFraction = max(0, min(1, (loc.x - trackInset) / trackW))
-                case .ended:
-                    coordinator.scrubHoverFraction = nil
-                }
-            }
+            timelineSlider
 
             trailingScrubberStatus
         }
@@ -2873,6 +2867,78 @@ private struct PlayerControlBar: View {
             glass: .regular,
             shape: Capsule()
         )
+    }
+
+    var compactScrubberControl: some View {
+        timelineSlider
+            .frame(height: 18)
+            .padding(.horizontal, 4)
+    }
+
+    var compactTimeStatus: some View {
+        Text("\(coordinator.currentTimeText) / \(coordinator.remainingTimeText)")
+            .font(.caption.weight(.medium))
+            .monospacedDigit()
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .frame(minHeight: compactControlHeight)
+            .playerControlSurface(
+                reduceTransparency: reduceTransparency,
+                glass: .regular,
+                shape: Capsule()
+            )
+    }
+
+    var timelineSlider: some View {
+        ZStack {
+            BufferedTimelineOverlay(
+                ranges: coordinator.visibleBufferedRanges,
+                duration: coordinator.duration
+            )
+            .padding(.horizontal, 10)
+            .allowsHitTesting(false)
+
+            SponsorBlockTimelineOverlay(
+                segments: coordinator.visibleSponsorSegments,
+                duration: coordinator.duration
+            )
+            .padding(.horizontal, 10)
+            .allowsHitTesting(false)
+
+            Slider(
+                value: Binding(
+                    get: { coordinator.displayedScrubPosition },
+                    set: { coordinator.updateScrubPosition($0) }
+                ),
+                in: coordinator.scrubberRange,
+                onEditingChanged: { isEditing in
+                    coordinator.setScrubbing(isEditing)
+                    coordinator.scrubHoverFraction = nil
+                }
+            )
+            .disabled(!coordinator.hasSeekableTimeline)
+            .accessibilityLabel("Playback position")
+        }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { updateMeasuredSliderWidth(geo.size.width) }
+                    .onChange(of: geo.size.width) { _, width in
+                        updateMeasuredSliderWidth(width)
+                    }
+            }
+        )
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let loc):
+                guard coordinator.hasSeekableTimeline, sliderWidth > 0 else { return }
+                let trackInset: CGFloat = 10
+                let trackW = max(1, sliderWidth - trackInset * 2)
+                coordinator.scrubHoverFraction = max(0, min(1, (loc.x - trackInset) / trackW))
+            case .ended:
+                coordinator.scrubHoverFraction = nil
+            }
+        }
     }
 
     @ViewBuilder
@@ -3981,7 +4047,7 @@ private struct ScrubPreviewPositioned: View {
     private let liveIndicatorWidth: CGFloat = 88
     private let scrubberRowHeight: CGFloat = 38
     // Fixed display width for the preview tile; height is derived from the tile's aspect ratio.
-    private let previewDisplayWidth: CGFloat = 136
+    private let previewDisplayWidth: CGFloat = 184
 
     var body: some View {
         if let fraction = coordinator.scrubPreviewFraction,
@@ -4015,7 +4081,8 @@ private struct ScrubPreviewPositioned: View {
                     time: storyboardTime,
                     displayWidth: dispW,
                     displayHeight: dispH,
-                    timestampText: timestampText(for: hoverTime)
+                    timestampText: timestampText(for: hoverTime),
+                    categoryText: coordinator.sponsorSegment(at: hoverTime)?.categoryShortTitle
                 )
                     .fixedSize()
                     .position(x: clampedX, y: popupY)
@@ -4048,6 +4115,7 @@ private struct ScrubPreviewBubble: View {
     let displayWidth: CGFloat
     let displayHeight: CGFloat
     let timestampText: String
+    let categoryText: String?
 
     var body: some View {
         VStack(spacing: 5) {
@@ -4065,6 +4133,15 @@ private struct ScrubPreviewBubble: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(Capsule().fill(Color.black.opacity(0.72)))
+
+            if let categoryText {
+                Text(categoryText)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.black.opacity(0.72)))
+            }
         }
         .shadow(color: .black.opacity(0.55), radius: 10, y: 4)
     }

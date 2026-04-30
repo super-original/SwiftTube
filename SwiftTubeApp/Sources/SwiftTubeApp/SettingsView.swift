@@ -5,6 +5,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case appearance
     case sidebar
     case notifications
+    case advanced
     case playback
     case controls
     case sponsorBlock
@@ -13,7 +14,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     static var appSection: [SettingsPane] {
-        [.appearance, .sidebar, .notifications]
+        [.appearance, .sidebar, .notifications, .advanced]
     }
 
     static var playbackSection: [SettingsPane] {
@@ -29,6 +30,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .appearance: return "Appearance"
         case .sidebar: return "Sidebar"
         case .notifications: return "Notifications"
+        case .advanced: return "Advanced"
         case .playback: return "Playback"
         case .controls: return "Controls"
         case .sponsorBlock: return "SponsorBlock"
@@ -41,6 +43,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .appearance: return "circle.lefthalf.filled"
         case .sidebar: return "sidebar.left"
         case .notifications: return "bell.badge"
+        case .advanced: return "wrench.and.screwdriver"
         case .playback: return "play.circle"
         case .controls: return "keyboard"
         case .sponsorBlock: return "scissors"
@@ -140,6 +143,8 @@ struct SettingsView: View {
                         SidebarPane()
                     case .notifications:
                         NotificationsPane()
+                    case .advanced:
+                        AdvancedPane()
                     case .playback:
                         PlaybackPane()
                     case .controls:
@@ -164,21 +169,6 @@ struct SettingsView: View {
 private struct AppearancePane: View {
     @ObservedObject private var settings = AppSettings.shared
 
-    private var widthText: String {
-        "\(Int(settings.browseVideoCardWidth)) pt"
-    }
-
-    private var densityLabel: String {
-        switch settings.browseVideoCardWidth {
-        case ..<320:
-            return "Compact"
-        case ..<390:
-            return "Balanced"
-        default:
-            return "Large"
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
@@ -196,34 +186,21 @@ private struct AppearancePane: View {
 
             SettingsCard(title: "Video Grid", icon: "rectangle.grid.2x2") {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Recommendations and search size")
-                                .font(.headline)
-                        }
-
+                    HStack(alignment: .center) {
+                        Text("Recommendations and search size")
+                            .font(.headline)
                         Spacer()
-
-                        Text("\(densityLabel) · \(widthText)")
+                        Text("\(settings.browseVideoGridPreset.title) · \(settings.browseVideoGridPreset.columnHint)")
                             .font(.callout.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
 
-                    Slider(
-                        value: $settings.browseVideoCardWidth,
-                        in: AppSettings.browseVideoCardWidthRange,
-                        step: AppSettings.browseVideoCardWidthStep
-                    )
-
-                    HStack {
-                        Text("Smaller")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("Larger")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
+                    Picker("Grid size", selection: $settings.browseVideoGridPreset) {
+                        ForEach(BrowseVideoGridPreset.allCases) { preset in
+                            Text(preset.title).tag(preset)
+                        }
                     }
+                    .pickerStyle(.segmented)
                 }
             }
         }
@@ -393,11 +370,6 @@ private struct SidebarSettingsListRow: View {
 
 private struct NotificationsPane: View {
     @ObservedObject private var settings = AppSettings.shared
-    @ObservedObject private var mutationCenter = AppMutationCenter.shared
-    @State private var customTitle = "Custom notification"
-    @State private var customMessage = "This is how your custom toast will look."
-    @State private var customSymbol = "wand.and.stars"
-    @State private var customColor = Color(red: 0.49, green: 0.75, blue: 1.0)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -444,8 +416,38 @@ private struct NotificationsPane: View {
                     .labelsHidden()
                 }
             }
+        }
+    }
+}
 
-            SettingsCard(title: "Preview", icon: "sparkles") {
+private struct AdvancedPane: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var mutationCenter = AppMutationCenter.shared
+    @State private var customTitle = "Custom notification"
+    @State private var customMessage = "This is how your custom toast will look."
+    @State private var customSymbol = "wand.and.stars"
+    @State private var customColor = Color(red: 0.49, green: 0.75, blue: 1.0)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsHeader(
+                title: "Advanced",
+                subtitle: "Testing and reset options."
+            )
+
+            SettingsCard(title: "Onboarding", icon: "sparkles.tv") {
+                HStack {
+                    Text("First-time setup")
+                        .font(.headline)
+                    Spacer()
+                    Button("Restart Onboarding") {
+                        settings.onboardingCompleted = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+
+            SettingsCard(title: "Notification Tester", icon: "sparkles") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Quick presets")
                         .font(.headline)
@@ -602,6 +604,19 @@ private struct PlaybackPane: View {
                 }
 
             }
+
+            SettingsCard(title: "Player Controls", icon: "slider.horizontal.below.rectangle") {
+                NativePickerRow(
+                    title: "Control layout"
+                ) {
+                    Picker("Control layout", selection: $settings.playerControlLayout) {
+                        ForEach(PlayerControlLayout.allCases) { layout in
+                            Text(layout.title).tag(layout)
+                        }
+                    }
+                    .labelsHidden()
+                }
+            }
         }
     }
 
@@ -669,6 +684,10 @@ private struct SponsorBlockCategoryRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(category.shortTitle)
                     .font(.headline)
+                Text(category.description)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 16)

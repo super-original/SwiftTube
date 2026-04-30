@@ -621,6 +621,52 @@ enum NotificationPlacement: String, CaseIterable, Identifiable {
     }
 }
 
+enum BrowseVideoGridPreset: String, CaseIterable, Identifiable {
+    case compact
+    case standard
+    case large
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .compact: return "Compact"
+        case .standard: return "Default"
+        case .large: return "Large"
+        }
+    }
+
+    var cardWidth: Double {
+        switch self {
+        case .compact: return 250
+        case .standard: return 340
+        case .large: return 520
+        }
+    }
+
+    var columnHint: String {
+        switch self {
+        case .compact: return "4 columns"
+        case .standard: return "3 columns"
+        case .large: return "2 columns"
+        }
+    }
+}
+
+enum PlayerControlLayout: String, CaseIterable, Identifiable {
+    case standard
+    case compact
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .standard: return "Standard"
+        case .compact: return "Compact"
+        }
+    }
+}
+
 final class AppSettings: ObservableObject {
     nonisolated(unsafe) static let shared = AppSettings()
 
@@ -633,11 +679,14 @@ final class AppSettings: ObservableObject {
     private let notificationDisplayModeKey = "notificationDisplayMode"
     private let notificationPlacementKey = "notificationPlacement"
     private let notificationAutoHideDelayKey = "notificationAutoHideDelay"
+    private let browseVideoGridPresetKey = "browseVideoGridPreset"
     private let browseVideoCardWidthKey = "browseVideoCardWidth"
     private let appearanceModeMigrationKey = "appearanceModeMigration0130"
     private let sponsorBlockEnabledKey = "sponsorBlockEnabled"
     private let sponsorBlockAutoSkipKey = "sponsorBlockAutoSkipEnabled"
     private let sponsorBlockCategoryBehaviorsKey = "sponsorBlockCategoryBehaviors"
+    private let playerControlLayoutKey = "playerControlLayout"
+    private let onboardingCompletedKey = "onboardingCompleted"
 
     @Published var appearanceMode: AppAppearanceMode {
         didSet { defaults.set(appearanceMode.rawValue, forKey: "appearanceMode") }
@@ -703,8 +752,11 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(notificationAutoHideDelay, forKey: notificationAutoHideDelayKey) }
     }
 
-    @Published var browseVideoCardWidth: Double {
-        didSet { defaults.set(browseVideoCardWidth, forKey: browseVideoCardWidthKey) }
+    @Published var browseVideoGridPreset: BrowseVideoGridPreset {
+        didSet {
+            defaults.set(browseVideoGridPreset.rawValue, forKey: browseVideoGridPresetKey)
+            defaults.set(browseVideoGridPreset.cardWidth, forKey: browseVideoCardWidthKey)
+        }
     }
 
     @Published var sponsorBlockEnabled: Bool {
@@ -713,6 +765,14 @@ final class AppSettings: ObservableObject {
 
     @Published var sponsorBlockCategoryBehaviors: [SponsorBlockCategory: SponsorBlockBehavior] {
         didSet { persistSponsorBlockCategoryBehaviors() }
+    }
+
+    @Published var playerControlLayout: PlayerControlLayout {
+        didSet { defaults.set(playerControlLayout.rawValue, forKey: playerControlLayoutKey) }
+    }
+
+    @Published var onboardingCompleted: Bool {
+        didSet { defaults.set(onboardingCompleted, forKey: onboardingCompletedKey) }
     }
 
     init() {
@@ -786,10 +846,19 @@ final class AppSettings: ObservableObject {
             ? storedNotificationDelay
             : 4
 
-        let storedBrowseVideoCardWidth = defaults.double(forKey: browseVideoCardWidthKey)
-        self.browseVideoCardWidth = Self.browseVideoCardWidthRange.contains(storedBrowseVideoCardWidth)
-            ? storedBrowseVideoCardWidth
-            : 380
+        if let storedGridPreset = BrowseVideoGridPreset(rawValue: defaults.string(forKey: browseVideoGridPresetKey) ?? "") {
+            self.browseVideoGridPreset = storedGridPreset
+        } else {
+            let storedBrowseVideoCardWidth = defaults.double(forKey: browseVideoCardWidthKey)
+            switch storedBrowseVideoCardWidth {
+            case let width where width >= 390:
+                self.browseVideoGridPreset = .large
+            case let width where width > 0 && width < 320:
+                self.browseVideoGridPreset = .compact
+            default:
+                self.browseVideoGridPreset = .standard
+            }
+        }
         if defaults.object(forKey: sponsorBlockEnabledKey) == nil {
             self.sponsorBlockEnabled = true
         } else {
@@ -806,14 +875,24 @@ final class AppSettings: ObservableObject {
             from: defaults,
             legacyAutoSkipEnabled: legacyAutoSkipEnabled
         )
+        self.playerControlLayout = PlayerControlLayout(rawValue: defaults.string(forKey: playerControlLayoutKey) ?? "") ?? .standard
+        if defaults.object(forKey: onboardingCompletedKey) == nil {
+            let hasExistingProfile = defaults.object(forKey: "appearanceMode") != nil
+                || defaults.object(forKey: browseVideoCardWidthKey) != nil
+                || defaults.object(forKey: sponsorBlockEnabledKey) != nil
+            self.onboardingCompleted = hasExistingProfile
+        } else {
+            self.onboardingCompleted = defaults.bool(forKey: onboardingCompletedKey)
+        }
     }
 
     static let seekSecondsOptions = [3, 5, 10, 15, 30, 45, 60, 90]
     static let playbackSpeedOptions: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     static let spacebarHoldPlaybackSpeedOptions: [Double] = [1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
     static let notificationAutoHideDelayOptions: [Double] = [2, 4, 6, 8, 12]
-    static let browseVideoCardWidthRange: ClosedRange<Double> = 280...440
-    static let browseVideoCardWidthStep: Double = 10
+    var browseVideoCardWidth: Double {
+        browseVideoGridPreset.cardWidth
+    }
 
     var preferredColorScheme: ColorScheme {
         appearanceMode.preferredColorScheme
@@ -1149,13 +1228,7 @@ private extension AppSettings {
         }
 
         return Dictionary(uniqueKeysWithValues: SponsorBlockCategory.allCases.map { category in
-            let behavior: SponsorBlockBehavior
-            if category == .sponsor {
-                behavior = legacyAutoSkipEnabled ? .auto : .manual
-            } else {
-                behavior = category.defaultBehavior
-            }
-            return (category, behavior)
+            (category, category.defaultBehavior)
         })
     }
 

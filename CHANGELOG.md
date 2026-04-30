@@ -8,6 +8,15 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.14.4
+
+- Replaced the browse-grid width slider with Compact, Default, and Large presets, defaulting the card width to 340 pt for a YouTube-like three-column layout and letting Large actually reach two-column sizing.
+- Added first-time onboarding for theme, SponsorBlock, control layout, grid density, and optional YouTube session setup, with a restart button moved into a new Advanced settings pane alongside notification testing.
+- Added the compact player-control layout, moved its scrubber above the controls without the separate scrubber pill, and kept the existing standard controls as the default.
+- Made immersive theater/fullscreen side panels edge-to-edge, removed the nested panel treatment there, tightened recommendation rail spacing, and made letterboxed side bars count as player hover space for control fade behavior.
+- Updated SponsorBlock category copy from the official category guidelines, changed new defaults to match the manual/disabled setup, added category names to scrub-hover previews, and enlarged storyboard hover previews.
+- Fed mpv cache ranges into the player timeline as buffered gray ranges and deduplicated subtitle tracks more aggressively so repeated language variants like `English` and `English (en-orig)` collapse into one option.
+
 ## 0.14.3
 
 - Stopped the player’s local keyboard monitor from eating app-level macOS shortcuts like `Command+Q` and `Command+W` while still silencing dead unmapped player key presses, and shrank the signed-out toolbar profile glyph so it no longer clips inside the circular slot.

@@ -427,6 +427,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var sponsorSegments: [SponsorBlockSegment] = []
     @Published private(set) var manualSkipSponsorSegment: SponsorBlockSegment? = nil
     @Published private(set) var liveSeekableRange: ClosedRange<Double>? = nil
+    @Published private(set) var bufferedRanges: [ClosedRange<Double>] = []
     /// Non-nil while the cursor hovers over the scrubber track (0…1 fraction of track width).
     @Published var scrubHoverFraction: Double? = nil
     @Published var volume: Double = 0.9 {
@@ -675,6 +676,20 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         }
     }
 
+    var visibleBufferedRanges: [ClosedRange<Double>] {
+        guard duration > 0, !isLivePlayback else { return [] }
+        return bufferedRanges.compactMap { range in
+            let lower = min(max(range.lowerBound, 0), duration)
+            let upper = min(max(range.upperBound, 0), duration)
+            guard upper > lower else { return nil }
+            return lower...upper
+        }
+    }
+
+    func sponsorSegment(at time: Double) -> SponsorBlockSegment? {
+        visibleSponsorSegments.first { $0.contains(time) }
+    }
+
     var hasSubtitleOptions: Bool {
         !subtitleOptions.isEmpty
     }
@@ -780,6 +795,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         sponsorSegments = []
         manualSkipSponsorSegment = nil
         liveSeekableRange = nil
+        bufferedRanges = []
         scrubHoverFraction = nil
         wasPlayingBeforeScrub = false
         lastInteractionAt = Date()
@@ -1767,6 +1783,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             scrubPosition = currentTime
         }
         liveSeekableRange = isLivePlayback ? snapshot.liveSeekableRange : nil
+        bufferedRanges = snapshot.bufferedRanges
         if snapshot.duration > 0 {
             duration = sanitizeSeconds(snapshot.duration)
         }

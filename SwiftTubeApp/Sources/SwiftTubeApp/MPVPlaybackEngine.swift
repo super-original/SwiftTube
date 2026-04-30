@@ -8,6 +8,7 @@ struct MPVPlaybackSnapshot {
     let isPlaying: Bool
     let isBuffering: Bool
     let liveSeekableRange: ClosedRange<Double>?
+    let bufferedRanges: [ClosedRange<Double>]
 }
 
 @MainActor
@@ -31,6 +32,7 @@ final class MPVPlaybackEngine: NSObject {
     private(set) var isBuffering = false
     private(set) var videoAspect: Double = 16.0 / 9.0
     private(set) var liveSeekableRange: ClosedRange<Double>? = nil
+    private(set) var bufferedRanges: [ClosedRange<Double>] = []
 
     init(request: MPVPlaybackRequest) {
         self.request = request
@@ -133,7 +135,8 @@ final class MPVPlaybackEngine: NSObject {
             duration: duration,
             isPlaying: isPlaying,
             isBuffering: isBuffering,
-            liveSeekableRange: liveSeekableRange
+            liveSeekableRange: liveSeekableRange,
+            bufferedRanges: bufferedRanges
         )
     }
 
@@ -508,6 +511,7 @@ private extension MPVPlaybackEngine {
         isBuffering = flagProperty(MPVProperty.pausedForCache, from: mpv)
         isPlaying = flagProperty(MPVProperty.pause, from: mpv) == false
         let seekableRanges = seekableRangesProperty(MPVProperty.demuxerCacheState, from: mpv)
+        bufferedRanges = seekableRanges
         liveSeekableRange = Self.resolveSeekableRange(from: seekableRanges, currentTime: currentTime)
         let aspect = doubleProperty("video-params/aspect", from: mpv)
         if aspect > 0 { videoAspect = aspect }

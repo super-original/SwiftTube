@@ -27,16 +27,22 @@ struct SwiftTubeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .frame(minWidth: 960, minHeight: 640)
-                .environmentObject(backendManager)
-                .environmentObject(navigationModel)
-                .environmentObject(authSession)
-                .preferredColorScheme(settings.preferredColorScheme)
-                .onAppear {
-                    backendManager.start()
-                    BrandAssets.installApplicationIcon()
+            Group {
+                if settings.onboardingCompleted {
+                    ContentView()
+                } else {
+                    OnboardingView()
                 }
+            }
+            .frame(minWidth: 960, minHeight: 640)
+            .environmentObject(backendManager)
+            .environmentObject(navigationModel)
+            .environmentObject(authSession)
+            .preferredColorScheme(settings.preferredColorScheme)
+            .onAppear {
+                backendManager.start()
+                BrandAssets.installApplicationIcon()
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: false))

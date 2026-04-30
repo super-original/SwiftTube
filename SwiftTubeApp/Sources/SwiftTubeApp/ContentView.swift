@@ -994,11 +994,11 @@ private struct ChannelPageScreen: View {
     private func gridColumns(for availableWidth: CGFloat) -> [GridItem] {
         let resolvedMinimum = max(
             220,
-            min(CGFloat(settings.browseVideoCardWidth), max(availableWidth - 20, 220), 320)
+            min(CGFloat(settings.browseVideoCardWidth), max(availableWidth - 20, 220))
         )
         return [
             GridItem(
-                .adaptive(minimum: resolvedMinimum, maximum: 420),
+                .adaptive(minimum: resolvedMinimum, maximum: 640),
                 spacing: 20,
                 alignment: .top
             )
