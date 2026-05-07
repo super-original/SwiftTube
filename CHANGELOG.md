@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.14.9
+
+- Fixed saved YouTube sessions so startup no longer validates-and-deletes the local cookie file or clears auth state after authenticated request fallbacks.
+- Simplified SponsorBlock onboarding to one short description plus On/Off choices.
+- Tightened onboarding previews by shrinking the player-control mock, keeping compact time on one line, left-aligning the signed-in account step with the rest of onboarding, and sizing grid thumbnails as real 16:9 blocks whose title bars match their width.
+
 ## 0.14.8
 
 - Cleaned up onboarding by keeping the shell dark during theme selection, simplifying SponsorBlock setup to a description, tightening video-grid previews, fixing player-control previews, moving account loading into the chosen sign-in row, and showing privacy after sign-in.

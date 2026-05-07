@@ -48,14 +48,7 @@ actor SwiftTubeBackend {
             return await authManager.signedOutStatus()
         }
 
-        do {
-            try await api.validateAuthentication()
-            await refreshSignedInAccountProfile()
-            return await authManager.authStatus()
-        } catch {
-            _ = try? await authManager.clear(preserveBrowserChoice: false)
-            return await authManager.signedOutStatus(message: error.localizedDescription)
-        }
+        return await authManager.authStatus()
     }
 
     func connectBrowserAuth(browser: String) async throws -> AuthStatusResponse {
@@ -1164,7 +1157,6 @@ actor SwiftTubeBackend {
     }
 
     private func refreshAuthenticatedSessionIfPossible() async -> Bool {
-        await invalidateAuthenticatedSession()
         return false
     }
 

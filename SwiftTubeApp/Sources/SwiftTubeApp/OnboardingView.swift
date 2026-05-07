@@ -278,6 +278,11 @@ private struct SponsorBlockStage: View {
         VStack(alignment: .leading, spacing: 22) {
             stageTitle("SponsorBlock")
 
+            Text("SponsorBlock can detect, show, and skip unnecessary parts of the video such as sponsored segments, self promotion, and more.")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             HStack(alignment: .top, spacing: 16) {
                 SponsorBlockModeCard(
                     title: "On",
@@ -291,8 +296,6 @@ private struct SponsorBlockStage: View {
                     action: { sponsorBlockEnabled = false }
                 )
             }
-
-            SponsorBlockDescriptionCard(isEnabled: sponsorBlockEnabled)
         }
     }
 }
@@ -340,32 +343,6 @@ private struct SponsorBlockModeCard: View {
     }
 }
 
-private struct SponsorBlockDescriptionCard: View {
-    let isEnabled: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label(isEnabled ? "Manual skips by default" : "SponsorBlock disabled", systemImage: isEnabled ? "forward.end.fill" : "nosign")
-                    .font(.title3.weight(.bold))
-                Spacer()
-            }
-
-            Text(isEnabled ? "SwiftTube marks community-submitted sponsor, self promo, reminder, intro, endcard, preview, hook, and filler segments. The default setup uses manual skip for sponsor, self promo, reminders, and intros; the rest stay disabled." : "SwiftTube will not request SponsorBlock segments or show category markers.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(isEnabled ? BrandAssets.swiftTubeBlue.opacity(0.7) : Color.white.opacity(0.08), lineWidth: 1.5)
-        )
-    }
-}
-
 private struct ControlLayoutCard: View {
     let layout: PlayerControlLayout
     @Binding var selection: PlayerControlLayout
@@ -388,7 +365,7 @@ private struct ControlLayoutCard: View {
                 OnboardingPlayerControlsPreview(layout: layout)
             }
             .padding(20)
-            .frame(maxWidth: .infinity, minHeight: 260, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -441,7 +418,7 @@ private struct GridPresetCard: View {
                     .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
             }
             .padding(18)
-            .frame(maxWidth: .infinity, minHeight: 250, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 310, alignment: .topLeading)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -532,7 +509,7 @@ private struct AccountStage: View {
 
             if status.authenticated {
                 SignedInAccountCard(status: status)
-                    .frame(maxWidth: 620, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 VStack(spacing: 14) {
                     ForEach(BrowserLoginOption.allCases) { browser in
@@ -703,7 +680,7 @@ private struct OnboardingPlayerControlsPreview: View {
     let layout: PlayerControlLayout
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             if layout == .compact {
                 previewSlider
                 compactControlsRow
@@ -712,8 +689,8 @@ private struct OnboardingPlayerControlsPreview: View {
                 scrubberPill
             }
         }
-        .padding(14)
-        .frame(height: 170, alignment: .bottom)
+        .padding(12)
+        .frame(height: 140, alignment: .bottom)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(Color.black.opacity(0.20))
@@ -724,7 +701,7 @@ private struct OnboardingPlayerControlsPreview: View {
         HStack(spacing: 10) {
             previewCircleButton(symbol: "pause.fill")
             previewVolumePill
-            previewTextPill("0:01")
+            previewTextPill("0:01", width: 52)
             Spacer()
             previewCircleButton(symbol: "captions.bubble")
             previewCircleButton(symbol: "gearshape")
@@ -756,7 +733,7 @@ private struct OnboardingPlayerControlsPreview: View {
         .monospacedDigit()
         .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
-        .frame(maxWidth: .infinity, minHeight: 36)
+        .frame(maxWidth: .infinity, minHeight: 32)
         .background(playerControlFill, in: Capsule())
         .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
     }
@@ -765,18 +742,18 @@ private struct OnboardingPlayerControlsPreview: View {
         HStack(spacing: 8) {
             Image(systemName: "speaker.wave.2.fill")
                 .font(.system(size: 14, weight: .semibold))
-                .frame(width: 18, height: 22)
+                .frame(width: 16, height: 20)
             Capsule()
                 .fill(Color.white.opacity(0.24))
-                .frame(width: 68, height: 6)
+                .frame(width: 54, height: 5)
                 .overlay(alignment: .leading) {
                     Capsule()
                         .fill(BrandAssets.swiftTubeBlue)
-                        .frame(width: 44, height: 6)
+                        .frame(width: 34, height: 5)
                 }
         }
-        .padding(.horizontal, 12)
-        .frame(minHeight: 34)
+        .padding(.horizontal, 10)
+        .frame(minHeight: 30)
         .background(playerControlFill, in: Capsule())
         .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
     }
@@ -786,34 +763,37 @@ private struct OnboardingPlayerControlsPreview: View {
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(Color.white.opacity(0.20))
-                    .frame(height: 7)
+                    .frame(height: 6)
                 Capsule()
                     .fill(BrandAssets.swiftTubeBlue)
-                    .frame(width: proxy.size.width * 0.42, height: 7)
+                    .frame(width: proxy.size.width * 0.42, height: 6)
                 SponsorBlockTimelineOverlayPreview()
                 Circle()
                     .fill(Color.white)
-                    .frame(width: 22, height: 22)
-                    .offset(x: max(0, proxy.size.width * 0.42 - 11))
+                    .frame(width: 18, height: 18)
+                    .offset(x: max(0, proxy.size.width * 0.42 - 9))
             }
         }
-        .frame(height: 24)
+        .frame(height: 20)
     }
 
     private func previewCircleButton(symbol: String) -> some View {
         Image(systemName: symbol)
             .font(.system(size: 14, weight: .semibold))
-            .frame(width: 32, height: 32)
+            .frame(width: 30, height: 30)
             .background(playerControlFill, in: Circle())
             .overlay(Circle().stroke(Color.white.opacity(0.10), lineWidth: 1))
     }
 
-    private func previewTextPill(_ text: String) -> some View {
+    private func previewTextPill(_ text: String, width: CGFloat? = nil) -> some View {
         Text(text)
             .font(.caption.weight(.medium))
             .monospacedDigit()
-            .padding(.horizontal, 11)
-            .frame(minHeight: 34)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .padding(.horizontal, width == nil ? 10 : 0)
+            .frame(width: width)
+            .frame(minHeight: 30)
             .background(playerControlFill, in: Capsule())
             .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
     }
@@ -828,10 +808,10 @@ private struct SponsorBlockTimelineOverlayPreview: View {
         GeometryReader { proxy in
             Capsule()
                 .fill(SponsorBlockCategory.sponsor.tint)
-                .frame(width: proxy.size.width * 0.13, height: 7)
+                .frame(width: proxy.size.width * 0.13, height: 6)
                 .offset(x: proxy.size.width * 0.22)
         }
-        .frame(height: 7)
+        .frame(height: 6)
     }
 }
 
@@ -892,43 +872,58 @@ private extension String {
 
 private struct GridPreview: View {
     let columns: Int
+    private let spacing: CGFloat = 8
+
+    private var maxThumbnailWidth: CGFloat {
+        switch columns {
+        case 4:
+            return 76
+        case 3:
+            return 104
+        default:
+            return 126
+        }
+    }
 
     var body: some View {
         GeometryReader { proxy in
-            let spacing: CGFloat = 8
-            let cellWidth = max(1, (proxy.size.width - CGFloat(columns - 1) * spacing) / CGFloat(columns))
-            let cellHeight = min((proxy.size.height - 8) / 2, cellWidth * 0.68)
+            let availableThumbnailWidth = max(1, (proxy.size.width - CGFloat(columns - 1) * spacing) / CGFloat(columns))
+            let thumbnailWidth = min(maxThumbnailWidth, availableThumbnailWidth)
+            let cellHeight = thumbnailWidth * 9 / 16 + 17
+            let contentWidth = thumbnailWidth * CGFloat(columns) + CGFloat(columns - 1) * spacing
 
             VStack(spacing: 8) {
                 ForEach(0..<2, id: \.self) { row in
                     HStack(spacing: spacing) {
                         ForEach(0..<columns, id: \.self) { column in
-                            GridPreviewCell(isAccent: (row + column).isMultiple(of: 2))
-                                .frame(width: cellWidth, height: cellHeight)
+                            GridPreviewCell(isAccent: (row + column).isMultiple(of: 2), thumbnailWidth: thumbnailWidth)
+                                .frame(width: thumbnailWidth, height: cellHeight)
                         }
                     }
                 }
                 Spacer(minLength: 0)
             }
+            .frame(width: contentWidth, alignment: .leading)
         }
-        .frame(height: 118)
+        .frame(height: 184)
     }
 }
 
 private struct GridPreviewCell: View {
     let isAccent: Bool
+    let thumbnailWidth: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: max(4, min(7, thumbnailWidth * 0.04)), style: .continuous)
                 .fill(isAccent ? BrandAssets.swiftTubeBlue.opacity(0.6) : Color.white.opacity(0.20))
-                .aspectRatio(16 / 9, contentMode: .fit)
+                .frame(width: thumbnailWidth, height: thumbnailWidth * 9 / 16)
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(Color.white.opacity(0.38))
-                .frame(height: 5)
+                .frame(width: thumbnailWidth, height: 5)
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(Color.white.opacity(0.18))
-                .frame(width: 36, height: 4)
+                .frame(width: thumbnailWidth * 0.58, height: 4)
         }
     }
 }
