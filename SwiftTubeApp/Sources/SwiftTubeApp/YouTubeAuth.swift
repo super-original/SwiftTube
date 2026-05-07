@@ -13,6 +13,8 @@ struct AuthSessionConfig: Codable, Sendable {
     let browser: String
     let browserLabel: String
     var avatarURL: String?
+    var displayName: String?
+    var email: String?
 }
 
 struct AuthMaterial: Sendable {
@@ -57,7 +59,9 @@ actor YouTubeAuthManager {
             browser: material.browser,
             browserLabel: material.browserLabel,
             message: message ?? "Personalized recommendations and authenticated playback are on.",
-            avatarUrl: config?.avatarURL
+            avatarUrl: config?.avatarURL,
+            displayName: config?.displayName,
+            email: config?.email
         )
     }
 
@@ -67,7 +71,9 @@ actor YouTubeAuthManager {
             browser: config?.browser,
             browserLabel: config?.browserLabel,
             message: message,
-            avatarUrl: nil
+            avatarUrl: nil,
+            displayName: nil,
+            email: nil
         )
     }
 
@@ -82,7 +88,13 @@ actor YouTubeAuthManager {
         }
 
         try await YTDLPTool.exportCookies(from: browserKey, to: cookieFileURL)
-        let config = AuthSessionConfig(browser: browserKey, browserLabel: browserLabel, avatarURL: self.config?.avatarURL)
+        let config = AuthSessionConfig(
+            browser: browserKey,
+            browserLabel: browserLabel,
+            avatarURL: self.config?.avatarURL,
+            displayName: self.config?.displayName,
+            email: self.config?.email
+        )
         let material = try Self.loadMaterial(config: config, cookieFileURL: cookieFileURL)
 
         self.config = config
@@ -105,6 +117,16 @@ actor YouTubeAuthManager {
     func updateAvatarURL(_ avatarURL: String?) throws {
         guard var config else { return }
         guard config.avatarURL != avatarURL else { return }
+        config.avatarURL = avatarURL
+        self.config = config
+        try Self.saveConfig(config, to: configURL)
+    }
+
+    func updateAccountProfile(displayName: String?, email: String?, avatarURL: String?) throws {
+        guard var config else { return }
+        guard config.displayName != displayName || config.email != email || config.avatarURL != avatarURL else { return }
+        config.displayName = displayName
+        config.email = email
         config.avatarURL = avatarURL
         self.config = config
         try Self.saveConfig(config, to: configURL)

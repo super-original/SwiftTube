@@ -891,6 +891,8 @@ struct AuthStatusResponse: Codable, Equatable, Sendable {
     let browserLabel: String?
     let message: String?
     let avatarUrl: String?
+    let displayName: String?
+    let email: String?
 
     var avatarURL: URL? {
         guard let avatarUrl else { return nil }
@@ -902,7 +904,9 @@ struct AuthStatusResponse: Codable, Equatable, Sendable {
         browser: nil,
         browserLabel: nil,
         message: nil,
-        avatarUrl: nil
+        avatarUrl: nil,
+        displayName: nil,
+        email: nil
     )
 }
 

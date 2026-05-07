@@ -52,9 +52,7 @@ actor SwiftTubeBackend {
 
         do {
             try await api.validateAuthentication()
-            let payload = try await api.browse(browseID: "FEwhat_to_watch", authenticated: true)
-            let avatarURL = extractSignedInAvatarURL(from: payload)
-            try? await authManager.updateAvatarURL(avatarURL)
+            await refreshSignedInAccountProfile()
             return await authManager.authStatus()
         } catch {
             _ = try? await authManager.clear()
@@ -66,9 +64,7 @@ actor SwiftTubeBackend {
         _ = try await authManager.connect(browser: browser)
         do {
             try await api.validateAuthentication()
-            let payload = try await api.browse(browseID: "FEwhat_to_watch", authenticated: true)
-            let avatarURL = extractSignedInAvatarURL(from: payload)
-            try? await authManager.updateAvatarURL(avatarURL)
+            await refreshSignedInAccountProfile()
             return await authManager.authStatus()
         } catch {
             _ = try? await authManager.clear()
@@ -1178,15 +1174,33 @@ actor SwiftTubeBackend {
         do {
             _ = try await authManager.refreshLastUsedBrowserSession()
             try await api.validateAuthentication()
-            let payload = try await api.browse(browseID: "FEwhat_to_watch", authenticated: true)
-            let avatarURL = extractSignedInAvatarURL(from: payload)
-            try? await authManager.updateAvatarURL(avatarURL)
+            await refreshSignedInAccountProfile()
             await publishAuthSessionChange()
             return true
         } catch {
             await invalidateAuthenticatedSession()
             return false
         }
+    }
+
+    private func refreshSignedInAccountProfile() async {
+        var profile = SignedInAccountProfile()
+
+        if let accountMenu = try? await api.accountMenu(authenticated: true) {
+            profile.merge(extractSignedInAccountProfile(from: accountMenu))
+        }
+
+        if profile.avatarURL == nil {
+            if let payload = try? await api.browse(browseID: "FEwhat_to_watch", authenticated: true) {
+                profile.merge(extractSignedInAccountProfile(from: payload))
+            }
+        }
+
+        try? await authManager.updateAccountProfile(
+            displayName: profile.displayName,
+            email: profile.email,
+            avatarURL: profile.avatarURL
+        )
     }
 
     private func loadRecommendations(continuation: String?, authenticated: Bool) async throws -> JSONDictionary {
@@ -4629,19 +4643,58 @@ private func trackedURL(
     return components.url
 }
 
-private func extractSignedInAvatarURL(from data: Any) -> String? {
-    var resolvedURL: String?
+private struct SignedInAccountProfile {
+    var displayName: String?
+    var email: String?
+    var avatarURL: String?
+
+    mutating func merge(_ other: SignedInAccountProfile) {
+        displayName = displayName ?? other.displayName
+        email = email ?? other.email
+        avatarURL = avatarURL ?? other.avatarURL
+    }
+}
+
+private func extractSignedInAccountProfile(from data: Any) -> SignedInAccountProfile {
+    var profile = SignedInAccountProfile()
 
     visitJSONObjects(in: data) { node in
         if let renderer = node["topbarMenuButtonRenderer"] as? JSONDictionary,
            let url = bestThumbnailURL(thumbnails(from: renderer["avatar"])) {
-            resolvedURL = url
+            profile.avatarURL = profile.avatarURL ?? url
+        }
+
+        if let renderer = node["activeAccountHeaderRenderer"] as? JSONDictionary {
+            profile.displayName = profile.displayName ?? textValue(from: renderer["accountName"])
+            profile.email = profile.email ?? textValue(from: renderer["email"])
+            profile.avatarURL = profile.avatarURL
+                ?? bestThumbnailURL(thumbnails(from: renderer["accountPhoto"]))
+                ?? bestThumbnailURL(thumbnails(from: renderer["avatar"]))
+        }
+
+        if let renderer = node["accountItem"] as? JSONDictionary {
+            profile.displayName = profile.displayName
+                ?? textValue(from: renderer["accountName"])
+                ?? textValue(from: renderer["name"])
+                ?? textValue(from: renderer["title"])
+            profile.email = profile.email
+                ?? textValue(from: renderer["email"])
+                ?? textValue(from: renderer["accountEmail"])
+                ?? textValue(from: renderer["subtitle"])
+            profile.avatarURL = profile.avatarURL
+                ?? bestThumbnailURL(thumbnails(from: renderer["accountPhoto"]))
+                ?? bestThumbnailURL(thumbnails(from: renderer["avatar"]))
+                ?? bestThumbnailURL(thumbnails(from: renderer["thumbnail"]))
+        }
+
+        if let email = profile.email, profile.displayName != nil, profile.avatarURL != nil, email.contains("@") {
             return .stop
         }
+
         return .continue
     }
 
-    return resolvedURL
+    return profile
 }
 
 private func randomPlaybackNonce() -> String {

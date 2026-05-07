@@ -112,6 +112,10 @@ final class YouTubeAPI: @unchecked Sendable {
         try await request(profile: .web, endpoint: "guide", body: [:], authenticated: authenticated)
     }
 
+    func accountMenu(authenticated: Bool = true) async throws -> JSONDictionary {
+        try await request(profile: .web, endpoint: "account/account_menu", body: [:], authenticated: authenticated)
+    }
+
     func browse(
         profile: InnerTubeClientProfile = .web,
         browseID: String? = nil,

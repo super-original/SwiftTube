@@ -1,6 +1,17 @@
 import AppKit
 import SwiftUI
 
+private func browseGridColumns(count: Int) -> [GridItem] {
+    Array(
+        repeating: GridItem(
+            .flexible(minimum: 220, maximum: 640),
+            spacing: 20,
+            alignment: .top
+        ),
+        count: max(1, count)
+    )
+}
+
 private enum SearchAssistState: Equatable {
     case hidden
     case loading
@@ -48,13 +59,7 @@ struct ContentView: View {
     @EnvironmentObject private var authSession: AuthSessionModel
 
     private var columns: [GridItem] {
-        [
-            GridItem(
-                .adaptive(minimum: CGFloat(settings.browseVideoCardWidth)),
-                spacing: 20,
-                alignment: .top
-            )
-        ]
+        browseGridColumns(count: settings.browseVideoGridPreset.columnCount)
     }
     private let searchChromeWidth: CGFloat = 300
     private let searchAssistWidth: CGFloat = 680
@@ -992,17 +997,9 @@ private struct ChannelPageScreen: View {
     }
 
     private func gridColumns(for availableWidth: CGFloat) -> [GridItem] {
-        let resolvedMinimum = max(
-            220,
-            min(CGFloat(settings.browseVideoCardWidth), max(availableWidth - 20, 220))
-        )
-        return [
-            GridItem(
-                .adaptive(minimum: resolvedMinimum, maximum: 640),
-                spacing: 20,
-                alignment: .top
-            )
-        ]
+        let minimumCardWidth: CGFloat = 220
+        let maximumColumns = max(1, Int((availableWidth + 20) / (minimumCardWidth + 20)))
+        return browseGridColumns(count: min(settings.browseVideoGridPreset.columnCount, maximumColumns))
     }
 
     @ViewBuilder

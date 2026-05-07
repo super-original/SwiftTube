@@ -644,6 +644,14 @@ enum BrowseVideoGridPreset: String, CaseIterable, Identifiable {
         }
     }
 
+    var columnCount: Int {
+        switch self {
+        case .compact: return 4
+        case .standard: return 3
+        case .large: return 2
+        }
+    }
+
     var columnHint: String {
         switch self {
         case .compact: return "4 columns"

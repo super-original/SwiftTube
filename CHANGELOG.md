@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.14.6
+
+- Tightened onboarding so theme choices no longer recolor the onboarding shell, SponsorBlock and player-control setup are separate steps, and the player-control choice uses a closer preview of the real glass control bar.
+- Made browse-grid presets resolve to actual fixed column counts for Compact, Default, and Large, and equalized the onboarding grid cards so Large no longer towers over the other choices.
+- Reworked account onboarding into a browser-choice flow with real app icons, skipped the account step when already signed in, and added authenticated YouTube account-menu extraction for display name and email alongside the saved avatar.
+
 ## 0.14.5
 
 - Rebuilt onboarding around the SwiftTube blue visual identity with a Mythic-style animated progress header, single primary Next flow, and preview-led theme, playback, grid, account, and privacy steps.
