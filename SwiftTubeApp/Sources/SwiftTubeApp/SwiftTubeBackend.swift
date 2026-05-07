@@ -73,7 +73,7 @@ actor SwiftTubeBackend {
     }
 
     func clearAuthSession() async throws -> AuthStatusResponse {
-        try await authManager.clear()
+        try await authManager.clear(preserveBrowserChoice: false)
     }
 
     func fetchRecommendations(continuation: String? = nil) async throws -> RecommendationsResponse {

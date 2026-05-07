@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.14.7
+
+- Fixed explicit YouTube disconnect so it clears the saved browser reconnect state instead of signing the account back in on the next auth-status refresh.
+
 ## 0.14.6
 
 - Tightened onboarding so theme choices no longer recolor the onboarding shell, SponsorBlock and player-control setup are separate steps, and the player-control choice uses a closer preview of the real glass control bar.
