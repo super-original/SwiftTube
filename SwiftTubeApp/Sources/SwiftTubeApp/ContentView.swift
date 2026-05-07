@@ -147,7 +147,7 @@ struct ContentView: View {
             }
         }
         .task(id: authSession.contentRefreshID) {
-            guard backend.isRunning else { return }
+            guard backend.isRunning, authSession.hasLoadedStatus else { return }
             viewModel.reload()
             historyViewModel.reload()
             playlistLibraryViewModel.reload()

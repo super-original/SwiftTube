@@ -44,10 +44,8 @@ actor SwiftTubeBackend {
     }
 
     func authStatus() async throws -> AuthStatusResponse {
-        if await authManager.currentMaterial() == nil {
-            if (try? await authManager.refreshLastUsedBrowserSession()) == nil {
-                return await authManager.signedOutStatus()
-            }
+        guard await authManager.currentMaterial() != nil else {
+            return await authManager.signedOutStatus()
         }
 
         do {
@@ -55,7 +53,7 @@ actor SwiftTubeBackend {
             await refreshSignedInAccountProfile()
             return await authManager.authStatus()
         } catch {
-            _ = try? await authManager.clear()
+            _ = try? await authManager.clear(preserveBrowserChoice: false)
             return await authManager.signedOutStatus(message: error.localizedDescription)
         }
     }
@@ -1151,16 +1149,11 @@ actor SwiftTubeBackend {
             return material
         }
 
-        if await refreshAuthenticatedSessionIfPossible(),
-           let material = await authManager.currentMaterial() {
-            return material
-        }
-
         throw BackendClientError(message: "Sign in to YouTube to use this action.")
     }
 
     private func invalidateAuthenticatedSession() async {
-        _ = try? await authManager.clear()
+        _ = try? await authManager.clear(preserveBrowserChoice: false)
         await publishAuthSessionChange()
     }
 
@@ -1171,16 +1164,8 @@ actor SwiftTubeBackend {
     }
 
     private func refreshAuthenticatedSessionIfPossible() async -> Bool {
-        do {
-            _ = try await authManager.refreshLastUsedBrowserSession()
-            try await api.validateAuthentication()
-            await refreshSignedInAccountProfile()
-            await publishAuthSessionChange()
-            return true
-        } catch {
-            await invalidateAuthenticatedSession()
-            return false
-        }
+        await invalidateAuthenticatedSession()
+        return false
     }
 
     private func refreshSignedInAccountProfile() async {

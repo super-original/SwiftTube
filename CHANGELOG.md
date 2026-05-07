@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.14.8
+
+- Cleaned up onboarding by keeping the shell dark during theme selection, simplifying SponsorBlock setup to a description, tightening video-grid previews, fixing player-control previews, moving account loading into the chosen sign-in row, and showing privacy after sign-in.
+- Stopped startup auth checks from re-importing browser cookies automatically, so SwiftTube uses its saved YouTube session until the user explicitly connects Chrome or Safari again.
+- Delayed the initial home reload until auth status is loaded, preventing the signed-out Explore feed from flashing before signed-in recommendations appear.
+
 ## 0.14.7
 
 - Fixed explicit YouTube disconnect so it clears the saved browser reconnect state instead of signing the account back in on the next auth-status refresh.

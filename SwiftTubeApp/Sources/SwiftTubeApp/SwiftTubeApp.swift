@@ -38,7 +38,7 @@ struct SwiftTubeApp: App {
             .environmentObject(backendManager)
             .environmentObject(navigationModel)
             .environmentObject(authSession)
-            .preferredColorScheme(settings.preferredColorScheme)
+            .preferredColorScheme(settings.onboardingCompleted ? settings.preferredColorScheme : .dark)
             .onAppear {
                 backendManager.start()
                 BrandAssets.installApplicationIcon()

@@ -32,6 +32,7 @@ final class AuthSessionModel: ObservableObject {
     @Published private(set) var errorMessage: String? = nil
     @Published var isSheetPresented = false
     @Published private(set) var contentRefreshID = UUID()
+    @Published private(set) var hasLoadedStatus = false
     private var authStatusObserver: NSObjectProtocol?
 
     init() {
@@ -55,6 +56,7 @@ final class AuthSessionModel: ObservableObject {
             status = .signedOut
             errorMessage = error.localizedDescription
         }
+        hasLoadedStatus = true
 
         if previousStatus != status {
             contentRefreshID = UUID()
