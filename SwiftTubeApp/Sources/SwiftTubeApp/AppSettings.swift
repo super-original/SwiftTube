@@ -686,6 +686,7 @@ final class AppSettings: ObservableObject {
     private let sponsorBlockAutoSkipKey = "sponsorBlockAutoSkipEnabled"
     private let sponsorBlockCategoryBehaviorsKey = "sponsorBlockCategoryBehaviors"
     private let playerControlLayoutKey = "playerControlLayout"
+    private let sendWatchProgressToYouTubeKey = "sendWatchProgressToYouTube"
     private let onboardingCompletedKey = "onboardingCompleted"
 
     @Published var appearanceMode: AppAppearanceMode {
@@ -769,6 +770,10 @@ final class AppSettings: ObservableObject {
 
     @Published var playerControlLayout: PlayerControlLayout {
         didSet { defaults.set(playerControlLayout.rawValue, forKey: playerControlLayoutKey) }
+    }
+
+    @Published var sendWatchProgressToYouTube: Bool {
+        didSet { defaults.set(sendWatchProgressToYouTube, forKey: sendWatchProgressToYouTubeKey) }
     }
 
     @Published var onboardingCompleted: Bool {
@@ -876,6 +881,11 @@ final class AppSettings: ObservableObject {
             legacyAutoSkipEnabled: legacyAutoSkipEnabled
         )
         self.playerControlLayout = PlayerControlLayout(rawValue: defaults.string(forKey: playerControlLayoutKey) ?? "") ?? .standard
+        if defaults.object(forKey: sendWatchProgressToYouTubeKey) == nil {
+            self.sendWatchProgressToYouTube = true
+        } else {
+            self.sendWatchProgressToYouTube = defaults.bool(forKey: sendWatchProgressToYouTubeKey)
+        }
         if defaults.object(forKey: onboardingCompletedKey) == nil {
             let hasExistingProfile = defaults.object(forKey: "appearanceMode") != nil
                 || defaults.object(forKey: browseVideoCardWidthKey) != nil

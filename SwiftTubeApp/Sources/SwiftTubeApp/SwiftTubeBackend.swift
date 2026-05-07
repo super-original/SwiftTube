@@ -375,13 +375,15 @@ actor SwiftTubeBackend {
             didFinish: didFinish
         )
 
-        if await authManager.currentMaterial() != nil {
+        if AppSettings.shared.sendWatchProgressToYouTube, await authManager.currentMaterial() != nil {
             await syncYouTubeWatchProgress(
                 videoID: videoID,
                 currentTime: currentTime,
                 duration: duration,
                 didFinish: didFinish
             )
+        } else {
+            activeWatchSyncSessions.removeValue(forKey: videoID)
         }
 
         await MainActor.run {

@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.14.5
+
+- Rebuilt onboarding around the SwiftTube blue visual identity with a Mythic-style animated progress header, single primary Next flow, and preview-led theme, playback, grid, account, and privacy steps.
+- Added a watch-progress privacy setting so SwiftTube can keep local history without sending watched-video progress to YouTube, with the settings pane explaining that YouTube recommendations will stop learning from those views.
+
 ## 0.14.4
 
 - Replaced the browse-grid width slider with Compact, Default, and Large presets, defaulting the card width to 340 pt for a YouTube-like three-column layout and letting Large actually reach two-column sizing.

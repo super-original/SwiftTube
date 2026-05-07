@@ -8,6 +8,7 @@ enum BrandAssets {
     static let youtubeRed = Color(red: 1, green: 0, blue: 51 / 255)
     static let youtubeLightRed = Color(red: 1, green: 78 / 255, blue: 69 / 255)
     static let youtubeDarkRed = Color(red: 204 / 255, green: 0, blue: 0)
+    static let swiftTubeBlue = Color(red: 0.44, green: 0.80, blue: 0.98)
 
     static let logo: NSImage? = loadImage(
         named: logoResource.0,

@@ -617,6 +617,14 @@ private struct PlaybackPane: View {
                     .labelsHidden()
                 }
             }
+
+            SettingsCard(title: "Privacy", icon: "lock") {
+                NativeToggleRow(
+                    title: "Send watch progress to YouTube",
+                    detail: "Turn this off to keep watch history local. YouTube recommendations will not update from SwiftTube views.",
+                    isOn: $settings.sendWatchProgressToYouTube
+                )
+            }
         }
     }
 
@@ -1059,12 +1067,28 @@ private struct NativePickerRow<PickerContent: View>: View {
 
 private struct NativeToggleRow: View {
     let title: String
+    let detail: String?
     @Binding var isOn: Bool
+
+    init(title: String, detail: String? = nil, isOn: Binding<Bool>) {
+        self.title = title
+        self.detail = detail
+        self._isOn = isOn
+    }
 
     var body: some View {
         HStack(spacing: 16) {
-            Text(title)
-                .font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+
+                if let detail {
+                    Text(detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             Spacer()
 
