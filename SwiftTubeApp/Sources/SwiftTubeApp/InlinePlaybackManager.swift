@@ -412,13 +412,8 @@ private struct InlineThumbnailScrubber: View {
     let storyboard: StoryboardSpec?
     let onSeekFraction: (Double) -> Void
 
-    private var progressFraction: Double {
-        guard duration > 0 else { return 0 }
-        return max(0, min(1, currentTime / duration))
-    }
-
     private var displayedFraction: Double {
-        isExpanded ? hoverFraction : progressFraction
+        isExpanded ? hoverFraction : max(0, min(1, currentTime / max(duration, 1)))
     }
 
     var body: some View {
@@ -427,45 +422,35 @@ private struct InlineThumbnailScrubber: View {
             let hoverTime = duration * displayedFraction
 
             ZStack(alignment: .bottomLeading) {
+                Slider(
+                    value: Binding(
+                        get: { currentTime },
+                        set: { value in
+                            onSeekFraction(value / max(duration, 1))
+                        }
+                    ),
+                    in: 0...max(duration, 1)
+                )
+                .tint(BrandAssets.swiftTubeBlue)
+                .controlSize(.small)
+                .frame(height: 18)
+                .zIndex(1)
+
                 if isExpanded {
                     previewBubble(for: hoverTime, trackWidth: trackWidth)
                         .position(x: previewX(trackWidth: trackWidth), y: previewY)
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-
-                    Slider(
-                        value: Binding(
-                            get: { currentTime },
-                            set: { value in
-                                onSeekFraction(value / max(duration, 1))
-                            }
-                        ),
-                        in: 0...max(duration, 1)
-                    )
-                    .tint(BrandAssets.swiftTubeBlue)
-                    .controlSize(.small)
-                    .frame(height: 18)
-                    .padding(.horizontal, 2)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(.regularMaterial.opacity(0.82))
-                            .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
-                    )
-                } else {
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.white.opacity(0.18))
-
-                        Capsule()
-                            .fill(BrandAssets.swiftTubeBlue)
-                            .frame(width: trackWidth * progressFraction)
-                    }
-                    .frame(height: 5)
+                        .transition(
+                            .opacity
+                                .combined(with: .scale(scale: 0.96))
+                                .combined(with: .offset(y: 5))
+                        )
+                        .zIndex(2)
                 }
             }
+            .frame(maxHeight: .infinity, alignment: .bottom)
             .contentShape(Rectangle())
         }
-        .frame(height: isExpanded ? 112 : 5)
+        .frame(height: isExpanded ? 112 : 18)
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: isExpanded)
     }
 

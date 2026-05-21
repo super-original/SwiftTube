@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.4
+
+- Removed the extra inline scrubber material background so the native blue slider itself is the bottom and raised hover control.
+- Restored the bottom-to-raised scrubber animation with inset side gaps and kept storyboard hover previews layered above the control.
+
 ## 0.15.3
 
 - Restyled inline thumbnail scrubbers around SwiftTube blue and the native macOS slider while keeping the bottom-to-hover animation.
