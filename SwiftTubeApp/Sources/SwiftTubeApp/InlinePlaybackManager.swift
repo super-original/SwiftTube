@@ -12,7 +12,7 @@ final class InlinePlaybackManager: ObservableObject {
     @Published private(set) var isMuted = true
     @Published private(set) var isLoading = false
 
-    private let hoverDelayNanoseconds: UInt64 = 900_000_000
+    private let hoverDelayNanoseconds: UInt64 = 450_000_000
     private let reportThresholdSeconds = 3.0
     private var hoverTasks: [String: Task<Void, Never>] = [:]
     private var activeEngine: MPVPlaybackEngine?
@@ -90,6 +90,11 @@ final class InlinePlaybackManager: ObservableObject {
         }
     }
 
+    func seek(toFraction fraction: Double) {
+        let upperBound = max(duration, currentTime, 1)
+        seek(to: max(0, min(1, fraction)) * upperBound)
+    }
+
     func pause(videoID: String) {
         guard activeVideoID == videoID else { return }
         pauseActive(keepEngine: true)
@@ -136,8 +141,7 @@ private extension InlinePlaybackManager {
             isLoading = false
 
             await Task.yield()
-            engine.setVolume(isMuted ? 0 : 1)
-            try await engine.prepare(startTime: currentTime, autoPlay: true)
+            try await engine.prepare(startTime: currentTime, autoPlay: false)
             guard !Task.isCancelled else {
                 engine.stop()
                 if activeVideoID == video.id {
@@ -147,6 +151,8 @@ private extension InlinePlaybackManager {
                 activeEngine = nil
                 return
             }
+            engine.setVolume(isMuted ? 0 : 1)
+            engine.play()
             preparedVideoID = video.id
             startPolling(engine: engine, payload: payload)
         } catch {
@@ -268,6 +274,7 @@ struct InlineVideoThumbnail: View {
 
     @State private var isPointerInside = false
     @State private var isPointerInLowerRegion = false
+    @State private var pointerFraction: Double = 0
 
     init(
         video: VideoItem,
@@ -318,7 +325,9 @@ struct InlineVideoThumbnail: View {
             .onContinuousHover(coordinateSpace: .local) { phase in
                 switch phase {
                 case .active(let location):
-                    isPointerInLowerRegion = location.y >= proxy.size.height * 0.58
+                    let lowerHoverHeight = max(CGFloat(32), proxy.size.height * 0.30)
+                    isPointerInLowerRegion = location.y >= proxy.size.height - lowerHoverHeight
+                    pointerFraction = max(0, min(1, location.x / max(proxy.size.width, 1)))
                 case .ended:
                     isPointerInLowerRegion = false
                 }
@@ -357,12 +366,11 @@ struct InlineVideoThumbnail: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             .padding(8)
 
-            if isPointerInside && isPointerInLowerRegion {
-                inlineScrubber
-                    .padding(.horizontal, max(size.width * 0.045, 8))
-                    .padding(.bottom, max(size.height * 0.06, 6))
-                    .transition(.opacity)
-            }
+            inlineScrubber
+                .padding(.horizontal, isPointerInLowerRegion ? max(size.width * 0.045, 8) : 0)
+                .padding(.bottom, isPointerInLowerRegion ? max(size.height * 0.06, 6) : 0)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .animation(.snappy(duration: 0.18, extraBounce: 0), value: isPointerInLowerRegion)
         } else if let duration = video.durationText {
             Text(duration)
                 .font(.caption2.weight(.semibold))
@@ -380,13 +388,93 @@ struct InlineVideoThumbnail: View {
     }
 
     private var inlineScrubber: some View {
-        Slider(
-            value: Binding(
-                get: { manager.currentTime },
-                set: { manager.seek(to: $0) }
-            ),
-            in: 0...max(manager.duration, manager.currentTime, 1)
+        InlineThumbnailScrubber(
+            currentTime: manager.currentTime,
+            duration: max(manager.duration, manager.currentTime, 1),
+            isExpanded: isPointerInside && isPointerInLowerRegion,
+            hoverFraction: pointerFraction,
+            onSeekFraction: manager.seek(toFraction:)
         )
-        .controlSize(.small)
+    }
+}
+
+private struct InlineThumbnailScrubber: View {
+    let currentTime: Double
+    let duration: Double
+    let isExpanded: Bool
+    let hoverFraction: Double
+    let onSeekFraction: (Double) -> Void
+
+    private var progressFraction: Double {
+        guard duration > 0 else { return 0 }
+        return max(0, min(1, currentTime / duration))
+    }
+
+    private var displayedFraction: Double {
+        isExpanded ? hoverFraction : progressFraction
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let trackWidth = max(proxy.size.width, 1)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(isExpanded ? 0.30 : 0.22))
+
+                Capsule()
+                    .fill(BrandAssets.youtubeRed)
+                    .frame(width: trackWidth * progressFraction)
+
+                if isExpanded {
+                    Capsule()
+                        .fill(Color.white.opacity(0.34))
+                        .frame(width: trackWidth * displayedFraction)
+
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 10, height: 10)
+                        .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
+                        .offset(x: max(0, min(trackWidth - 10, (trackWidth * displayedFraction) - 5)))
+
+                    Text(formatTime(duration * displayedFraction))
+                        .font(.caption2.weight(.bold))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.black.opacity(0.72)))
+                        .offset(
+                            x: max(0, min(trackWidth - 48, (trackWidth * displayedFraction) - 24)),
+                            y: -30
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                }
+            }
+            .frame(height: isExpanded ? 7 : 5)
+            .frame(maxHeight: .infinity, alignment: .bottom)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let fraction = max(0, min(1, value.location.x / trackWidth))
+                        onSeekFraction(fraction)
+                    }
+            )
+        }
+        .frame(height: isExpanded ? 38 : 5)
+        .animation(.snappy(duration: 0.18, extraBounce: 0), value: isExpanded)
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        let totalSeconds = Int(seconds.rounded(.down))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let secondsPart = totalSeconds % 60
+
+        if hours > 0 {
+            return "\(hours):\(String(format: "%02d", minutes)):\(String(format: "%02d", secondsPart))"
+        }
+        return "\(minutes):\(String(format: "%02d", secondsPart))"
     }
 }

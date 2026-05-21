@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.2
+
+- Tightened inline thumbnail playback startup by reducing the stable-hover delay and applying mute before first playback starts.
+- Reworked the inline scrubber into a persistent bottom timeline that animates upward with side gaps and a timestamp hover state when the pointer is near it.
+
 ## 0.15.1
 
 - Fixed inline thumbnail playback startup so hover preview fetches the first playable stream path before loading watch-page tracking data, cutting the slow multi-request startup delay.
