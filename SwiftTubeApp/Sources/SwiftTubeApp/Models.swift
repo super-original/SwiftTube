@@ -399,6 +399,7 @@ struct InlinePlaybackPayload: Sendable {
     let durationSeconds: Double?
     let videoStream: StreamInfo
     let audioStream: StreamInfo?
+    let storyboard: StoryboardSpec?
     let progress: VideoProgress?
 }
 

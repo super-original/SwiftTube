@@ -894,6 +894,7 @@ actor SwiftTubeBackend {
 
         let duration = details.lazy.compactMap { metadataDurationText(from: $0) }.first
         let durationSeconds = parseDurationSeconds(from: duration)
+        let storyboard = playerResponses.lazy.compactMap { extractStoryboard(from: $0) }.first
         if let tracking = extractWatchTracking(from: watchPageHTML, fallbackDuration: durationSeconds) {
             trackingCache[videoID] = tracking
         } else {
@@ -918,6 +919,7 @@ actor SwiftTubeBackend {
             durationSeconds: durationSeconds,
             videoStream: selection.video,
             audioStream: selection.audio,
+            storyboard: storyboard,
             progress: progress
         )
         inlinePlaybackCache[videoID] = payload

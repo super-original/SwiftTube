@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.3
+
+- Restyled inline thumbnail scrubbers around SwiftTube blue and the native macOS slider while keeping the bottom-to-hover animation.
+- Reused the main player storyboard preview bubble for inline scrubber hover previews when storyboard tiles are available, with timestamp fallback.
+
 ## 0.15.2
 
 - Tightened inline thumbnail playback startup by reducing the stable-hover delay and applying mute before first playback starts.

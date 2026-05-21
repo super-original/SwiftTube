@@ -11,6 +11,7 @@ final class InlinePlaybackManager: ObservableObject {
     @Published private(set) var duration: Double = 0
     @Published private(set) var isMuted = true
     @Published private(set) var isLoading = false
+    @Published private(set) var storyboard: StoryboardSpec?
 
     private let hoverDelayNanoseconds: UInt64 = 450_000_000
     private let reportThresholdSeconds = 3.0
@@ -108,6 +109,7 @@ private extension InlinePlaybackManager {
 
         if activeVideoID == video.id, let engine = activeEngine {
             activeVideoID = video.id
+            storyboard = activePayload?.storyboard
             engine.play()
             await Task.yield()
             preparedVideoID = video.id
@@ -119,6 +121,7 @@ private extension InlinePlaybackManager {
 
         if activePayload?.id == video.id, let engine = activeEngine {
             activeVideoID = video.id
+            storyboard = activePayload?.storyboard
             engine.setVolume(isMuted ? 0 : 1)
             engine.play()
             await Task.yield()
@@ -138,6 +141,7 @@ private extension InlinePlaybackManager {
             activeVideoID = video.id
             currentTime = resumePositions[video.id] ?? payload.progress?.bestResumeSeconds ?? 0
             duration = payload.durationSeconds ?? 0
+            storyboard = payload.storyboard
             isLoading = false
 
             await Task.yield()
@@ -185,6 +189,7 @@ private extension InlinePlaybackManager {
         preparedVideoID = nil
         currentTime = 0
         duration = 0
+        storyboard = keepEngine ? activePayload?.storyboard : nil
         isLoading = false
 
         if !keepEngine {
@@ -393,6 +398,7 @@ struct InlineVideoThumbnail: View {
             duration: max(manager.duration, manager.currentTime, 1),
             isExpanded: isPointerInside && isPointerInLowerRegion,
             hoverFraction: pointerFraction,
+            storyboard: manager.storyboard,
             onSeekFraction: manager.seek(toFraction:)
         )
     }
@@ -403,6 +409,7 @@ private struct InlineThumbnailScrubber: View {
     let duration: Double
     let isExpanded: Bool
     let hoverFraction: Double
+    let storyboard: StoryboardSpec?
     let onSeekFraction: (Double) -> Void
 
     private var progressFraction: Double {
@@ -417,53 +424,107 @@ private struct InlineThumbnailScrubber: View {
     var body: some View {
         GeometryReader { proxy in
             let trackWidth = max(proxy.size.width, 1)
+            let hoverTime = duration * displayedFraction
 
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.white.opacity(isExpanded ? 0.30 : 0.22))
-
-                Capsule()
-                    .fill(BrandAssets.youtubeRed)
-                    .frame(width: trackWidth * progressFraction)
-
+            ZStack(alignment: .bottomLeading) {
                 if isExpanded {
-                    Capsule()
-                        .fill(Color.white.opacity(0.34))
-                        .frame(width: trackWidth * displayedFraction)
-
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 10, height: 10)
-                        .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
-                        .offset(x: max(0, min(trackWidth - 10, (trackWidth * displayedFraction) - 5)))
-
-                    Text(formatTime(duration * displayedFraction))
-                        .font(.caption2.weight(.bold))
-                        .monospacedDigit()
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.black.opacity(0.72)))
-                        .offset(
-                            x: max(0, min(trackWidth - 48, (trackWidth * displayedFraction) - 24)),
-                            y: -30
-                        )
+                    previewBubble(for: hoverTime, trackWidth: trackWidth)
+                        .position(x: previewX(trackWidth: trackWidth), y: previewY)
                         .transition(.opacity.combined(with: .scale(scale: 0.96)))
+
+                    Slider(
+                        value: Binding(
+                            get: { currentTime },
+                            set: { value in
+                                onSeekFraction(value / max(duration, 1))
+                            }
+                        ),
+                        in: 0...max(duration, 1)
+                    )
+                    .tint(BrandAssets.swiftTubeBlue)
+                    .controlSize(.small)
+                    .frame(height: 18)
+                    .padding(.horizontal, 2)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(.regularMaterial.opacity(0.82))
+                            .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+                    )
+                } else {
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.white.opacity(0.18))
+
+                        Capsule()
+                            .fill(BrandAssets.swiftTubeBlue)
+                            .frame(width: trackWidth * progressFraction)
+                    }
+                    .frame(height: 5)
                 }
             }
-            .frame(height: isExpanded ? 7 : 5)
-            .frame(maxHeight: .infinity, alignment: .bottom)
             .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let fraction = max(0, min(1, value.location.x / trackWidth))
-                        onSeekFraction(fraction)
-                    }
-            )
         }
-        .frame(height: isExpanded ? 38 : 5)
+        .frame(height: isExpanded ? 112 : 5)
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: isExpanded)
+    }
+
+    @ViewBuilder
+    private func previewBubble(for hoverTime: Double, trackWidth: CGFloat) -> some View {
+        let displayWidth = min(max(trackWidth * 0.56, 104), 156)
+
+        if let storyboard {
+            let storyboardTime = storyboardTime(for: hoverTime, spec: storyboard)
+            if storyboard.tileInfo(at: storyboardTime) != nil {
+                let displayHeight = storyboard.tileWidth > 0
+                    ? displayWidth * CGFloat(storyboard.tileHeight) / CGFloat(storyboard.tileWidth)
+                    : displayWidth * 9 / 16
+
+                ScrubPreviewBubble(
+                    spec: storyboard,
+                    time: storyboardTime,
+                    displayWidth: displayWidth,
+                    displayHeight: displayHeight,
+                    timestampText: formatTime(hoverTime),
+                    categoryText: nil
+                )
+                .fixedSize()
+            } else {
+                timestampBubble(hoverTime)
+            }
+        } else {
+            timestampBubble(hoverTime)
+        }
+    }
+
+    private func timestampBubble(_ seconds: Double) -> some View {
+        Text(formatTime(seconds))
+            .font(.caption.weight(.semibold))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.black.opacity(0.72)))
+            .shadow(color: .black.opacity(0.55), radius: 10, y: 4)
+    }
+
+    private func previewX(trackWidth: CGFloat) -> CGFloat {
+        let approximatePreviewWidth = min(max(trackWidth * 0.56, 104), 156)
+        return min(
+            max(trackWidth * displayedFraction, approximatePreviewWidth / 2 + 6),
+            trackWidth - approximatePreviewWidth / 2 - 6
+        )
+    }
+
+    private var previewY: CGFloat {
+        38
+    }
+
+    private func storyboardTime(for absoluteTime: Double, spec: StoryboardSpec) -> Double {
+        let safeTime = max(absoluteTime, 0)
+        let maxStoryboardTime = max(spec.coveredDurationSeconds - spec.intervalSeconds, 0)
+        guard maxStoryboardTime > 0 else { return safeTime }
+        return min(safeTime, maxStoryboardTime)
     }
 
     private func formatTime(_ seconds: Double) -> String {

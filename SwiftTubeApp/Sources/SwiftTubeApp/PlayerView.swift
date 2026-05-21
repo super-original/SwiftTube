@@ -4088,7 +4088,7 @@ private struct ScrubPreviewPositioned: View {
 }
 
 /// Thumbnail + timestamp label shown above the scrubber during hover/drag.
-private struct ScrubPreviewBubble: View {
+struct ScrubPreviewBubble: View {
     let spec: StoryboardSpec
     let time: Double
     let displayWidth: CGFloat
