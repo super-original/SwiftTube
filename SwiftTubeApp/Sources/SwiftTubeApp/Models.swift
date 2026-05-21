@@ -392,6 +392,16 @@ struct StreamInfo: Codable, Hashable, Sendable {
     let streamKind: String
 }
 
+struct InlinePlaybackPayload: Sendable {
+    let id: String
+    let title: String?
+    let durationText: String?
+    let durationSeconds: Double?
+    let videoStream: StreamInfo
+    let audioStream: StreamInfo?
+    let progress: VideoProgress?
+}
+
 struct VideoTagColor: Codable, Hashable, Sendable {
     let red: Double
     let green: Double

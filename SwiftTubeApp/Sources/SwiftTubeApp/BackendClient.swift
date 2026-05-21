@@ -48,6 +48,10 @@ final class BackendClient {
         try await backend.fetchVideo(id: id)
     }
 
+    func fetchInlinePlayback(id: String) async throws -> InlinePlaybackPayload {
+        try await backend.fetchInlinePlayback(id: id)
+    }
+
     func fetchComments(id: String) async throws -> CommentsResponse {
         try await backend.fetchComments(id: id, continuation: nil)
     }

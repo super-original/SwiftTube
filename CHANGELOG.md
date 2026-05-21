@@ -8,6 +8,15 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.0 — Keystone
+
+Theme: YouTube-style inline thumbnail playback.
+
+- Added native MPV inline playback for video thumbnails after a stable hover delay, with quick-hover cancellation, muted startup, mute/unmute control, lower-region scrubbing, and resume positions that carry into full playback.
+- Added a reduced inline playback backend path that fetches player/watch-page stream and tracking data without loading full watch-page side content, choosing low-cost streams and skipping unsupported livestream, upcoming, blocked, or unplayable videos.
+- Routed Home, Search, channel grids, watch recommendations, history rows, and playlist rows through the reusable inline thumbnail surface while preserving static thumbnail behavior when inline playback is unavailable.
+- Reused the existing local progress and YouTube watchtime tracking path for inline playback so continuous watched segments are recorded without counting scrub jumps as watched time.
+
 ## 0.14.9
 
 - Fixed saved YouTube sessions so startup no longer validates-and-deletes the local cookie file or clears auth state after authenticated request fallbacks.

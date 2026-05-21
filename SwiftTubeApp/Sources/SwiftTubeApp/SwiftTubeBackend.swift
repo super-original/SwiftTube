@@ -36,6 +36,7 @@ actor SwiftTubeBackend {
     private lazy var api = YouTubeAPI(authManager: authManager)
     private var channelAvatarCache: [String: String?] = [:]
     private var playbackCache: [String: YTDLPPlaybackData] = [:]
+    private var inlinePlaybackCache: [String: InlinePlaybackPayload] = [:]
     private var trackingCache: [String: WatchTrackingSnapshot] = [:]
     private var activeWatchSyncSessions: [String: ActiveWatchSyncSession] = [:]
 
@@ -347,6 +348,28 @@ actor SwiftTubeBackend {
         }
 
         return try await buildVideoPlayback(videoID: videoID, authenticated: false)
+    }
+
+    func fetchInlinePlayback(id videoID: String) async throws -> InlinePlaybackPayload {
+        if let cached = inlinePlaybackCache[videoID] {
+            return cached
+        }
+
+        let usingAuth = await authManager.currentMaterial() != nil
+
+        if usingAuth {
+            do {
+                return try await buildInlinePlayback(videoID: videoID, authenticated: true)
+            } catch {
+                if await refreshAuthenticatedSessionIfPossible() {
+                    do {
+                        return try await buildInlinePlayback(videoID: videoID, authenticated: true)
+                    } catch {}
+                }
+            }
+        }
+
+        return try await buildInlinePlayback(videoID: videoID, authenticated: false)
     }
 
     func recordPlaybackProgress(
@@ -811,6 +834,97 @@ actor SwiftTubeBackend {
             continuation: extractRelatedContinuationToken(from: data),
             note: nil
         )
+    }
+
+    private func buildInlinePlayback(videoID: String, authenticated: Bool) async throws -> InlinePlaybackPayload {
+        async let playerTask = api.player(videoID: videoID, profile: .webParentTools, authenticated: authenticated)
+        async let webPlayerTask = api.player(videoID: videoID, profile: .web, authenticated: authenticated)
+        async let mwebPlayerTask = api.player(videoID: videoID, profile: .mweb, authenticated: authenticated)
+        let watchPageTask = Task<String?, Never> {
+            try? await self.api.watchPage(videoID: videoID, authenticated: authenticated)
+        }
+
+        let playerData = try await playerTask
+        let webPlayerData = (try? await webPlayerTask) ?? [:]
+        let mwebPlayerData = (try? await mwebPlayerTask) ?? [:]
+        let watchPageHTML = await watchPageTask.value
+        let watchPagePlayerData = watchPageHTML.flatMap(extractInitialPlayerResponse) ?? [:]
+
+        let watchPageStreams = parseStreams(from: watchPagePlayerData, defaultHeaders: api.streamRequestHeaders(for: .web))
+        let webParentToolsStreams = parseStreams(from: playerData, defaultHeaders: api.streamRequestHeaders(for: .webParentTools))
+        let webStreams = parseStreams(from: webPlayerData, defaultHeaders: api.streamRequestHeaders(for: .web))
+        let mwebStreams = parseStreams(from: mwebPlayerData, defaultHeaders: api.streamRequestHeaders(for: .mweb))
+        let streams = mergeStreams(
+            watchPageStreams,
+            webParentToolsStreams,
+            webStreams,
+            mwebStreams
+        )
+
+        let playbackTags = deduplicatedVideoTags(
+            extractVideoTags(from: watchPagePlayerData),
+            extractVideoTags(from: playerData),
+            extractVideoTags(from: webPlayerData),
+            extractVideoTags(from: mwebPlayerData)
+        )
+        let accessIssue = resolveVideoAccessIssue(
+            from: [
+                PlaybackIssueSource(data: watchPagePlayerData, streams: watchPageStreams),
+                PlaybackIssueSource(data: playerData, streams: webParentToolsStreams),
+                PlaybackIssueSource(data: webPlayerData, streams: webStreams),
+                PlaybackIssueSource(data: mwebPlayerData, streams: mwebStreams),
+            ],
+            fallbackTags: playbackTags
+        )
+        if let accessIssue {
+            throw BackendClientError(message: accessIssue.title)
+        }
+
+        let details = playerData["videoDetails"] as? JSONDictionary
+        let webDetails = webPlayerData["videoDetails"] as? JSONDictionary
+        let mwebDetails = mwebPlayerData["videoDetails"] as? JSONDictionary
+        let watchPageDetails = watchPagePlayerData["videoDetails"] as? JSONDictionary
+        let liveBroadcastDetails = [watchPagePlayerData, playerData, webPlayerData, mwebPlayerData].compactMap {
+            (($0["microformat"] as? JSONDictionary)?["playerMicroformatRenderer"] as? JSONDictionary)?["liveBroadcastDetails"] as? JSONDictionary
+        }
+        let isLive = liveBroadcastDetails.contains { ($0["isLiveNow"] as? Bool) == true }
+        let isUpcoming = [watchPageDetails, details, webDetails, mwebDetails].contains { ($0?["isUpcoming"] as? Bool) == true }
+        guard !isLive, !isUpcoming else {
+            throw BackendClientError(message: "Inline playback is not available for this video.")
+        }
+
+        guard let selection = inlinePlaybackSelection(from: streams) else {
+            throw BackendClientError(message: "No low-cost inline stream found.")
+        }
+
+        let duration = metadataDurationText(from: watchPageDetails)
+            ?? metadataDurationText(from: details)
+            ?? metadataDurationText(from: webDetails)
+            ?? metadataDurationText(from: mwebDetails)
+        let durationSeconds = parseDurationSeconds(from: duration)
+        if let tracking = extractWatchTracking(from: watchPageHTML, fallbackDuration: durationSeconds) {
+            trackingCache[videoID] = tracking
+        }
+        let progress = mergeVideoProgress(
+            remote: nil,
+            local: await watchHistoryStore.progressEntry(for: videoID),
+            durationSeconds: durationSeconds
+        )
+
+        let payload = InlinePlaybackPayload(
+            id: videoID,
+            title: (watchPageDetails?["title"] as? String)
+                ?? (details?["title"] as? String)
+                ?? (webDetails?["title"] as? String)
+                ?? (mwebDetails?["title"] as? String),
+            durationText: duration,
+            durationSeconds: durationSeconds,
+            videoStream: selection.video,
+            audioStream: selection.audio,
+            progress: progress
+        )
+        inlinePlaybackCache[videoID] = payload
+        return payload
     }
 
     private func buildVideoPlayback(videoID: String, authenticated: Bool) async throws -> VideoPlayback {
@@ -1439,6 +1553,74 @@ actor SwiftTubeBackend {
     private func playlistBrowseID(for playlistID: String) -> String {
         playlistID.hasPrefix("VL") ? playlistID : "VL\(playlistID)"
     }
+}
+
+private struct InlinePlaybackSelection {
+    let video: StreamInfo
+    let audio: StreamInfo?
+}
+
+private func inlinePlaybackSelection(from streams: [StreamInfo]) -> InlinePlaybackSelection? {
+    let playableMuxed = streams
+        .filter { stream in
+            stream.hasVideo
+                && stream.hasAudio
+                && stream.streamKind != "manifest"
+                && URL(string: stream.url) != nil
+        }
+        .sorted { inlineStreamScore($0) < inlineStreamScore($1) }
+
+    if let muxed = playableMuxed.first {
+        return InlinePlaybackSelection(video: muxed, audio: nil)
+    }
+
+    let audio = streams
+        .filter { $0.hasAudio && !$0.hasVideo && URL(string: $0.url) != nil }
+        .sorted { inlineAudioScore($0) < inlineAudioScore($1) }
+        .first
+
+    guard let audio else { return nil }
+
+    let adaptiveVideo = streams
+        .filter { stream in
+            stream.hasVideo
+                && !stream.hasAudio
+                && stream.streamKind != "manifest"
+                && URL(string: stream.url) != nil
+                && !inlineHeadersConflict(video: stream, audio: audio)
+        }
+        .sorted { inlineStreamScore($0) < inlineStreamScore($1) }
+        .first
+
+    guard let adaptiveVideo else { return nil }
+    return InlinePlaybackSelection(video: adaptiveVideo, audio: audio)
+}
+
+private func inlineStreamScore(_ stream: StreamInfo) -> (Int, Int, Int, Int) {
+    let height = stream.height ?? 0
+    let targetHeightPenalty = height == 0 ? 2000 : abs(height - 360)
+    let tooLargePenalty = height > 480 ? 1000 + height : 0
+    return (
+        tooLargePenalty,
+        targetHeightPenalty,
+        stream.bitrate ?? Int.max,
+        stream.fps ?? 0
+    )
+}
+
+private func inlineAudioScore(_ stream: StreamInfo) -> (Int, Int, Int) {
+    (
+        stream.bitrate ?? Int.max,
+        stream.audioChannels ?? 2,
+        codecScore(stream.audioCodec)
+    )
+}
+
+private func inlineHeadersConflict(video: StreamInfo, audio: StreamInfo) -> Bool {
+    let videoClient = video.httpHeaders?["X-YouTube-Client-Name"]
+    let audioClient = audio.httpHeaders?["X-YouTube-Client-Name"]
+    guard let videoClient, let audioClient else { return false }
+    return videoClient != audioClient
 }
 
 private struct PlaybackBundle {

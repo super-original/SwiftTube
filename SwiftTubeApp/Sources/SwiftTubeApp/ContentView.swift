@@ -4167,36 +4167,14 @@ private struct HistoryVideoThumbnail: View {
     let video: VideoItem
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 640) {
-                RoundedRectangle(cornerRadius: 22)
-                    .fill(Color.gray.opacity(0.18))
-                    .overlay(
-                        Image(systemName: "play.rectangle.fill")
-                            .font(.system(size: 24))
-                            .foregroundStyle(.secondary)
-                    )
-            }
-            .frame(width: 228, height: 128)
-            .clipShape(RoundedRectangle(cornerRadius: 22))
-            .overlay(alignment: .bottom) {
-                VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 22, isEnabled: !video.isLive)
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: 22)
-                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
-            )
-
-            if let duration = video.durationText {
-                Text(duration)
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(Color.black.opacity(0.74)))
-                    .foregroundStyle(.white)
-                    .padding(10)
-            }
-        }
+        InlineVideoThumbnail(
+            video: video,
+            width: 228,
+            height: 128,
+            cornerRadius: 22,
+            maxPixelSize: 640,
+            placeholderIconSize: 24
+        )
         .frame(width: 228, height: 128)
     }
 }

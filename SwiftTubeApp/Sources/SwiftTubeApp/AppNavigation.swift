@@ -183,7 +183,9 @@ final class AppNavigationModel: ObservableObject {
         startTime: Double? = nil,
         playlistContext: (reference: PlaylistReference, feed: PlaylistFeed)? = nil
     ) {
-        let resolvedStartTime = startTime ?? video.progress?.bestResumeSeconds
+        let inlineStartTime = InlinePlaybackManager.shared.resumePosition(for: video.id)
+        InlinePlaybackManager.shared.pause(videoID: video.id)
+        let resolvedStartTime = startTime ?? inlineStartTime ?? video.progress?.bestResumeSeconds
         pendingVideoStartVideoID = resolvedStartTime != nil ? video.id : nil
         pendingVideoStartTime = resolvedStartTime
         if let playlistContext {

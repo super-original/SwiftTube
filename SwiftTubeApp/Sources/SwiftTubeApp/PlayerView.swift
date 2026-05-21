@@ -3912,35 +3912,14 @@ private struct RecommendationRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 256) {
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Color.gray.opacity(0.2))
-                        .overlay(
-                            Image(systemName: "play.rectangle.fill")
-                                .font(.system(size: 24))
-                                .foregroundStyle(.secondary)
-                        )
-                }
-                .frame(width: 152, height: 85.5)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-                .overlay(alignment: .bottom) {
-                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 14, isEnabled: !video.isLive)
-                }
-
-                if let duration = video.durationText {
-                    Text(duration)
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(Color.black.opacity(0.74))
-                        )
-                        .foregroundStyle(.white)
-                        .padding(8)
-                }
-            }
+            InlineVideoThumbnail(
+                video: video,
+                width: 152,
+                height: 85.5,
+                cornerRadius: 14,
+                maxPixelSize: 256,
+                placeholderIconSize: 24
+            )
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(video.title)

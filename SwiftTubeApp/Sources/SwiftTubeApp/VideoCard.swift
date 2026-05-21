@@ -13,36 +13,13 @@ struct VideoCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 480) {
-                    ZStack {
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.2))
-                        Image(systemName: "play.rectangle.fill")
-                            .font(.system(size: 28))
-                            .foregroundColor(.gray.opacity(0.6))
-                    }
-                }
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(alignment: .bottom) {
-                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 12, isEnabled: !video.isLive)
-                }
-
-                if let duration = video.durationText {
-                    Text(duration)
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(Color.black.opacity(0.65))
-                        )
-                        .foregroundColor(.white)
-                        .padding(8)
-                }
-            }
+            InlineVideoThumbnail(
+                video: video,
+                cornerRadius: 12,
+                maxPixelSize: 480,
+                placeholderIconSize: 28
+            )
+            .frame(maxWidth: .infinity)
 
             Text(video.title)
                 .font(.system(size: 16, weight: .semibold))
