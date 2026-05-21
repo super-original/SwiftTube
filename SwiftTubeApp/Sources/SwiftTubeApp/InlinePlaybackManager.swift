@@ -6,12 +6,13 @@ final class InlinePlaybackManager: ObservableObject {
     static let shared = InlinePlaybackManager()
 
     @Published private(set) var activeVideoID: String?
+    @Published private(set) var preparedVideoID: String?
     @Published private(set) var currentTime: Double = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var isMuted = true
     @Published private(set) var isLoading = false
 
-    private let hoverDelayNanoseconds: UInt64 = 1_700_000_000
+    private let hoverDelayNanoseconds: UInt64 = 900_000_000
     private let reportThresholdSeconds = 3.0
     private var hoverTasks: [String: Task<Void, Never>] = [:]
     private var activeEngine: MPVPlaybackEngine?
@@ -24,6 +25,10 @@ final class InlinePlaybackManager: ObservableObject {
     private init() {}
 
     func isActive(_ videoID: String) -> Bool {
+        preparedVideoID == videoID
+    }
+
+    func isRendering(_ videoID: String) -> Bool {
         activeVideoID == videoID
     }
 
@@ -62,7 +67,7 @@ final class InlinePlaybackManager: ObservableObject {
         hoverTasks[videoID]?.cancel()
         hoverTasks.removeValue(forKey: videoID)
 
-        guard activeVideoID == videoID else { return }
+        guard activeVideoID == videoID || preparedVideoID == videoID else { return }
         pauseActive(keepEngine: true)
     }
 
@@ -99,6 +104,8 @@ private extension InlinePlaybackManager {
         if activeVideoID == video.id, let engine = activeEngine {
             activeVideoID = video.id
             engine.play()
+            await Task.yield()
+            preparedVideoID = video.id
             startPolling(engine: engine, payload: activePayload)
             return
         }
@@ -109,6 +116,8 @@ private extension InlinePlaybackManager {
             activeVideoID = video.id
             engine.setVolume(isMuted ? 0 : 1)
             engine.play()
+            await Task.yield()
+            preparedVideoID = video.id
             startPolling(engine: engine, payload: activePayload)
             return
         }
@@ -129,11 +138,24 @@ private extension InlinePlaybackManager {
             await Task.yield()
             engine.setVolume(isMuted ? 0 : 1)
             try await engine.prepare(startTime: currentTime, autoPlay: true)
+            guard !Task.isCancelled else {
+                engine.stop()
+                if activeVideoID == video.id {
+                    activeVideoID = nil
+                }
+                activePayload = nil
+                activeEngine = nil
+                return
+            }
+            preparedVideoID = video.id
             startPolling(engine: engine, payload: payload)
         } catch {
             guard !Task.isCancelled else { return }
             if activeVideoID == video.id {
                 activeVideoID = nil
+            }
+            if preparedVideoID == video.id {
+                preparedVideoID = nil
             }
             activePayload = nil
             activeEngine?.stop()
@@ -154,6 +176,7 @@ private extension InlinePlaybackManager {
         }
 
         activeVideoID = nil
+        preparedVideoID = nil
         currentTime = 0
         duration = 0
         isLoading = false
@@ -267,11 +290,12 @@ struct InlineVideoThumbnail: View {
             ZStack(alignment: .bottomTrailing) {
                 thumbnailBase
 
-                if manager.isActive(video.id), let engine = manager.engine(for: video.id) {
+                if manager.isRendering(video.id), let engine = manager.engine(for: video.id) {
                     MPVMetalRenderView(engine: engine) {
                         try? engine.refreshPausedFrame(at: manager.currentTime)
                     }
                     .background(Color.black)
+                    .opacity(manager.isActive(video.id) ? 1 : 0)
                 }
 
                 overlayContent(size: proxy.size)

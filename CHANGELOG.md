@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.1
+
+- Fixed inline thumbnail playback startup so hover preview fetches the first playable stream path before loading watch-page tracking data, cutting the slow multi-request startup delay.
+- Kept the thumbnail visible until MPV is prepared, preventing failed or slow inline starts from flashing a black mini-player surface.
+
 ## 0.15.0 — Keystone
 
 Theme: YouTube-style inline thumbnail playback.
