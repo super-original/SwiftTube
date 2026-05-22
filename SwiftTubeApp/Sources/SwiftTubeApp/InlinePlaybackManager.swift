@@ -479,7 +479,7 @@ private struct InlineThumbnailScrubber: View {
             .frame(maxHeight: .infinity, alignment: .bottom)
             .contentShape(Rectangle())
         }
-        .frame(height: isExpanded ? 92 : 18)
+        .frame(height: isExpanded ? 116 : 18)
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: isExpanded)
     }
 
@@ -531,7 +531,7 @@ private struct InlineThumbnailScrubber: View {
     }
 
     private var previewY: CGFloat {
-        32
+        34
     }
 
     private func storyboardTime(for absoluteTime: Double, spec: StoryboardSpec) -> Double {

@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.6
+
+- Raised the inline scrubber storyboard preview so it sits above the slider again without increasing the slider hover lift.
+
 ## 0.15.5
 
 - Added a glass duration chip over inline thumbnail playback and moved the mute control into a compact Liquid Glass capsule.
