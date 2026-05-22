@@ -363,17 +363,23 @@ struct InlineVideoThumbnail: View {
                 Image(systemName: manager.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.black.opacity(0.62)))
+                    .frame(width: 34, height: 28)
             }
             .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: Capsule())
             .help(manager.isMuted ? "Unmute" : "Mute")
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             .padding(8)
 
+            inlineDurationChip
+                .padding(.trailing, isPointerInLowerRegion ? max(size.width * 0.025, 5) : 5)
+                .padding(.bottom, isPointerInLowerRegion ? max(size.height * 0.035, 4) + 16 : 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .animation(.snappy(duration: 0.18, extraBounce: 0), value: isPointerInLowerRegion)
+
             inlineScrubber
-                .padding(.horizontal, isPointerInLowerRegion ? max(size.width * 0.045, 8) : 0)
-                .padding(.bottom, isPointerInLowerRegion ? max(size.height * 0.06, 6) : 0)
+                .padding(.horizontal, isPointerInLowerRegion ? max(size.width * 0.025, 5) : 0)
+                .padding(.bottom, isPointerInLowerRegion ? max(size.height * 0.035, 4) : 0)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .animation(.snappy(duration: 0.18, extraBounce: 0), value: isPointerInLowerRegion)
         } else if let duration = video.durationText {
@@ -392,6 +398,16 @@ struct InlineVideoThumbnail: View {
         }
     }
 
+    private var inlineDurationChip: some View {
+        Text(formatTime(manager.duration > 0 ? manager.duration : max(manager.currentTime, 0)))
+            .font(.caption2.weight(.semibold))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .glassEffect(.regular, in: Capsule())
+    }
+
     private var inlineScrubber: some View {
         InlineThumbnailScrubber(
             currentTime: manager.currentTime,
@@ -401,6 +417,18 @@ struct InlineVideoThumbnail: View {
             storyboard: manager.storyboard,
             onSeekFraction: manager.seek(toFraction:)
         )
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        let totalSeconds = Int(max(seconds, 0).rounded(.down))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let secondsPart = totalSeconds % 60
+
+        if hours > 0 {
+            return "\(hours):\(String(format: "%02d", minutes)):\(String(format: "%02d", secondsPart))"
+        }
+        return "\(minutes):\(String(format: "%02d", secondsPart))"
     }
 }
 
@@ -434,6 +462,7 @@ private struct InlineThumbnailScrubber: View {
                 .tint(BrandAssets.swiftTubeBlue)
                 .controlSize(.small)
                 .frame(height: 18)
+                .offset(y: isExpanded ? 0 : 8)
                 .zIndex(1)
 
                 if isExpanded {
@@ -450,7 +479,7 @@ private struct InlineThumbnailScrubber: View {
             .frame(maxHeight: .infinity, alignment: .bottom)
             .contentShape(Rectangle())
         }
-        .frame(height: isExpanded ? 112 : 18)
+        .frame(height: isExpanded ? 92 : 18)
         .animation(.snappy(duration: 0.18, extraBounce: 0), value: isExpanded)
     }
 
@@ -502,7 +531,7 @@ private struct InlineThumbnailScrubber: View {
     }
 
     private var previewY: CGFloat {
-        38
+        32
     }
 
     private func storyboardTime(for absoluteTime: Double, spec: StoryboardSpec) -> Double {

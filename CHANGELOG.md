@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.5
+
+- Added a glass duration chip over inline thumbnail playback and moved the mute control into a compact Liquid Glass capsule.
+- Lowered the inline scrubber resting state and softened the hover lift and side inset animation.
+
 ## 0.15.4
 
 - Removed the extra inline scrubber material background so the native blue slider itself is the bottom and raised hover control.
