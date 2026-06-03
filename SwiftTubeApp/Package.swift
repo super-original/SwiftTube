@@ -22,6 +22,10 @@ let package = Package(
             resources: [
                 .copy("Resources")
             ]
+        ),
+        .testTarget(
+            name: "SwiftTubeAppTests",
+            dependencies: ["SwiftTubeApp"]
         )
     ]
 )

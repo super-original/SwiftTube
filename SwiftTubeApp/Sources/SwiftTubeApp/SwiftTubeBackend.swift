@@ -1023,9 +1023,13 @@ actor SwiftTubeBackend {
             subtitles: playerSubtitles,
             preferHLSManifest: isLive
         )
+        PlaybackDebugLogger.log(
+            "native youtube extraction video=\(videoID) streams=\(nativePlaybackStreams.count) subtitles=\(playerSubtitles.count) best=\(nativePlaybackBundle.bestStream?.formatId ?? "nil")"
+        )
 
         let preferredYTDLPPlayback: YTDLPPlaybackData?
-        let shouldProbeYTDLP = !isLive || nativePlaybackBundle.bestStream == nil
+        let shouldProbeYTDLP = AppSettings.shared.ytDLPDependencySource != .nativeSwift
+            && (!isLive || nativePlaybackBundle.bestStream == nil)
         if shouldProbeYTDLP {
             let publicPlayback = try? await cachedYTDLPPlayback(
                 videoID: videoID,
@@ -1135,7 +1139,13 @@ actor SwiftTubeBackend {
     }
 
     private func cachedYTDLPPlayback(videoID: String, cookieFileURL: URL?, cacheScope: String) async throws -> YTDLPPlaybackData? {
-        let cacheKey = "\(cacheScope):\(videoID)"
+        let settings = AppSettings.shared
+        let cacheKey = [
+            cacheScope,
+            settings.ytDLPDependencySource.rawValue,
+            settings.ytDLPDependencySource == .custom ? settings.ytDLPCustomPath : "",
+            videoID
+        ].joined(separator: ":")
         if let cached = playbackCache[cacheKey] {
             return cached
         }
@@ -1706,6 +1716,10 @@ private func extractYTDLPPlayback(
     cookieFileURL: URL?,
     timeout: TimeInterval? = nil
 ) async throws -> YTDLPPlaybackData? {
+    guard AppSettings.shared.ytDLPDependencySource != .nativeSwift else {
+        return nil
+    }
+
     let ytDLPPath: URL
     do {
         ytDLPPath = try YTDLPTool.resolvePath()
@@ -1726,12 +1740,14 @@ private func extractYTDLPPlayback(
         arguments.insert(contentsOf: ["--cookies", cookieFile.path], at: 0)
     }
 
+    let startDate = Date()
     let result = try await ProcessRunner.run(
         executableURL: ytDLPPath,
         arguments: arguments,
         timeout: timeout,
         timeoutMessage: "yt-dlp timed out while extracting playback data."
     )
+    let elapsed = Date().timeIntervalSince(startDate)
     guard result.exitCode == 0, let data = result.output.data(using: .utf8) else { return nil }
 
     guard let payload = try JSONSerialization.jsonObject(with: data) as? JSONDictionary else {
@@ -1740,6 +1756,9 @@ private func extractYTDLPPlayback(
 
     let streams = parseYTDLPStreams(from: payload)
     let subtitles = parseYTDLPSubtitles(from: payload)
+    PlaybackDebugLogger.log(
+        "yt-dlp extraction video=\(videoID) source=\(AppSettings.shared.ytDLPDependencySource.rawValue) elapsed=\(String(format: "%.3f", elapsed)) streams=\(streams.count) subtitles=\(subtitles.count)"
+    )
 
     return YTDLPPlaybackData(
         title: payload["title"] as? String,

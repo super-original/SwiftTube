@@ -18,6 +18,7 @@ final class MPVPlaybackEngine: NSObject {
 
     let renderController = MPVRenderViewController()
     private let request: MPVPlaybackRequest
+    private let mpvLibrary: MPVLibrary
     private var mpv: OpaquePointer?
     private var didLoadFile = false
     private var isStopping = false
@@ -36,6 +37,7 @@ final class MPVPlaybackEngine: NSObject {
 
     init(request: MPVPlaybackRequest) {
         self.request = request
+        self.mpvLibrary = MPVLibrary.load()
         super.init()
     }
 
@@ -119,13 +121,13 @@ final class MPVPlaybackEngine: NSObject {
     func setVolume(_ volume: Double) {
         guard let mpv else { return }
         var clampedVolume = max(0, min(volume, 1)) * 100
-        mpv_set_property(mpv, MPVProperty.volume, MPV_FORMAT_DOUBLE, &clampedVolume)
+        _ = mpvLibrary.setProperty(mpv, MPVProperty.volume, MPV_FORMAT_DOUBLE, &clampedVolume)
     }
 
     func setRate(_ rate: Double) {
         guard let mpv else { return }
         var playbackRate = max(rate, 0.25)
-        mpv_set_property(mpv, MPVProperty.speed, MPV_FORMAT_DOUBLE, &playbackRate)
+        _ = mpvLibrary.setProperty(mpv, MPVProperty.speed, MPV_FORMAT_DOUBLE, &playbackRate)
     }
 
     func snapshot() -> MPVPlaybackSnapshot {
@@ -152,7 +154,7 @@ final class MPVPlaybackEngine: NSObject {
         let previousEventPump = eventPumpTask
         eventPumpTask = nil
         previousEventPump?.cancel()
-        mpv_wakeup(mpv)
+        mpvLibrary.wakeup(mpv)
         _ = await previousEventPump?.result
 
         didLoadFile = false
@@ -200,14 +202,14 @@ final class MPVPlaybackEngine: NSObject {
     func setSubtitleTrack(_ trackID: Int) {
         guard let mpv else { return }
         var value = Int64(trackID)
-        mpv_set_property(mpv, "sid", MPV_FORMAT_INT64, &value)
+        _ = mpvLibrary.setProperty(mpv, "sid", MPV_FORMAT_INT64, &value)
         PlaybackDebugLogger.log("mpv set sid=\(trackID)")
     }
 
     func setSubtitleVisibility(_ visible: Bool) {
         guard let mpv else { return }
         var value: Int32 = visible ? 1 : 0
-        mpv_set_property(mpv, "sub-visibility", MPV_FORMAT_FLAG, &value)
+        _ = mpvLibrary.setProperty(mpv, "sub-visibility", MPV_FORMAT_FLAG, &value)
     }
 
     func stepFrame(direction: Int) {
@@ -259,14 +261,14 @@ private extension MPVPlaybackEngine {
         if let mpv {
             return mpv
         }
-        guard let handle = mpv_create() else {
+        guard let handle = mpvLibrary.create() else {
             throw NSError(domain: "SwiftTube.MPV", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create mpv context."])
         }
 
         mpv = handle
-        try check(mpv_request_log_messages(handle, "no"))
+        try check(mpvLibrary.requestLogMessages(handle, "no"))
         PlaybackDebugLogger.log(
-            "mpv initialize videoHeaders=\(request.video.headers.keys.sorted()) audioHeaders=\(request.audio?.headers.keys.sorted() ?? []) logPath=\(PlaybackDebugLogger.path)"
+            "mpv initialize source=\(mpvLibrary.sourceDescription) videoHeaders=\(request.video.headers.keys.sorted()) audioHeaders=\(request.audio?.headers.keys.sorted() ?? []) logPath=\(PlaybackDebugLogger.path)"
         )
 
         try setOption("vo", value: "gpu-next")
@@ -285,7 +287,7 @@ private extension MPVPlaybackEngine {
         try setOption("sub-auto", value: "no")
         try setOption("audio-file-auto", value: "no")
         var layerReference = Int64(bitPattern: UInt64(UInt(bitPattern: Unmanaged.passUnretained(layer).toOpaque())))
-        try check(mpv_set_option(handle, "wid", MPV_FORMAT_INT64, &layerReference))
+        try check(mpvLibrary.setOption(handle, "wid", MPV_FORMAT_INT64, &layerReference))
         PlaybackDebugLogger.log(
             "mpv set option wid=\(layerReference) \(renderController.renderSurfaceDescription())"
         )
@@ -309,7 +311,7 @@ private extension MPVPlaybackEngine {
             try setOption("http-header-fields", value: headerFields)
         }
 
-        try check(mpv_initialize(handle))
+        try check(mpvLibrary.initialize(handle))
         didLoadFile = false
         return handle
     }
@@ -327,7 +329,7 @@ private extension MPVPlaybackEngine {
         loadWaitTask?.cancel()
         audioReadyTask?.cancel()
         eventPumpTask?.cancel()
-        mpv_wakeup(mpv)
+        mpvLibrary.wakeup(mpv)
 
         if loadWaitTask != nil || audioReadyTask != nil || eventPumpTask != nil {
             PlaybackDebugLogger.log(
@@ -340,7 +342,7 @@ private extension MPVPlaybackEngine {
         _ = await eventPumpTask?.result
 
         PlaybackDebugLogger.log("mpv terminate")
-        mpv_terminate_destroy(mpv)
+        mpvLibrary.terminateDestroy(mpv)
         self.mpv = nil
         didLoadFile = false
     }
@@ -348,13 +350,13 @@ private extension MPVPlaybackEngine {
     func setOption(_ name: String, value: String) throws {
         guard let mpv else { return }
         PlaybackDebugLogger.log("mpv set option \(name)=\(value)")
-        try check(mpv_set_option_string(mpv, name, value))
+        try check(mpvLibrary.setOptionString(mpv, name, value))
     }
 
     func setPaused(_ paused: Bool) {
         guard let mpv else { return }
         var value: Int32 = paused ? 1 : 0
-        mpv_set_property(mpv, MPVProperty.pause, MPV_FORMAT_FLAG, &value)
+        _ = mpvLibrary.setProperty(mpv, MPVProperty.pause, MPV_FORMAT_FLAG, &value)
     }
 
     func waitForLoadTask(
@@ -383,7 +385,7 @@ private extension MPVPlaybackEngine {
         } catch {
             task.cancel()
             if let mpv {
-                mpv_wakeup(mpv)
+                mpvLibrary.wakeup(mpv)
             }
             PlaybackDebugLogger.log("mpv load wait failed context=\(context) error=\(error.localizedDescription)")
             throw error
@@ -392,7 +394,7 @@ private extension MPVPlaybackEngine {
 
     func check(_ status: Int32) throws {
         guard status >= 0 else {
-            let message = String(cString: mpv_error_string(status))
+            let message = mpvLibrary.errorMessage(status)
             PlaybackDebugLogger.log("mpv error status=\(status) message=\(message)")
             throw NSError(domain: "SwiftTube.MPV", code: Int(status), userInfo: [NSLocalizedDescriptionKey: message])
         }
@@ -400,14 +402,15 @@ private extension MPVPlaybackEngine {
 
     func makeFileLoadedTask(for handle: OpaquePointer, isReplace: Bool = false) -> Task<Void, Error> {
         let handleBits = UInt(bitPattern: handle)
+        let mpvLibrary = mpvLibrary
 
         return Task.detached(priority: .userInitiated) {
             let handle = OpaquePointer(bitPattern: handleBits)!
 
             while true {
                 try Task.checkCancellation()
-                guard let event = mpv_wait_event(handle, 0.1) else { continue }
-                let eventName = String(cString: mpv_event_name(event.pointee.event_id))
+                guard let event = mpvLibrary.waitEvent(handle, 0.1) else { continue }
+                let eventName = mpvLibrary.eventNameString(event.pointee.event_id)
 
                 switch event.pointee.event_id {
                 case MPV_EVENT_FILE_LOADED:
@@ -420,7 +423,7 @@ private extension MPVPlaybackEngine {
                     if let endFile = event.pointee.data?.assumingMemoryBound(to: mpv_event_end_file.self) {
                         let endReason = endFile.pointee.reason
                         let endError = endFile.pointee.error
-                        let endErrorMessage = String(cString: mpv_error_string(endError))
+                        let endErrorMessage = mpvLibrary.errorMessage(endError)
                         PlaybackDebugLogger.log(
                             "mpv event \(eventName) reason=\(endReason) error=\(endError) message=\(endErrorMessage) isReplace=\(isReplace)"
                         )
@@ -454,6 +457,7 @@ private extension MPVPlaybackEngine {
 
     func makeAudioReadyTask(for audio: MediaStreamRequest, handle: OpaquePointer) -> Task<Void, Never> {
         let handleBits = UInt(bitPattern: handle)
+        let mpvLibrary = mpvLibrary
         return Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             guard Task.isCancelled == false else {
@@ -479,15 +483,15 @@ private extension MPVPlaybackEngine {
                     PlaybackDebugLogger.log("mpv audio-add cancelled")
                     return
                 }
-                let audioTrackID = Self.intProperty(MPVProperty.audioTrackID, from: handle) ?? 0
+                let audioTrackID = Self.intProperty(MPVProperty.audioTrackID, from: handle, library: mpvLibrary) ?? 0
                 if audioTrackID > 0 {
-                    let codec = Self.stringProperty(MPVProperty.audioCodecName, from: handle) ?? "nil"
-                    let channels = Self.intProperty(MPVProperty.audioChannelCount, from: handle).map(String.init) ?? "nil"
+                    let codec = Self.stringProperty(MPVProperty.audioCodecName, from: handle, library: mpvLibrary) ?? "nil"
+                    let channels = Self.intProperty(MPVProperty.audioChannelCount, from: handle, library: mpvLibrary).map(String.init) ?? "nil"
                     PlaybackDebugLogger.log("mpv audio-add ready aid=\(audioTrackID) codec=\(codec) channels=\(channels)")
                     return
                 }
 
-                if let event = mpv_wait_event(handle, 0.1),
+                if let event = mpvLibrary.waitEvent(handle, 0.1),
                    event.pointee.event_id == MPV_EVENT_LOG_MESSAGE,
                    let logMessage = event.pointee.data?.assumingMemoryBound(to: mpv_event_log_message.self) {
                     let prefix = String(cString: logMessage.pointee.prefix)
@@ -519,23 +523,23 @@ private extension MPVPlaybackEngine {
 
     func doubleProperty(_ name: String, from handle: OpaquePointer) -> Double {
         var value = 0.0
-        let result = mpv_get_property(handle, name, MPV_FORMAT_DOUBLE, &value)
+        let result = mpvLibrary.getProperty(handle, name, MPV_FORMAT_DOUBLE, &value)
         guard result >= 0, value.isFinite else { return 0 }
         return value
     }
 
     func flagProperty(_ name: String, from handle: OpaquePointer) -> Bool {
         var value: Int32 = 0
-        let result = mpv_get_property(handle, name, MPV_FORMAT_FLAG, &value)
+        let result = mpvLibrary.getProperty(handle, name, MPV_FORMAT_FLAG, &value)
         guard result >= 0 else { return false }
         return value != 0
     }
 
     func seekableRangesProperty(_ name: String, from handle: OpaquePointer) -> [ClosedRange<Double>] {
         var value = mpv_node()
-        let result = mpv_get_property(handle, name, MPV_FORMAT_NODE, &value)
+        let result = mpvLibrary.getProperty(handle, name, MPV_FORMAT_NODE, &value)
         guard result >= 0 else { return [] }
-        defer { mpv_free_node_contents(&value) }
+        defer { mpvLibrary.freeNodeContents(&value) }
 
         guard let rangesNode = Self.mapValue(forKey: "seekable-ranges", in: value),
               rangesNode.format == MPV_FORMAT_NODE_ARRAY,
@@ -558,18 +562,18 @@ private extension MPVPlaybackEngine {
         return ranges
     }
 
-    nonisolated static func intProperty(_ name: String, from handle: OpaquePointer) -> Int64? {
+    nonisolated static func intProperty(_ name: String, from handle: OpaquePointer, library: MPVLibrary) -> Int64? {
         var value: Int64 = 0
-        let result = mpv_get_property(handle, name, MPV_FORMAT_INT64, &value)
+        let result = library.getProperty(handle, name, MPV_FORMAT_INT64, &value)
         guard result >= 0 else { return nil }
         return value
     }
 
-    nonisolated static func stringProperty(_ name: String, from handle: OpaquePointer) -> String? {
-        guard let cString = mpv_get_property_string(handle, name) else {
+    nonisolated static func stringProperty(_ name: String, from handle: OpaquePointer, library: MPVLibrary) -> String? {
+        guard let cString = library.getPropertyString(handle, name) else {
             return nil
         }
-        defer { mpv_free(cString) }
+        defer { library.free(cString) }
         return String(cString: cString)
     }
 
@@ -644,11 +648,12 @@ private extension MPVPlaybackEngine {
     func startEventPump(using handle: OpaquePointer) {
         guard eventPumpTask == nil else { return }
         let handleBits = UInt(bitPattern: handle)
+        let mpvLibrary = mpvLibrary
         eventPumpTask = Task.detached(priority: .userInitiated) {
             let handle = OpaquePointer(bitPattern: handleBits)!
 
             while Task.isCancelled == false {
-                guard let event = mpv_wait_event(handle, 0.1) else { continue }
+                guard let event = mpvLibrary.waitEvent(handle, 0.1) else { continue }
                 switch event.pointee.event_id {
                 case MPV_EVENT_NONE:
                     continue
@@ -666,7 +671,7 @@ private extension MPVPlaybackEngine {
                     if let endFile = event.pointee.data?.assumingMemoryBound(to: mpv_event_end_file.self) {
                         let endReason = endFile.pointee.reason
                         let endError = endFile.pointee.error
-                        let endErrorMessage = String(cString: mpv_error_string(endError))
+                        let endErrorMessage = mpvLibrary.errorMessage(endError)
                         PlaybackDebugLogger.log(
                             "mpv event end-file reason=\(endReason) error=\(endError) message=\(endErrorMessage)"
                         )
@@ -709,7 +714,7 @@ private extension MPVPlaybackEngine {
         }
 
         try cArguments.withUnsafeMutableBufferPointer { buffer in
-            try check(mpv_command(mpv, buffer.baseAddress))
+            try check(mpvLibrary.command(mpv, buffer.baseAddress))
         }
     }
 

@@ -274,7 +274,11 @@ private func parseCookieLine(_ line: Substring) -> NetscapeCookie? {
 
 enum YTDLPTool {
     static func exportCookies(from browser: String, to destinationURL: URL) async throws {
-        let toolPath = try resolvePath()
+        let settings = AppSettings.shared
+        let toolPath = try SwiftTubeDependencyManager.resolvedYTDLPExecutableForCookieImport(
+            preferredSource: settings.ytDLPDependencySource,
+            customPath: settings.ytDLPCustomPath
+        )
         try? FileManager.default.removeItem(at: destinationURL)
 
         let result = try await ProcessRunner.run(
@@ -301,55 +305,23 @@ enum YTDLPTool {
     }
 
     static func resolvePath() throws -> URL {
-        let fileManager = FileManager.default
-        let environment = ProcessInfo.processInfo.environment
-
-        let candidateStrings = [
-            environment["SWIFTTUBE_YT_DLP_PATH"],
-            swiftTubeSupportDirectory().appendingPathComponent("venv/bin/yt-dlp").path,
-            "/opt/homebrew/bin/yt-dlp",
-            "/usr/local/bin/yt-dlp",
-            "/usr/bin/yt-dlp",
-        ].compactMap { $0 }
-
-        for candidate in candidateStrings {
-            if fileManager.isExecutableFile(atPath: candidate) {
-                return URL(fileURLWithPath: candidate)
-            }
+        let settings = AppSettings.shared
+        guard let url = try SwiftTubeDependencyManager.resolvedYTDLPExecutable(
+            source: settings.ytDLPDependencySource,
+            customPath: settings.ytDLPCustomPath
+        ) else {
+            throw BackendClientError(message: "Native Swift extraction does not use yt-dlp.")
         }
-
-        let whichResult = try? awaitableWhich("yt-dlp")
-        if let whichResult {
-            return whichResult
-        }
-
-        throw BackendClientError(message: "yt-dlp is required for browser sign-in, but it wasn’t found on this Mac.")
-    }
-
-    private static func awaitableWhich(_ name: String) throws -> URL? {
-        let output = try ProcessRunner.runSync(
-            executableURL: URL(fileURLWithPath: "/usr/bin/which"),
-            arguments: [name]
-        )
-        guard output.exitCode == 0 else { return nil }
-        let path = output.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else { return nil }
-        return URL(fileURLWithPath: path)
-    }
-}
-
-private func swiftTubeSupportDirectory() -> URL {
-    if let override = ProcessInfo.processInfo.environment["SWIFTTUBE_APP_SUPPORT_DIR"], !override.isEmpty {
-        let url = URL(fileURLWithPath: override, isDirectory: true)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
 
-    let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        ?? URL(fileURLWithPath: ("~/Library/Application Support" as NSString).expandingTildeInPath, isDirectory: true)
-    let target = baseURL.appendingPathComponent("SwiftTube", isDirectory: true)
-    try? FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
-    return target
+    static func resolveFallbackExecutablePath() throws -> URL {
+        let settings = AppSettings.shared
+        return try SwiftTubeDependencyManager.resolvedYTDLPExecutableForCookieImport(
+            preferredSource: settings.ytDLPDependencySource,
+            customPath: settings.ytDLPCustomPath
+        )
+    }
 }
 
 struct ProcessOutput: Sendable {

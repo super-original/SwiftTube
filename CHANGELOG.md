@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.7
+
+- Added Settings and onboarding controls for choosing native Swift extraction, system yt-dlp, installed yt-dlp, custom yt-dlp, bundled MPVKit, system libmpv, or a custom MPVKit/libmpv path.
+- Added app-side yt-dlp provisioning and dynamic libmpv loading for compatible system or custom MPVKit selections while keeping bundled MPVKit as the default fallback.
+- Made native Swift YouTube extraction the default playback path, scoped yt-dlp playback caches by selected dependency source, and added dependency-selection plus opt-in live YouTube extraction tests.
+
 ## 0.15.6
 
 - Raised the inline scrubber storyboard preview so it sits above the slider again without increasing the slider hover lift.

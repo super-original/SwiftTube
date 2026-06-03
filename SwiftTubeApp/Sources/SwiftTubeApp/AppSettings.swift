@@ -696,6 +696,10 @@ final class AppSettings: ObservableObject {
     private let playerControlLayoutKey = "playerControlLayout"
     private let sendWatchProgressToYouTubeKey = "sendWatchProgressToYouTube"
     private let onboardingCompletedKey = "onboardingCompleted"
+    private let ytDLPDependencySourceKey = "ytDLPDependencySource"
+    private let ytDLPCustomPathKey = "ytDLPCustomPath"
+    private let mpvKitDependencySourceKey = "mpvKitDependencySource"
+    private let mpvKitCustomPathKey = "mpvKitCustomPath"
 
     @Published var appearanceMode: AppAppearanceMode {
         didSet { defaults.set(appearanceMode.rawValue, forKey: "appearanceMode") }
@@ -786,6 +790,22 @@ final class AppSettings: ObservableObject {
 
     @Published var onboardingCompleted: Bool {
         didSet { defaults.set(onboardingCompleted, forKey: onboardingCompletedKey) }
+    }
+
+    @Published var ytDLPDependencySource: YTDLPDependencySource {
+        didSet { defaults.set(ytDLPDependencySource.rawValue, forKey: ytDLPDependencySourceKey) }
+    }
+
+    @Published var ytDLPCustomPath: String {
+        didSet { defaults.set(ytDLPCustomPath, forKey: ytDLPCustomPathKey) }
+    }
+
+    @Published var mpvKitDependencySource: MPVKitDependencySource {
+        didSet { defaults.set(mpvKitDependencySource.rawValue, forKey: mpvKitDependencySourceKey) }
+    }
+
+    @Published var mpvKitCustomPath: String {
+        didSet { defaults.set(mpvKitCustomPath, forKey: mpvKitCustomPathKey) }
     }
 
     init() {
@@ -902,6 +922,15 @@ final class AppSettings: ObservableObject {
         } else {
             self.onboardingCompleted = defaults.bool(forKey: onboardingCompletedKey)
         }
+
+        self.ytDLPDependencySource = YTDLPDependencySource(
+            rawValue: defaults.string(forKey: ytDLPDependencySourceKey) ?? ""
+        ) ?? .nativeSwift
+        self.ytDLPCustomPath = defaults.string(forKey: ytDLPCustomPathKey) ?? ""
+        self.mpvKitDependencySource = MPVKitDependencySource(
+            rawValue: defaults.string(forKey: mpvKitDependencySourceKey) ?? ""
+        ) ?? .provisioned
+        self.mpvKitCustomPath = defaults.string(forKey: mpvKitCustomPathKey) ?? ""
     }
 
     static let seekSecondsOptions = [3, 5, 10, 15, 30, 45, 60, 90]

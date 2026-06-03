@@ -3,6 +3,8 @@ import SwiftUI
 
 private enum OnboardingStage: String, CaseIterable, Identifiable, Comparable {
     case welcome = "Welcome"
+    case ytDLP = "yt-dlp"
+    case mpvKit = "MPVKit"
     case theme = "Theme"
     case sponsorBlock = "SponsorBlock"
     case controls = "Controls"
@@ -109,6 +111,16 @@ struct OnboardingView: View {
         switch stage {
         case .welcome:
             WelcomeStage()
+        case .ytDLP:
+            YTDLPOnboardingStage(
+                selection: $settings.ytDLPDependencySource,
+                customPath: $settings.ytDLPCustomPath
+            )
+        case .mpvKit:
+            MPVKitOnboardingStage(
+                selection: $settings.mpvKitDependencySource,
+                customPath: $settings.mpvKitCustomPath
+            )
         case .theme:
             ThemeStage(selection: $settings.appearanceMode)
         case .sponsorBlock:
@@ -198,6 +210,210 @@ private struct WelcomeStage: View {
                 .font(.system(size: 58, weight: .bold))
                 .foregroundStyle(.white)
         }
+    }
+}
+
+private struct YTDLPOnboardingStage: View {
+    @Binding var selection: YTDLPDependencySource
+    @Binding var customPath: String
+    @State private var snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+    @State private var isInstalling = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            stageTitle("yt-dlp")
+
+            VStack(spacing: 12) {
+                ForEach(YTDLPDependencySource.allCases) { source in
+                    OnboardingDependencyChoice(
+                        title: source.title,
+                        value: status(for: source),
+                        isSelected: selection == source,
+                        isEnabled: isEnabled(source),
+                        action: {
+                            selection = source
+                        }
+                    )
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button("Install yt-dlp") {
+                    install()
+                }
+                .disabled(isInstalling)
+
+                Button("Choose yt-dlp") {
+                    if let path = choosePath(allowsDirectories: false) {
+                        customPath = path
+                        selection = .custom
+                    }
+                }
+            }
+            .controlSize(.large)
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+        }
+        .onAppear {
+            snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+        }
+    }
+
+    private func status(for source: YTDLPDependencySource) -> String {
+        switch source {
+        case .nativeSwift:
+            return "YouTube only"
+        case .system:
+            return snapshot.systemYTDLP?.path ?? "Not found"
+        case .provisioned:
+            return snapshot.provisionedYTDLP?.path ?? "Not installed"
+        case .custom:
+            return customPath.isEmpty ? "Not selected" : customPath
+        }
+    }
+
+    private func isEnabled(_ source: YTDLPDependencySource) -> Bool {
+        switch source {
+        case .nativeSwift:
+            return true
+        case .system:
+            return snapshot.systemYTDLP != nil
+        case .provisioned:
+            return snapshot.provisionedYTDLP != nil
+        case .custom:
+            return customPath.isEmpty == false
+        }
+    }
+
+    private func install() {
+        isInstalling = true
+        errorMessage = nil
+        Task {
+            do {
+                _ = try await SwiftTubeDependencyManager.installYTDLP()
+                await MainActor.run {
+                    snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+                    selection = .provisioned
+                    isInstalling = false
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+                    isInstalling = false
+                }
+            }
+        }
+    }
+}
+
+private struct MPVKitOnboardingStage: View {
+    @Binding var selection: MPVKitDependencySource
+    @Binding var customPath: String
+    @State private var snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            stageTitle("MPVKit")
+
+            VStack(spacing: 12) {
+                ForEach(MPVKitDependencySource.allCases) { source in
+                    OnboardingDependencyChoice(
+                        title: source.title,
+                        value: status(for: source),
+                        isSelected: selection == source,
+                        isEnabled: isEnabled(source),
+                        action: {
+                            selection = source
+                        }
+                    )
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button("Use bundled MPVKit") {
+                    selection = .provisioned
+                }
+
+                Button("Choose MPVKit") {
+                    if let path = choosePath(allowsDirectories: true) {
+                        customPath = path
+                        selection = .custom
+                    }
+                }
+            }
+            .controlSize(.large)
+        }
+        .onAppear {
+            snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+        }
+    }
+
+    private func status(for source: MPVKitDependencySource) -> String {
+        switch source {
+        case .system:
+            return snapshot.systemMPVKit?.path ?? "Not found"
+        case .provisioned:
+            return "\(SwiftTubeDependencyManager.requiredMPVKitVersion) bundled"
+        case .custom:
+            return customPath.isEmpty ? "Not selected" : customPath
+        }
+    }
+
+    private func isEnabled(_ source: MPVKitDependencySource) -> Bool {
+        switch source {
+        case .system:
+            return snapshot.systemMPVKit != nil
+        case .provisioned:
+            return true
+        case .custom:
+            return customPath.isEmpty == false
+        }
+    }
+}
+
+private struct OnboardingDependencyChoice: View {
+    let title: String
+    let value: String
+    let isSelected: Bool
+    let isEnabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.title3.weight(.bold))
+                    Text(value)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer()
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(isSelected ? BrandAssets.swiftTubeBlue.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isEnabled == false)
+        .opacity(isEnabled ? 1 : 0.55)
     }
 }
 
@@ -820,6 +1036,16 @@ private func stageTitle(_ title: String) -> some View {
         .font(.system(size: 52, weight: .bold))
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, alignment: .leading)
+}
+
+@MainActor
+private func choosePath(allowsDirectories: Bool) -> String? {
+    let panel = NSOpenPanel()
+    panel.allowsMultipleSelection = false
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = allowsDirectories
+    panel.resolvesAliases = true
+    return panel.runModal() == .OK ? panel.url?.path : nil
 }
 
 private func browserAppIcon(for browser: BrowserLoginOption) -> NSImage {

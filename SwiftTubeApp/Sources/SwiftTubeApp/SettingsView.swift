@@ -423,6 +423,9 @@ private struct NotificationsPane: View {
 private struct AdvancedPane: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var mutationCenter = AppMutationCenter.shared
+    @State private var dependencySnapshot = SwiftTubeDependencyManager.detectionSnapshot()
+    @State private var isInstallingYTDLP = false
+    @State private var dependencyError: String?
     @State private var customTitle = "Custom notification"
     @State private var customMessage = "This is how your custom toast will look."
     @State private var customSymbol = "wand.and.stars"
@@ -434,6 +437,81 @@ private struct AdvancedPane: View {
                 title: "Advanced",
                 subtitle: "Testing and reset options."
             )
+
+            SettingsCard(title: "Dependencies", icon: "shippingbox") {
+                VStack(alignment: .leading, spacing: 18) {
+                    DependencySourceSection(
+                        title: "YouTube extractor",
+                        options: YTDLPDependencySource.allCases.map { source in
+                            DependencySourceOption(
+                                id: source.rawValue,
+                                title: source.title,
+                                value: ytdlpStatus(for: source),
+                                isSelected: settings.ytDLPDependencySource == source,
+                                isEnabled: ytdlpEnabled(for: source),
+                                action: {
+                                    settings.ytDLPDependencySource = source
+                                }
+                            )
+                        }
+                    )
+
+                    HStack(spacing: 10) {
+                        Button("Install yt-dlp") {
+                            installYTDLP()
+                        }
+                        .disabled(isInstallingYTDLP)
+
+                        Button("Choose yt-dlp") {
+                            if let path = chooseDependencyPath(allowsDirectories: false) {
+                                settings.ytDLPCustomPath = path
+                                settings.ytDLPDependencySource = .custom
+                            }
+                        }
+                    }
+
+                    SettingsDivider()
+
+                    DependencySourceSection(
+                        title: "MPVKit",
+                        options: MPVKitDependencySource.allCases.map { source in
+                            DependencySourceOption(
+                                id: source.rawValue,
+                                title: source.title,
+                                value: mpvStatus(for: source),
+                                isSelected: settings.mpvKitDependencySource == source,
+                                isEnabled: mpvEnabled(for: source),
+                                action: {
+                                    settings.mpvKitDependencySource = source
+                                }
+                            )
+                        }
+                    )
+
+                    HStack(spacing: 10) {
+                        Button("Use bundled MPVKit") {
+                            settings.mpvKitDependencySource = .provisioned
+                        }
+
+                        Button("Choose MPVKit") {
+                            if let path = chooseDependencyPath(allowsDirectories: true) {
+                                settings.mpvKitCustomPath = path
+                                settings.mpvKitDependencySource = .custom
+                            }
+                        }
+                    }
+
+                    if let dependencyError {
+                        Text(dependencyError)
+                            .font(.callout)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .onAppear {
+                    refreshDependencies()
+                }
+            }
 
             SettingsCard(title: "Onboarding", icon: "sparkles.tv") {
                 HStack {
@@ -497,6 +575,89 @@ private struct AdvancedPane: View {
                 }
             }
         }
+    }
+
+    private func ytdlpStatus(for source: YTDLPDependencySource) -> String? {
+        switch source {
+        case .nativeSwift:
+            return "YouTube only"
+        case .system:
+            return dependencySnapshot.systemYTDLP?.path ?? "Not found"
+        case .provisioned:
+            return dependencySnapshot.provisionedYTDLP?.path ?? "Not installed"
+        case .custom:
+            return settings.ytDLPCustomPath.isEmpty ? "Not selected" : settings.ytDLPCustomPath
+        }
+    }
+
+    private func ytdlpEnabled(for source: YTDLPDependencySource) -> Bool {
+        switch source {
+        case .nativeSwift:
+            return true
+        case .system:
+            return dependencySnapshot.systemYTDLP != nil
+        case .provisioned:
+            return dependencySnapshot.provisionedYTDLP != nil
+        case .custom:
+            return settings.ytDLPCustomPath.isEmpty == false
+        }
+    }
+
+    private func mpvStatus(for source: MPVKitDependencySource) -> String? {
+        switch source {
+        case .system:
+            return dependencySnapshot.systemMPVKit?.path ?? "Not found"
+        case .provisioned:
+            return "\(SwiftTubeDependencyManager.requiredMPVKitVersion) bundled"
+        case .custom:
+            return settings.mpvKitCustomPath.isEmpty ? "Not selected" : settings.mpvKitCustomPath
+        }
+    }
+
+    private func mpvEnabled(for source: MPVKitDependencySource) -> Bool {
+        switch source {
+        case .system:
+            return dependencySnapshot.systemMPVKit != nil
+        case .provisioned:
+            return true
+        case .custom:
+            return settings.mpvKitCustomPath.isEmpty == false
+        }
+    }
+
+    private func refreshDependencies() {
+        dependencySnapshot = SwiftTubeDependencyManager.detectionSnapshot()
+    }
+
+    private func installYTDLP() {
+        isInstallingYTDLP = true
+        dependencyError = nil
+        Task {
+            do {
+                _ = try await SwiftTubeDependencyManager.installYTDLP()
+                await MainActor.run {
+                    isInstallingYTDLP = false
+                    settings.ytDLPDependencySource = .provisioned
+                    refreshDependencies()
+                }
+            } catch {
+                await MainActor.run {
+                    isInstallingYTDLP = false
+                    dependencyError = error.localizedDescription
+                    refreshDependencies()
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func chooseDependencyPath(allowsDirectories: Bool) -> String? {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = allowsDirectories
+        panel.resolvesAliases = true
+        return panel.runModal() == .OK ? panel.url?.path : nil
     }
 }
 
@@ -1034,6 +1195,63 @@ private struct SettingsCard<Content: View>: View {
             RoundedRectangle(cornerRadius: 24)
                 .fill(settings.elevatedBackgroundColor)
         )
+    }
+}
+
+private struct DependencySourceOption: Identifiable {
+    let id: String
+    let title: String
+    let value: String?
+    let isSelected: Bool
+    let isEnabled: Bool
+    let action: () -> Void
+}
+
+private struct DependencySourceSection: View {
+    let title: String
+    let options: [DependencySourceOption]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+
+            VStack(spacing: 8) {
+                ForEach(options) { option in
+                    Button(action: option.action) {
+                        HStack(spacing: 12) {
+                            Image(systemName: option.isSelected ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(option.isSelected ? Color.accentColor : .secondary)
+                                .font(.system(size: 17, weight: .semibold))
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(option.title)
+                                    .font(.callout.weight(.semibold))
+                                if let value = option.value {
+                                    Text(value)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                            }
+
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(option.isSelected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(option.isEnabled == false)
+                    .opacity(option.isEnabled ? 1 : 0.55)
+                }
+            }
+        }
     }
 }
 
