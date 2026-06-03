@@ -423,7 +423,7 @@ private struct NotificationsPane: View {
 private struct AdvancedPane: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var mutationCenter = AppMutationCenter.shared
-    @State private var dependencySnapshot = SwiftTubeDependencyManager.detectionSnapshot()
+    @State private var dependencySnapshot = DependencyDetectionSnapshot.empty
     @State private var isInstallingYTDLP = false
     @State private var dependencyError: String?
     @State private var customTitle = "Custom notification"
@@ -440,21 +440,23 @@ private struct AdvancedPane: View {
 
             SettingsCard(title: "Dependencies", icon: "shippingbox") {
                 VStack(alignment: .leading, spacing: 18) {
-                    DependencySourceSection(
-                        title: "YouTube extractor",
-                        options: YTDLPDependencySource.allCases.map { source in
-                            DependencySourceOption(
-                                id: source.rawValue,
-                                title: source.title,
-                                value: ytdlpStatus(for: source),
-                                isSelected: settings.ytDLPDependencySource == source,
-                                isEnabled: ytdlpEnabled(for: source),
-                                action: {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("YouTube extractor")
+                            .font(.headline)
+
+                        VStack(spacing: 8) {
+                            ForEach(YTDLPDependencySource.allCases) { source in
+                                SettingsDependencyChoice(
+                                    title: source.title,
+                                    value: ytdlpStatus(for: source),
+                                    isSelected: settings.ytDLPDependencySource == source,
+                                    isEnabled: ytdlpEnabled(for: source)
+                                ) {
                                     settings.ytDLPDependencySource = source
                                 }
-                            )
+                            }
                         }
-                    )
+                    }
 
                     HStack(spacing: 10) {
                         Button("Install yt-dlp") {
@@ -472,21 +474,23 @@ private struct AdvancedPane: View {
 
                     SettingsDivider()
 
-                    DependencySourceSection(
-                        title: "MPVKit",
-                        options: MPVKitDependencySource.allCases.map { source in
-                            DependencySourceOption(
-                                id: source.rawValue,
-                                title: source.title,
-                                value: mpvStatus(for: source),
-                                isSelected: settings.mpvKitDependencySource == source,
-                                isEnabled: mpvEnabled(for: source),
-                                action: {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("MPVKit")
+                            .font(.headline)
+
+                        VStack(spacing: 8) {
+                            ForEach(MPVKitDependencySource.allCases) { source in
+                                SettingsDependencyChoice(
+                                    title: source.title,
+                                    value: mpvStatus(for: source),
+                                    isSelected: settings.mpvKitDependencySource == source,
+                                    isEnabled: mpvEnabled(for: source)
+                                ) {
                                     settings.mpvKitDependencySource = source
                                 }
-                            )
+                            }
                         }
-                    )
+                    }
 
                     HStack(spacing: 10) {
                         Button("Use bundled MPVKit") {
@@ -508,7 +512,7 @@ private struct AdvancedPane: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .onAppear {
+                .task {
                     refreshDependencies()
                 }
             }
@@ -626,7 +630,12 @@ private struct AdvancedPane: View {
     }
 
     private func refreshDependencies() {
-        dependencySnapshot = SwiftTubeDependencyManager.detectionSnapshot()
+        Task.detached(priority: .utility) {
+            let snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+            await MainActor.run {
+                dependencySnapshot = snapshot
+            }
+        }
     }
 
     private func installYTDLP() {
@@ -1198,60 +1207,45 @@ private struct SettingsCard<Content: View>: View {
     }
 }
 
-private struct DependencySourceOption: Identifiable {
-    let id: String
+private struct SettingsDependencyChoice: View {
     let title: String
     let value: String?
     let isSelected: Bool
     let isEnabled: Bool
     let action: () -> Void
-}
-
-private struct DependencySourceSection: View {
-    let title: String
-    let options: [DependencySourceOption]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.headline)
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .font(.system(size: 17, weight: .semibold))
 
-            VStack(spacing: 8) {
-                ForEach(options) { option in
-                    Button(action: option.action) {
-                        HStack(spacing: 12) {
-                            Image(systemName: option.isSelected ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(option.isSelected ? Color.accentColor : .secondary)
-                                .font(.system(size: 17, weight: .semibold))
-
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(option.title)
-                                    .font(.callout.weight(.semibold))
-                                if let value = option.value {
-                                    Text(value)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                }
-                            }
-
-                            Spacer()
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(option.isSelected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04))
-                        )
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.callout.weight(.semibold))
+                    if let value {
+                        Text(value)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(option.isEnabled == false)
-                    .opacity(option.isEnabled ? 1 : 0.55)
                 }
+
+                Spacer()
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04))
+            )
         }
+        .buttonStyle(.plain)
+        .disabled(isEnabled == false)
+        .opacity(isEnabled ? 1 : 0.55)
     }
 }
 

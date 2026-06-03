@@ -44,6 +44,13 @@ struct DependencyDetectionSnapshot: Sendable {
     let provisionedYTDLP: DependencyCandidate?
     let systemMPVKit: DependencyCandidate?
     let provisionedMPVKit: DependencyCandidate?
+
+    static let empty = DependencyDetectionSnapshot(
+        systemYTDLP: nil,
+        provisionedYTDLP: nil,
+        systemMPVKit: nil,
+        provisionedMPVKit: nil
+    )
 }
 
 enum DependencyProvisionError: LocalizedError {

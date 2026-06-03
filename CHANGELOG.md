@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.8
+
+- Fixed a startup crash caused by concurrent YouTube visitor-data updates during initial authenticated playlist loading.
+
 ## 0.15.7
 
 - Added Settings and onboarding controls for choosing native Swift extraction, system yt-dlp, installed yt-dlp, custom yt-dlp, bundled MPVKit, system libmpv, or a custom MPVKit/libmpv path.

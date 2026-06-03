@@ -97,6 +97,7 @@ final class YouTubeAPI: @unchecked Sendable {
     private let defaultAuthenticatedBaseURL = URL(string: "https://www.youtube.com/youtubei/v1/")!
     private let session: URLSession
     private let authManager: YouTubeAuthManager
+    private let visitorDataLock = NSLock()
     private var visitorData: [VisitorKey: String] = [:]
 
     init(authManager: YouTubeAuthManager) {
@@ -398,7 +399,7 @@ final class YouTubeAPI: @unchecked Sendable {
             request.setValue(value, forHTTPHeaderField: header)
         }
 
-        if let visitor = visitorData[visitorKey] {
+        if let visitor = visitorDataValue(for: visitorKey) {
             request.setValue(visitor, forHTTPHeaderField: "X-Goog-Visitor-Id")
         }
 
@@ -411,12 +412,11 @@ final class YouTubeAPI: @unchecked Sendable {
             }
         }
 
-        var payload = body
-        var requestContext = context.requestContext
-        for (key, value) in extraContext {
-            requestContext[key] = value
+        var payload = JSONDictionary()
+        for (key, value) in body {
+            payload[key] = value
         }
-        payload["context"] = requestContext
+        payload["context"] = mergedRequestContext(base: context.requestContext, extra: extraContext)
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
         let (data, response) = try await session.data(for: request)
@@ -428,7 +428,7 @@ final class YouTubeAPI: @unchecked Sendable {
         }
 
         if let visitor = responseVisitorData(dictionary) {
-            visitorData[visitorKey] = visitor
+            setVisitorDataValue(visitor, for: visitorKey)
         }
 
         if let error = dictionary["error"] as? JSONDictionary,
@@ -457,6 +457,29 @@ final class YouTubeAPI: @unchecked Sendable {
         }
 
         return "\(scheme)://\(host)"
+    }
+
+    private func mergedRequestContext(base: JSONDictionary, extra: JSONDictionary) -> JSONDictionary {
+        var merged = JSONDictionary()
+        for (key, value) in base {
+            merged[key] = value
+        }
+        for (key, value) in extra {
+            merged[key] = value
+        }
+        return merged
+    }
+
+    private func visitorDataValue(for key: VisitorKey) -> String? {
+        visitorDataLock.lock()
+        defer { visitorDataLock.unlock() }
+        return visitorData[key]
+    }
+
+    private func setVisitorDataValue(_ value: String, for key: VisitorKey) {
+        visitorDataLock.lock()
+        defer { visitorDataLock.unlock() }
+        visitorData[key] = value
     }
 }
 

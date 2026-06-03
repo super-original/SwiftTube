@@ -216,7 +216,7 @@ private struct WelcomeStage: View {
 private struct YTDLPOnboardingStage: View {
     @Binding var selection: YTDLPDependencySource
     @Binding var customPath: String
-    @State private var snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+    @State private var snapshot = DependencyDetectionSnapshot.empty
     @State private var isInstalling = false
     @State private var errorMessage: String?
 
@@ -259,8 +259,8 @@ private struct YTDLPOnboardingStage: View {
                     .foregroundStyle(.red)
             }
         }
-        .onAppear {
-            snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+        .task {
+            refresh()
         }
     }
 
@@ -296,17 +296,28 @@ private struct YTDLPOnboardingStage: View {
         Task {
             do {
                 _ = try await SwiftTubeDependencyManager.installYTDLP()
+                let updatedSnapshot = SwiftTubeDependencyManager.detectionSnapshot()
                 await MainActor.run {
-                    snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+                    snapshot = updatedSnapshot
                     selection = .provisioned
                     isInstalling = false
                 }
             } catch {
+                let updatedSnapshot = SwiftTubeDependencyManager.detectionSnapshot()
                 await MainActor.run {
                     errorMessage = error.localizedDescription
-                    snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+                    snapshot = updatedSnapshot
                     isInstalling = false
                 }
+            }
+        }
+    }
+
+    private func refresh() {
+        Task.detached(priority: .utility) {
+            let updatedSnapshot = SwiftTubeDependencyManager.detectionSnapshot()
+            await MainActor.run {
+                snapshot = updatedSnapshot
             }
         }
     }
@@ -315,7 +326,7 @@ private struct YTDLPOnboardingStage: View {
 private struct MPVKitOnboardingStage: View {
     @Binding var selection: MPVKitDependencySource
     @Binding var customPath: String
-    @State private var snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+    @State private var snapshot = DependencyDetectionSnapshot.empty
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -349,8 +360,8 @@ private struct MPVKitOnboardingStage: View {
             }
             .controlSize(.large)
         }
-        .onAppear {
-            snapshot = SwiftTubeDependencyManager.detectionSnapshot()
+        .task {
+            refresh()
         }
     }
 
@@ -373,6 +384,15 @@ private struct MPVKitOnboardingStage: View {
             return true
         case .custom:
             return customPath.isEmpty == false
+        }
+    }
+
+    private func refresh() {
+        Task.detached(priority: .utility) {
+            let updatedSnapshot = SwiftTubeDependencyManager.detectionSnapshot()
+            await MainActor.run {
+                snapshot = updatedSnapshot
+            }
         }
     }
 }
