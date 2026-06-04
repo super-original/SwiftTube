@@ -179,10 +179,13 @@ final class DependencySelectionTests: XCTestCase {
         let selections = debugAutomaticStartupMPVSelectionsForTesting(playback: playback)
 
         XCTAssertFalse(selections.isEmpty)
-        XCTAssertEqual(selections.first?.stream.url, iosVideo.url)
-        XCTAssertEqual(selections.first?.audioStream?.url, iosAudio.url)
+        XCTAssertEqual(selections.first?.stream.url, androidVideo.url)
+        XCTAssertEqual(selections.first?.audioStream?.url, androidAudio.url)
         XCTAssertFalse(selections.contains { selection in
             selection.stream.url == iosVideo.url && selection.audioStream?.url == androidAudio.url
+        })
+        XCTAssertFalse(selections.contains { selection in
+            selection.stream.url == androidVideo.url && selection.audioStream?.url == iosAudio.url
         })
     }
 
@@ -222,7 +225,7 @@ final class DependencySelectionTests: XCTestCase {
         XCTAssertEqual(steadySelections.first?.stream.url, muxed.url)
     }
 
-    func testAutomaticSteadyQualityPrefersAndroidSplitStreamOverVODHLS() throws {
+    func testAutomaticQualityPrefersAndroidSplitStreamOverVODHLSAtStartup() throws {
         let video = stream(
             url: "https://example.com/android-1080.mp4",
             formatId: "137",
@@ -267,8 +270,12 @@ final class DependencySelectionTests: XCTestCase {
             bitrate: 1_500_000
         )
 
-        let selections = debugAutomaticSteadyStateMPVSelectionsForTesting(playback: playback(streams: [hls, video, audio]))
+        let playback = playback(streams: [hls, video, audio])
+        let startupSelections = debugAutomaticStartupMPVSelectionsForTesting(playback: playback)
+        let selections = debugAutomaticSteadyStateMPVSelectionsForTesting(playback: playback)
 
+        XCTAssertEqual(startupSelections.first?.stream.url, video.url)
+        XCTAssertEqual(startupSelections.first?.audioStream?.url, audio.url)
         XCTAssertEqual(selections.first?.stream.url, video.url)
         XCTAssertEqual(selections.first?.audioStream?.url, audio.url)
     }

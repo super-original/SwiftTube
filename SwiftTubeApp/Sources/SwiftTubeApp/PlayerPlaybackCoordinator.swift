@@ -365,16 +365,6 @@ private func bestStartupMPVAudioStream(in streams: [StreamInfo]) -> StreamInfo? 
         .first
 }
 
-private func automaticStartupMPVSortKey(for stream: StreamInfo) -> (Int, Int, Int, Int, Int) {
-    (
-        stream.height ?? 0,
-        stream.hasAudio ? 1 : 0,
-        stream.fps ?? 0,
-        stream.bitrate ?? 0,
-        playbackCodecScore(for: stream.videoCodec)
-    )
-}
-
 private func liveManifestStartupSortKey(for stream: StreamInfo) -> [Int] {
     let protocolPreference = stream.container?.lowercased() == "m3u8" ? 1 : 0
     let sourcePreference: Int
@@ -394,22 +384,6 @@ private func liveManifestStartupSortKey(for stream: StreamInfo) -> [Int] {
         stream.hasAudio ? 1 : 0,
         stream.fps ?? 0,
         stream.bitrate ?? 0,
-        playbackCodecScore(for: stream.videoCodec)
-    ]
-}
-
-private func automaticFastStartSortKey(for selection: ManualPlaybackSelection) -> [Int] {
-    let stream = selection.stream
-    let height = stream.height ?? 0
-    let heightPenalty = height == 0 ? 2000 : abs(height - 360)
-    let oversizePenalty = height > 480 ? height : 0
-
-    return [
-        stream.hasAudio && stream.hasVideo && stream.streamKind != "manifest" ? 5 : 0,
-        stream.container?.lowercased().hasPrefix("mp4") == true ? 3 : 0,
-        -oversizePenalty,
-        -heightPenalty,
-        -(stream.bitrate ?? Int.max),
         playbackCodecScore(for: stream.videoCodec)
     ]
 }
@@ -444,7 +418,7 @@ private func automaticSteadyStateSortKey(for selection: ManualPlaybackSelection)
 }
 
 private func automaticStartupMPVSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
-    automaticStartupMPVSelections(for: playback).first
+    automaticSteadyStateMPVSelection(for: playback)
 }
 
 private func automaticSteadyStateMPVSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
@@ -543,40 +517,8 @@ private func automaticSteadyStateMPVSelections(for playback: VideoPlayback) -> [
     return orderedSelections
 }
 
-private func automaticFastStartMPVSelections(for playback: VideoPlayback) -> [ManualPlaybackSelection] {
-    let selections = automaticPlayableMPVSelections(for: playback)
-    var orderedSelections: [ManualPlaybackSelection] = []
-    var seenSelections = Set<ManualPlaybackSelection>()
-
-    func appendSelection(_ selection: ManualPlaybackSelection?) {
-        guard let selection else { return }
-        if seenSelections.insert(selection).inserted {
-            orderedSelections.append(selection)
-        }
-    }
-
-    if let preferredMuxed = playback.preferredMuxedStream {
-        appendSelection(selections.first { $0.stream == preferredMuxed })
-    }
-
-    for selection in selections.sorted(by: { scoreIsBetter(automaticFastStartSortKey(for: $0), than: automaticFastStartSortKey(for: $1)) }) {
-        appendSelection(selection)
-    }
-
-    for selection in automaticSteadyStateMPVSelections(for: playback) {
-        appendSelection(selection)
-    }
-
-    return orderedSelections
-}
-
 private func automaticStartupMPVSelections(for playback: VideoPlayback) -> [ManualPlaybackSelection] {
-    automaticFastStartMPVSelections(for: playback)
-}
-
-private func selectionsMatch(_ lhs: ManualPlaybackSelection, _ rhs: ManualPlaybackSelection) -> Bool {
-    lhs.stream.url == rhs.stream.url
-        && lhs.audioStream?.url == rhs.audioStream?.url
+    automaticSteadyStateMPVSelections(for: playback)
 }
 
 #if DEBUG
@@ -608,11 +550,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         static let interactionThrottle: TimeInterval = 0.16
         static let visibilityAnimationDuration = 0.10
         static let spacebarHoldDelay: UInt64 = 800_000_000
-        static let automaticQualityUpgradePollInterval: UInt64 = 250_000_000
-        static let automaticQualityUpgradeMinimumDelay: TimeInterval = 1.5
-        static let automaticQualityUpgradeTimeout: TimeInterval = 10.0
-        static let automaticQualityUpgradeMinimumAdvance: Double = 0.75
-        static let automaticQualityUpgradeMinimumBufferedAhead: Double = 2.0
     }
 
     private enum HideMonitorResult {
@@ -668,7 +605,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private weak var window: NSWindow?
     private var keyboardEventMonitor: Any? = nil
     private var prepareTask: Task<Void, Never>? = nil
-    private var automaticQualityUpgradeTask: Task<Void, Never>? = nil
     private var hideControlsTask: Task<Void, Never>? = nil
     private var menuInteractionTask: Task<Void, Never>? = nil
     private var mpvStateTask: Task<Void, Never>? = nil
@@ -945,7 +881,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func configure(with playback: VideoPlayback) {
         prepareTask?.cancel()
-        automaticQualityUpgradeTask?.cancel()
         prepareTask = Task { [weak self] in
             await self?.preparePlayback(playback)
         }
@@ -986,7 +921,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func reset() {
         prepareTask?.cancel()
-        automaticQualityUpgradeTask?.cancel()
         stopHideMonitor()
         menuInteractionTask?.cancel()
         mpvStateTask?.cancel()
@@ -1030,7 +964,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         suppressedSponsorSegmentID = nil
         sponsorSkipTask?.cancel()
         sponsorSkipTask = nil
-        automaticQualityUpgradeTask = nil
         pausedResizeRefreshTask = nil
         scheduleMPVStop(mpvEngine, pauseFirst: true)
         mpvEngine = nil
@@ -1166,7 +1099,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         pendingQualityOptionID = option.id
 
         prepareTask?.cancel()
-        automaticQualityUpgradeTask?.cancel()
         prepareTask = Task { [weak self] in
             await self?.switchQuality(
                 to: option,
@@ -1463,7 +1395,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             mpvEngine = nil
 
             let startupSelections = automaticStartupMPVSelections(for: playback)
-            guard let firstSelection = startupSelections.first else {
+            guard startupSelections.isEmpty == false else {
                 PlaybackDebugLogger.log(
                     "prepare playback missing startup source id=\(playback.id) streams=\(playback.streams.count)"
                 )
@@ -1478,7 +1410,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             let startupLimit = min(startupSelections.count, playback.isLive ? 4 : 5)
             let candidateSelections = Array(startupSelections.prefix(startupLimit))
             var preparedEngine: MPVPlaybackEngine?
-            var preparedSelection = firstSelection
             var lastPreparationError: Error?
 
             for (index, selection) in candidateSelections.enumerated() {
@@ -1502,7 +1433,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                     let startTime = initialStartTime
                     try await engine.prepare(startTime: startTime, autoPlay: false)
                     preparedEngine = engine
-                    preparedSelection = selection
                     break
                 } catch {
                     lastPreparationError = error
@@ -1531,7 +1461,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             startPollingMPVState(using: engine)
             refreshQualityOptions(for: playback)
             loadSubtitleTracks(for: playback, engine: engine)
-            scheduleAutomaticQualityUpgrade(for: playback, from: preparedSelection)
             startHideMonitorIfNeeded()
         } catch {
             if !Task.isCancelled {
@@ -1546,163 +1475,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         if !Task.isCancelled {
             isPreparingInitialPlayback = false
-        }
-    }
-
-    private func scheduleAutomaticQualityUpgrade(
-        for playback: VideoPlayback,
-        from startupSelection: ManualPlaybackSelection
-    ) {
-        automaticQualityUpgradeTask?.cancel()
-
-        guard let targetSelection = automaticSteadyStateMPVSelection(for: playback),
-              selectionsMatch(startupSelection, targetSelection) == false else {
-            return
-        }
-
-        PlaybackDebugLogger.log(
-            "automatic quality upgrade scheduled id=\(playback.id) from=\(debugDescription(for: startupSelection.stream)) to=\(debugDescription(for: targetSelection.stream))"
-        )
-
-        automaticQualityUpgradeTask = Task { [weak self] in
-            guard let self else { return }
-            let baselineTime = self.currentTime
-            guard await self.waitForAutomaticQualityUpgradeReadiness(
-                playbackID: playback.id,
-                baselineTime: baselineTime
-            ) else {
-                return
-            }
-            await self.performAutomaticQualityUpgrade(
-                to: targetSelection,
-                fallback: startupSelection,
-                playbackID: playback.id
-            )
-        }
-    }
-
-    private func waitForAutomaticQualityUpgradeReadiness(
-        playbackID: String,
-        baselineTime: Double
-    ) async -> Bool {
-        let startedAt = Date()
-        let deadline = startedAt.addingTimeInterval(Timing.automaticQualityUpgradeTimeout)
-
-        while Date() < deadline {
-            if Task.isCancelled { return false }
-            guard selectedQualityOptionID == QualityOption.automaticID,
-                  pendingQualityOptionID == nil,
-                  currentPlayback?.id == playbackID,
-                  let existingEngine = mpvEngine else {
-                return false
-            }
-
-            let snapshot = existingEngine.snapshot()
-            let elapsed = Date().timeIntervalSince(startedAt)
-            let advanced = snapshot.currentTime >= baselineTime + Timing.automaticQualityUpgradeMinimumAdvance
-            let bufferedAhead = snapshot.bufferedRanges
-                .filter { $0.upperBound >= snapshot.currentTime }
-                .map { $0.upperBound - snapshot.currentTime }
-                .max() ?? Timing.automaticQualityUpgradeMinimumBufferedAhead
-            let hasEnoughBuffer = bufferedAhead >= Timing.automaticQualityUpgradeMinimumBufferedAhead
-
-            if elapsed >= Timing.automaticQualityUpgradeMinimumDelay,
-               snapshot.isPlaying,
-               snapshot.isBuffering == false,
-               advanced,
-               hasEnoughBuffer {
-                return true
-            }
-
-            try? await Task.sleep(nanoseconds: Timing.automaticQualityUpgradePollInterval)
-        }
-
-        PlaybackDebugLogger.log(
-            "automatic quality upgrade skipped waiting for stable playback id=\(playbackID) baseline=\(baselineTime) current=\(currentTime)"
-        )
-        return false
-    }
-
-    private func performAutomaticQualityUpgrade(
-        to selection: ManualPlaybackSelection,
-        fallback fallbackSelection: ManualPlaybackSelection,
-        playbackID: String
-    ) async {
-        guard selectedQualityOptionID == QualityOption.automaticID,
-              pendingQualityOptionID == nil,
-              currentPlayback?.id == playbackID,
-              let existingEngine = mpvEngine else {
-            return
-        }
-
-        do {
-            let request = try mpvRequest(for: selection)
-            let rollbackRequest = try mpvRequest(for: fallbackSelection)
-            let restoreState = currentRestoreState()
-            let clampedTime = max(restoreState.currentTime, 0)
-
-            PlaybackDebugLogger.log(
-                "automatic quality upgrade start id=\(playbackID) target=\(debugDescription(for: selection.stream)) seekTo=\(clampedTime)"
-            )
-
-            mpvStateTask?.cancel()
-            do {
-                try await existingEngine.replaceFile(with: request, seekTo: clampedTime)
-                existingEngine.setVolume(volume)
-                existingEngine.setRate(effectivePlaybackSpeed)
-                if restoreState.wasPlaying {
-                    existingEngine.play()
-                } else {
-                    existingEngine.pause()
-                }
-                currentTime = clampedTime
-                scrubPosition = clampedTime
-                startPollingMPVState(using: existingEngine)
-            } catch {
-                PlaybackDebugLogger.log(
-                    "automatic quality upgrade failed; restoring fast stream id=\(playbackID) error=\(error.localizedDescription)"
-                )
-                mpvEngine = nil
-                await existingEngine.stopSafely()
-
-                let rollbackEngine = MPVPlaybackEngine(request: rollbackRequest)
-                rollbackEngine.onPlaybackEnded = { [weak self] in
-                    self?.handlePlaybackEndedEvent()
-                }
-                mpvEngine = rollbackEngine
-                await Task.yield()
-                try await rollbackEngine.prepare(startTime: clampedTime, autoPlay: false)
-                rollbackEngine.setVolume(volume)
-                rollbackEngine.setRate(effectivePlaybackSpeed)
-                if restoreState.wasPlaying {
-                    rollbackEngine.play()
-                } else {
-                    rollbackEngine.pause()
-                }
-                currentTime = clampedTime
-                scrubPosition = clampedTime
-                startPollingMPVState(using: rollbackEngine)
-                return
-            }
-
-            if let playback = currentPlayback {
-                refreshQualityOptions(for: playback)
-                if let engine = mpvEngine {
-                    reapplySubtitlesAfterSwitch(for: playback, engine: engine)
-                }
-            }
-            if let optionID = manualQualityOptionID(for: selection) {
-                PlaybackDebugLogger.log(
-                    "automatic quality upgrade active stream option=\(optionID)"
-                )
-            }
-            PlaybackDebugLogger.log(
-                "automatic quality upgrade success id=\(playbackID) selected=\(selectedQualityOptionID) currentTime=\(currentTime)"
-            )
-        } catch {
-            PlaybackDebugLogger.log(
-                "automatic quality upgrade abandoned id=\(playbackID) error=\(error.localizedDescription)"
-            )
         }
     }
 
@@ -1827,7 +1599,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             }
             if case .automatic = option.selection {
                 selectedQualityOptionID = QualityOption.automaticID
-                scheduleAutomaticQualityUpgrade(for: playback, from: selection)
             } else {
                 selectedQualityOptionID = option.id
             }
