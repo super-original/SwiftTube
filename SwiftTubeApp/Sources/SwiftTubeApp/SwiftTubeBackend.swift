@@ -5991,7 +5991,7 @@ private struct BrowserAccountProbe {
 }
 
 private func probeBrowserAccount(_ browser: BrowserLoginOption) async -> BrowserAccountProbe? {
-    await probeBrowserAccount(browser, timeout: 4.5, allowBrowseFallback: true)
+    await probeBrowserAccount(browser, timeout: 7, allowBrowseFallback: true)
 }
 
 private func probeBrowserAccount(
