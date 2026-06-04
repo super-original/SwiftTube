@@ -82,43 +82,46 @@ struct SettingsView: View {
     }
 
     private var settingsSidebar: some View {
-        List(selection: Binding(
-            get: { Optional(selection) },
-            set: {
-                if let pane = $0 {
-                    selection = pane
+        VStack(spacing: 0) {
+            List(selection: Binding(
+                get: { Optional(selection) },
+                set: {
+                    if let pane = $0 {
+                        selection = pane
+                    }
                 }
-            }
-        )) {
-            Section {
-                ForEach(SettingsPane.appSection) { pane in
-                    Label(pane.title, systemImage: pane.systemImage)
-                        .tag(pane)
+            )) {
+                Section {
+                    ForEach(SettingsPane.appSection) { pane in
+                        Label(pane.title, systemImage: pane.systemImage)
+                            .tag(pane)
+                    }
+                } header: {
+                    Text("SwiftTube")
+                        .font(.system(size: 34, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .padding(.top, 4)
+                        .padding(.bottom, 6)
                 }
-            } header: {
-                Text("SwiftTube")
-                    .font(.system(size: 34, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .padding(.top, 4)
-                    .padding(.bottom, 6)
-            }
-            .collapsible(false)
+                .collapsible(false)
 
-            Section("Player") {
-                ForEach(SettingsPane.playbackSection) { pane in
-                    Label(pane.title, systemImage: pane.systemImage)
-                        .tag(pane)
+                Section("Player") {
+                    ForEach(SettingsPane.playbackSection) { pane in
+                        Label(pane.title, systemImage: pane.systemImage)
+                            .tag(pane)
+                    }
                 }
-            }
-            .collapsible(false)
+                .collapsible(false)
 
-            Section("About") {
-                ForEach(SettingsPane.aboutSection) { pane in
-                    Label(pane.title, systemImage: pane.systemImage)
-                        .tag(pane)
+                Section("About") {
+                    ForEach(SettingsPane.aboutSection) { pane in
+                        Label(pane.title, systemImage: pane.systemImage)
+                            .tag(pane)
+                    }
                 }
+                .collapsible(false)
             }
-            .collapsible(false)
+
         }
         .listStyle(.sidebar)
         .scrollDisabled(true)
@@ -426,6 +429,10 @@ private struct AdvancedPane: View {
     @State private var dependencySnapshot = DependencyDetectionSnapshot.empty
     @State private var isInstallingYTDLP = false
     @State private var dependencyError: String?
+    @State private var speedTestVideoURL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    @State private var isRunningExtractorSpeedTest = false
+    @State private var extractorSpeedResults: [ExtractorSpeedTestResult] = []
+    @State private var extractorSpeedError: String?
     @State private var customTitle = "Custom notification"
     @State private var customMessage = "This is how your custom toast will look."
     @State private var customSymbol = "wand.and.stars"
@@ -514,6 +521,50 @@ private struct AdvancedPane: View {
                 }
                 .task {
                     refreshDependencies()
+                }
+            }
+
+            SettingsCard(title: "Extractor Speed Test", icon: "speedometer") {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 10) {
+                        TextField("YouTube URL or video ID", text: $speedTestVideoURL)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button {
+                            runExtractorSpeedTest()
+                        } label: {
+                            if isRunningExtractorSpeedTest {
+                                Label("Running", systemImage: "timer")
+                            } else {
+                                Label("Run", systemImage: "play.fill")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isRunningExtractorSpeedTest || speedTestVideoID == nil)
+                    }
+
+                    if isRunningExtractorSpeedTest {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Testing extractors...")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if extractorSpeedResults.isEmpty == false {
+                        VStack(spacing: 8) {
+                            ForEach(extractorSpeedResults) { result in
+                                ExtractorSpeedResultRow(result: result)
+                            }
+                        }
+                    }
+
+                    if let extractorSpeedError {
+                        Text(extractorSpeedError)
+                            .font(.callout)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
 
@@ -629,6 +680,28 @@ private struct AdvancedPane: View {
         }
     }
 
+    private var speedTestVideoID: String? {
+        let trimmed = speedTestVideoURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return nil }
+
+        if trimmed.range(of: #"^[A-Za-z0-9_-]{11}$"#, options: .regularExpression) != nil {
+            return trimmed
+        }
+
+        guard let url = URL(string: trimmed),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        if let host = url.host?.lowercased(), host.contains("youtu.be") {
+            let candidate = url.pathComponents.dropFirst().first ?? ""
+            return candidate.range(of: #"^[A-Za-z0-9_-]{11}$"#, options: .regularExpression) != nil ? candidate : nil
+        }
+
+        let candidate = components.queryItems?.first(where: { $0.name == "v" })?.value ?? ""
+        return candidate.range(of: #"^[A-Za-z0-9_-]{11}$"#, options: .regularExpression) != nil ? candidate : nil
+    }
+
     private func refreshDependencies() {
         Task.detached(priority: .utility) {
             let snapshot = SwiftTubeDependencyManager.detectionSnapshot()
@@ -653,6 +726,30 @@ private struct AdvancedPane: View {
                 await MainActor.run {
                     isInstallingYTDLP = false
                     dependencyError = error.localizedDescription
+                    refreshDependencies()
+                }
+            }
+        }
+    }
+
+    private func runExtractorSpeedTest() {
+        guard let videoID = speedTestVideoID else { return }
+        isRunningExtractorSpeedTest = true
+        extractorSpeedError = nil
+        extractorSpeedResults = []
+
+        Task {
+            do {
+                let results = try await BackendClient.shared.runExtractorSpeedTest(videoID: videoID)
+                await MainActor.run {
+                    extractorSpeedResults = results
+                    isRunningExtractorSpeedTest = false
+                    refreshDependencies()
+                }
+            } catch {
+                await MainActor.run {
+                    extractorSpeedError = error.localizedDescription
+                    isRunningExtractorSpeedTest = false
                     refreshDependencies()
                 }
             }
@@ -1193,6 +1290,8 @@ private struct SettingsCard<Content: View>: View {
     }
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+
         VStack(alignment: .leading, spacing: 18) {
             Label(title, systemImage: icon)
                 .font(.title3.weight(.bold))
@@ -1200,10 +1299,16 @@ private struct SettingsCard<Content: View>: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: shape)
         .background(
-            RoundedRectangle(cornerRadius: 24)
-                .fill(settings.elevatedBackgroundColor)
+            shape
+                .fill(Color(settings.elevatedBackgroundColor).opacity(0.42))
         )
+        .overlay(
+            shape
+                .strokeBorder(.separator.opacity(0.9), lineWidth: 0.7)
+        )
+        .shadow(color: Color.black.opacity(settings.preferredColorScheme == .dark ? 0.18 : 0.07), radius: 18, x: 0, y: 12)
     }
 }
 
@@ -1246,6 +1351,65 @@ private struct SettingsDependencyChoice: View {
         .buttonStyle(.plain)
         .disabled(isEnabled == false)
         .opacity(isEnabled ? 1 : 0.55)
+    }
+}
+
+private struct ExtractorSpeedResultRow: View {
+    let result: ExtractorSpeedTestResult
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: statusSymbol)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(statusColor)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(result.mode.title)
+                    .font(.callout.weight(.semibold))
+
+                if let errorMessage = result.errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                } else if let elapsedMilliseconds = result.elapsedMilliseconds {
+                    Text("\(elapsedMilliseconds) ms • \(result.streamCount) streams")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            if let elapsedMilliseconds = result.elapsedMilliseconds, result.errorMessage == nil {
+                Text("\(elapsedMilliseconds) ms")
+                    .font(.callout.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.primary.opacity(0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 0.7)
+        )
+    }
+
+    private var statusSymbol: String {
+        if result.isAvailable == false { return "minus.circle" }
+        if result.errorMessage != nil { return "exclamationmark.circle" }
+        return "checkmark.circle.fill"
+    }
+
+    private var statusColor: Color {
+        if result.isAvailable == false { return .secondary }
+        if result.errorMessage != nil { return .orange }
+        return .green
     }
 }
 

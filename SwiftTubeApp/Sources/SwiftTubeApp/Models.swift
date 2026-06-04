@@ -390,6 +390,56 @@ struct StreamInfo: Codable, Hashable, Sendable {
     let hasVideo: Bool
     let isAdaptive: Bool
     let streamKind: String
+    let audioLanguage: String?
+    let audioTrackKind: String?
+    let audioLanguagePreference: Int?
+    let audioIsDefault: Bool?
+
+    init(
+        url: String,
+        formatId: String?,
+        mimeType: String?,
+        qualityLabel: String?,
+        httpHeaders: [String: String]?,
+        bitrate: Int?,
+        width: Int?,
+        height: Int?,
+        fps: Int?,
+        audioChannels: Int?,
+        audioCodec: String?,
+        videoCodec: String?,
+        container: String?,
+        hasAudio: Bool,
+        hasVideo: Bool,
+        isAdaptive: Bool,
+        streamKind: String,
+        audioLanguage: String? = nil,
+        audioTrackKind: String? = nil,
+        audioLanguagePreference: Int? = nil,
+        audioIsDefault: Bool? = nil
+    ) {
+        self.url = url
+        self.formatId = formatId
+        self.mimeType = mimeType
+        self.qualityLabel = qualityLabel
+        self.httpHeaders = httpHeaders
+        self.bitrate = bitrate
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.audioChannels = audioChannels
+        self.audioCodec = audioCodec
+        self.videoCodec = videoCodec
+        self.container = container
+        self.hasAudio = hasAudio
+        self.hasVideo = hasVideo
+        self.isAdaptive = isAdaptive
+        self.streamKind = streamKind
+        self.audioLanguage = audioLanguage
+        self.audioTrackKind = audioTrackKind
+        self.audioLanguagePreference = audioLanguagePreference
+        self.audioIsDefault = audioIsDefault
+    }
 }
 
 struct InlinePlaybackPayload: Sendable {
@@ -904,10 +954,15 @@ struct AuthStatusResponse: Codable, Equatable, Sendable {
     let avatarUrl: String?
     let displayName: String?
     let email: String?
+    let handle: String?
 
     var avatarURL: URL? {
         guard let avatarUrl else { return nil }
         return URL(string: avatarUrl)
+    }
+
+    var accountIdentifier: String? {
+        email?.nonEmptyModelText ?? handle?.nonEmptyModelText
     }
 
     static let signedOut = AuthStatusResponse(
@@ -917,8 +972,78 @@ struct AuthStatusResponse: Codable, Equatable, Sendable {
         message: nil,
         avatarUrl: nil,
         displayName: nil,
-        email: nil
+        email: nil,
+        handle: nil
     )
+}
+
+private extension String {
+    var nonEmptyModelText: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+struct BrowserAccountSource: Codable, Hashable, Identifiable, Sendable {
+    let browser: String
+    let browserLabel: String
+    let bundleIdentifier: String?
+
+    var id: String { browser }
+}
+
+struct BrowserAccountDiscoveryResponse: Codable, Hashable, Identifiable, Sendable {
+    let id: String
+    let displayName: String
+    let identifier: String?
+    let avatarUrl: String?
+    let sources: [BrowserAccountSource]
+
+    var avatarURL: URL? {
+        guard let avatarUrl else { return nil }
+        return URL(string: avatarUrl)
+    }
+}
+
+enum ExtractorSpeedTestMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case nativeSwift
+    case systemYTDLP
+    case provisionedYTDLP
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .nativeSwift:
+            return "Native Swift"
+        case .systemYTDLP:
+            return "System yt-dlp"
+        case .provisionedYTDLP:
+            return "Installed yt-dlp"
+        }
+    }
+
+    var dependencySource: YTDLPDependencySource {
+        switch self {
+        case .nativeSwift:
+            return .nativeSwift
+        case .systemYTDLP:
+            return .system
+        case .provisionedYTDLP:
+            return .provisioned
+        }
+    }
+}
+
+struct ExtractorSpeedTestResult: Codable, Hashable, Identifiable, Sendable {
+    let mode: ExtractorSpeedTestMode
+    let isAvailable: Bool
+    let elapsedMilliseconds: Int?
+    let streamCount: Int
+    let bestFormatID: String?
+    let errorMessage: String?
+
+    var id: String { mode.rawValue }
 }
 
 struct PlaylistOptionsResponse: Codable, Sendable {

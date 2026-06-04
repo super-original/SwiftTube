@@ -3,10 +3,9 @@ import Foundation
 
 private enum AuthConstants {
     static let youtubeOrigin = "https://www.youtube.com"
-    static let supportedBrowsers: [String: String] = [
-        "chrome": "Chrome",
-        "safari": "Safari",
-    ]
+    static let supportedBrowsers = Dictionary(
+        uniqueKeysWithValues: BrowserLoginOption.allCases.map { ($0.rawValue, $0.displayName) }
+    )
 }
 
 struct AuthSessionConfig: Codable, Sendable {
@@ -15,6 +14,7 @@ struct AuthSessionConfig: Codable, Sendable {
     var avatarURL: String?
     var displayName: String?
     var email: String?
+    var handle: String?
 }
 
 struct AuthMaterial: Sendable {
@@ -25,6 +25,11 @@ struct AuthMaterial: Sendable {
 
     var browser: String { config.browser }
     var browserLabel: String { config.browserLabel }
+}
+
+struct AuthSessionSnapshot: Sendable {
+    let config: AuthSessionConfig?
+    let material: AuthMaterial?
 }
 
 actor YouTubeAuthManager {
@@ -61,7 +66,8 @@ actor YouTubeAuthManager {
             message: message ?? "Personalized recommendations and authenticated playback are on.",
             avatarUrl: config?.avatarURL,
             displayName: config?.displayName,
-            email: config?.email
+            email: config?.email,
+            handle: config?.handle
         )
     }
 
@@ -73,7 +79,8 @@ actor YouTubeAuthManager {
             message: message,
             avatarUrl: nil,
             displayName: nil,
-            email: nil
+            email: nil,
+            handle: nil
         )
     }
 
@@ -81,19 +88,28 @@ actor YouTubeAuthManager {
         material
     }
 
+    func needsAccountIdentifierRefresh() -> Bool {
+        guard material != nil else { return false }
+        return config?.email?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+            && config?.handle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+    }
+
     func connect(browser: String) async throws -> AuthStatusResponse {
         let browserKey = browser.lowercased()
-        guard let browserLabel = AuthConstants.supportedBrowsers[browserKey] else {
-            throw BackendClientError(message: "Unsupported browser. Choose Safari or Chrome.")
+        guard let browserOption = BrowserLoginOption(rawValue: browserKey),
+              let cookieSource = browserOption.cookieSource else {
+            throw BackendClientError(message: "Unsupported browser or browser profile.")
         }
+        let browserLabel = browserOption.displayName
 
-        try await YTDLPTool.exportCookies(from: browserKey, to: cookieFileURL)
+        try await YTDLPTool.exportCookies(from: cookieSource, to: cookieFileURL, timeout: 30)
         let config = AuthSessionConfig(
             browser: browserKey,
             browserLabel: browserLabel,
             avatarURL: self.config?.avatarURL,
             displayName: self.config?.displayName,
-            email: self.config?.email
+            email: self.config?.email,
+            handle: self.config?.handle
         )
         let material = try Self.loadMaterial(config: config, cookieFileURL: cookieFileURL)
 
@@ -107,8 +123,12 @@ actor YouTubeAuthManager {
         guard let config else {
             return signedOutStatus()
         }
+        guard let browserOption = BrowserLoginOption(rawValue: config.browser),
+              let cookieSource = browserOption.cookieSource else {
+            return signedOutStatus(message: "The saved browser profile is no longer available.")
+        }
 
-        try await YTDLPTool.exportCookies(from: config.browser, to: cookieFileURL)
+        try await YTDLPTool.exportCookies(from: cookieSource, to: cookieFileURL, timeout: 30)
         let material = try Self.loadMaterial(config: config, cookieFileURL: cookieFileURL)
         self.material = material
         return authStatus()
@@ -122,11 +142,12 @@ actor YouTubeAuthManager {
         try Self.saveConfig(config, to: configURL)
     }
 
-    func updateAccountProfile(displayName: String?, email: String?, avatarURL: String?) throws {
+    func updateAccountProfile(displayName: String?, email: String?, handle: String?, avatarURL: String?) throws {
         guard var config else { return }
-        guard config.displayName != displayName || config.email != email || config.avatarURL != avatarURL else { return }
+        guard config.displayName != displayName || config.email != email || config.handle != handle || config.avatarURL != avatarURL else { return }
         config.displayName = displayName
         config.email = email
+        config.handle = handle
         config.avatarURL = avatarURL
         self.config = config
         try Self.saveConfig(config, to: configURL)
@@ -174,6 +195,39 @@ actor YouTubeAuthManager {
 
     func playbackCookieFileURL() -> URL? {
         material?.cookieFileURL
+    }
+
+    func probeMaterial(for browser: BrowserLoginOption) async throws -> AuthMaterial {
+        guard let cookieSource = browser.cookieSource else {
+            throw BackendClientError(message: "\(browser.displayName) does not expose a readable profile.")
+        }
+
+        let probesDirectory = supportDirectoryURL.appendingPathComponent("CookieProbes", isDirectory: true)
+        try FileManager.default.createDirectory(at: probesDirectory, withIntermediateDirectories: true)
+        let probeCookieURL = probesDirectory.appendingPathComponent("\(browser.rawValue)-\(UUID().uuidString).txt")
+        try await YTDLPTool.exportCookies(from: cookieSource, to: probeCookieURL, timeout: 8)
+
+        let config = AuthSessionConfig(
+            browser: browser.rawValue,
+            browserLabel: browser.displayName,
+            avatarURL: nil,
+            displayName: nil,
+            email: nil,
+            handle: nil
+        )
+        return try Self.loadMaterial(config: config, cookieFileURL: probeCookieURL)
+    }
+
+    func activateProbeMaterial(_ material: AuthMaterial) -> AuthSessionSnapshot {
+        let snapshot = AuthSessionSnapshot(config: config, material: self.material)
+        config = material.config
+        self.material = material
+        return snapshot
+    }
+
+    func restoreProbeMaterial(_ snapshot: AuthSessionSnapshot) {
+        config = snapshot.config
+        material = snapshot.material
     }
 
     private static func loadConfig(at url: URL) -> AuthSessionConfig? {
@@ -273,7 +327,7 @@ private func parseCookieLine(_ line: Substring) -> NetscapeCookie? {
 }
 
 enum YTDLPTool {
-    static func exportCookies(from browser: String, to destinationURL: URL) async throws {
+    static func exportCookies(from browser: String, to destinationURL: URL, timeout: TimeInterval? = nil) async throws {
         let settings = AppSettings.shared
         let toolPath = try SwiftTubeDependencyManager.resolvedYTDLPExecutableForCookieImport(
             preferredSource: settings.ytDLPDependencySource,
@@ -292,7 +346,9 @@ enum YTDLPTool {
                 "--no-warnings",
                 "--ignore-no-formats-error",
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-            ]
+            ],
+            timeout: timeout,
+            timeoutMessage: "\(browser) cookie import timed out."
         )
 
         let exportedCookies = FileManager.default.fileExists(atPath: destinationURL.path)
@@ -339,6 +395,7 @@ enum ProcessRunner {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
+        process.environment = executableEnvironment()
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -421,6 +478,7 @@ enum ProcessRunner {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
+        process.environment = executableEnvironment()
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -432,5 +490,20 @@ enum ProcessRunner {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
         return ProcessOutput(exitCode: process.terminationStatus, output: output)
+    }
+
+    private static func executableEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let fallbackPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        let existingPaths = (environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map(String.init)
+
+        var mergedPaths = existingPaths
+        for path in fallbackPaths where mergedPaths.contains(path) == false {
+            mergedPaths.append(path)
+        }
+        environment["PATH"] = mergedPaths.joined(separator: ":")
+        return environment
     }
 }

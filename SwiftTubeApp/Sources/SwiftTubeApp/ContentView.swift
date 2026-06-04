@@ -129,13 +129,6 @@ struct ContentView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(!backend.isRunning)
-
-                Button {
-                    authSession.isSheetPresented = true
-                } label: {
-                    AuthToolbarLabel(status: authSession.status)
-                }
-                .disabled(!backend.isRunning)
             }
         }
         .task(id: backend.state) {
@@ -305,7 +298,12 @@ private extension ContentView {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 if let notice = viewModel.notice {
-                    NoticeBanner(text: notice)
+                    NoticeBanner(
+                        text: notice,
+                        actionTitle: authSession.status.authenticated ? nil : "Sign In"
+                    ) {
+                        authSession.isSheetPresented = true
+                    }
                 }
                 contentView
             }
@@ -333,14 +331,23 @@ private extension ContentView {
     }
 
     var sidebar: some View {
-        List(selection: Binding(
-            get: { Optional(navigation.selectedSidebarItem) },
-            set: { if let item = $0 { navigation.selectSidebarItem(item) } }
-        )) {
-            ForEach(visibleSidebarItems) { item in
-                Label(item.title, systemImage: item.systemImage)
-                    .tag(item)
+        VStack(spacing: 0) {
+            List(selection: Binding(
+                get: { Optional(navigation.selectedSidebarItem) },
+                set: { if let item = $0 { navigation.selectSidebarItem(item) } }
+            )) {
+                ForEach(visibleSidebarItems) { item in
+                    Label(item.title, systemImage: item.systemImage)
+                        .tag(item)
+                }
             }
+
+            Divider()
+
+            SidebarAccountButton(status: authSession.status) {
+                authSession.isSheetPresented = true
+            }
+            .disabled(!backend.isRunning)
         }
         .listStyle(.sidebar)
         .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
@@ -3130,105 +3137,126 @@ private struct PlaylistFeedSummaryPlaceholder: View {
 private struct AuthConnectionSheet: View {
     @EnvironmentObject private var authSession: AuthSessionModel
     @Environment(\.dismiss) private var dismiss
-
-    private var orderedBrowsers: [BrowserLoginOption] {
-        guard let preferredRawValue = authSession.status.browser,
-              let preferred = BrowserLoginOption(rawValue: preferredRawValue) else {
-            return BrowserLoginOption.allCases
-        }
-
-        return BrowserLoginOption.allCases.sorted { lhs, rhs in
-            if lhs == preferred { return true }
-            if rhs == preferred { return false }
-            return lhs.id < rhs.id
-        }
-    }
+    @State private var pendingSource: BrowserAccountSource?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Connect Your YouTube Session")
-                    .font(.title2.weight(.bold))
-                Text("SwiftTube uses the browser session you already have on this Mac. Your Google password never goes through the app.")
-                    .foregroundStyle(.secondary)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("YouTube Account")
+                        .font(.title2.weight(.bold))
+                    if let identifier = authSession.status.accountIdentifier, authSession.status.authenticated {
+                        Text(identifier)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Button {
+                    Task { await authSession.discoverAccounts() }
+                } label: {
+                    Label("Scan", systemImage: "arrow.clockwise")
+                }
+                .disabled(authSession.isDiscoveringAccounts || authSession.isWorking)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(orderedBrowsers) { browser in
+            if authSession.status.authenticated {
+                HStack(spacing: 12) {
+                    AccountAvatarImage(url: authSession.status.avatarURL, size: 48, fallbackSymbol: "person.crop.circle.badge.checkmark")
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(authSession.status.displayName?.contentNilIfBlank ?? "Connected")
+                            .font(.headline)
+                        Text(authSession.status.accountIdentifier ?? authSession.status.browserLabel ?? "YouTube")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Disconnect") {
+                        Task { await authSession.disconnect() }
+                    }
+                    .disabled(authSession.isWorking)
+                }
+                .padding(14)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(.separator.opacity(0.9), lineWidth: 0.7)
+                )
+            }
+
+            if authSession.isDiscoveringAccounts {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("Scanning browsers...")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if authSession.discoveredAccounts.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("No signed-in YouTube accounts found")
+                        .font(.headline)
                     Button {
-                        Task {
-                            let connected = await authSession.connect(using: browser)
-                            if connected {
-                                dismiss()
+                        Task { await authSession.discoverAccounts() }
+                    } label: {
+                        Label("Scan Again", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(authSession.isDiscoveringAccounts || authSession.isWorking)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Detected Accounts")
+                        .font(.headline)
+                    ForEach(authSession.discoveredAccounts) { account in
+                        AccountDiscoveryCard(
+                            account: account,
+                            isWorking: authSession.isWorking,
+                            pendingSource: pendingSource
+                        ) { source in
+                            Task {
+                                pendingSource = source
+                                let connected = await authSession.connect(using: source)
+                                pendingSource = nil
+                                if connected { dismiss() }
                             }
                         }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(browser.title)
-                                .font(.headline)
-                            Text(browser.subtitle)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .disabled(authSession.isWorking)
                 }
             }
 
             if authSession.isWorking {
                 HStack(spacing: 10) {
                     ProgressView()
-                    Text("Connecting your YouTube session...")
+                    Text("Connecting...")
                         .foregroundStyle(.secondary)
                 }
-            }
-
-            if authSession.status.authenticated {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("Connected via \(authSession.status.browserLabel ?? "your browser")", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    if let message = authSession.status.message {
-                        Text(message)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Color(NSColor.controlBackgroundColor))
-                )
-
-                Button("Disconnect") {
-                    Task {
-                        await authSession.disconnect()
-                    }
-                }
-                .disabled(authSession.isWorking)
             }
 
             if let errorMessage = authSession.errorMessage, !errorMessage.isEmpty {
                 Text(errorMessage)
                     .font(.subheadline)
                     .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            Text("If the import fails, make sure you are signed into YouTube in that browser and then try again.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
 
             HStack {
                 Spacer()
-                Button("Close") {
+                Button("Done") {
                     dismiss()
                 }
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(24)
-        .frame(width: 480)
+        .frame(width: 560)
+        .task {
+            await authSession.discoverAccounts()
+        }
+    }
+}
+
+private extension String {
+    var contentNilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -3261,6 +3289,14 @@ private struct EmptyStateView: View {
 
 private struct NoticeBanner: View {
     let text: String
+    let actionTitle: String?
+    let action: () -> Void
+
+    init(text: String, actionTitle: String? = nil, action: @escaping () -> Void = {}) {
+        self.text = text
+        self.actionTitle = actionTitle
+        self.action = action
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -3270,6 +3306,11 @@ private struct NoticeBanner: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
             Spacer()
+            if let actionTitle {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

@@ -1606,6 +1606,7 @@ final class PlayerViewModel: ObservableObject {
             startCommentsLoad()
             startLiveChatLoadIfAvailable(for: playback)
             startTranscriptLoad(for: playback)
+            loadPlaylistOptions(reportErrors: false)
         } catch {
             guard !Task.isCancelled else { return }
             playback = nil
@@ -2074,7 +2075,7 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
-    func loadPlaylistOptions() {
+    func loadPlaylistOptions(reportErrors: Bool = true) {
         guard playback?.playlistSaveEnabled == true, !isLoadingPlaylistOptions else { return }
 
         Task {
@@ -2087,7 +2088,9 @@ final class PlayerViewModel: ObservableObject {
                 updatePlaybackWatchLater(watchLater)
                 playlistOptions = response.options.filter { $0.playlistId != "WL" }
             } catch {
-                errorMessage = error.localizedDescription
+                if reportErrors {
+                    errorMessage = error.localizedDescription
+                }
             }
         }
     }

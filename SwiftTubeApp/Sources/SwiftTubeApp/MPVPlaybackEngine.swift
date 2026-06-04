@@ -45,12 +45,13 @@ final class MPVPlaybackEngine: NSObject {
         PlaybackDebugLogger.log(
             "mpv prepare start video=\(request.video.url.absoluteString) audio=\(request.audio?.url.absoluteString ?? "nil") startTime=\(startTime) autoPlay=\(autoPlay)"
         )
-        let layer = await renderController.waitForDisplayReady()
+        let layer = try await renderController.waitForDisplayReady()
         PlaybackDebugLogger.log(
             "mpv render surface ready \(renderController.renderSurfaceDescription())"
         )
         let handle = try initializeIfNeeded(layer: layer)
         didLoadFile = false
+        try applyAuxiliaryAudioOption(for: request.audio)
         try command(["loadfile", request.video.url.absoluteString, "replace", "-1"])
         let loadWaitTask = makeFileLoadedTask(for: handle)
         self.loadWaitTask = loadWaitTask
@@ -61,12 +62,6 @@ final class MPVPlaybackEngine: NSObject {
         )
         self.loadWaitTask = nil
         didLoadFile = true
-        if let audio = request.audio {
-            let audioReadyTask = makeAudioReadyTask(for: audio, handle: handle)
-            self.audioReadyTask = audioReadyTask
-            await audioReadyTask.value
-            self.audioReadyTask = nil
-        }
         startEventPump(using: handle)
 
         if startTime > 0 {
@@ -158,6 +153,8 @@ final class MPVPlaybackEngine: NSObject {
         _ = await previousEventPump?.result
 
         didLoadFile = false
+        try applyNetworkOptions(for: newRequest.video)
+        try applyAuxiliaryAudioOption(for: newRequest.audio)
         try command(["loadfile", newRequest.video.url.absoluteString, "replace"])
 
         let loadWaitTask = makeFileLoadedTask(for: mpv, isReplace: true)
@@ -169,13 +166,6 @@ final class MPVPlaybackEngine: NSObject {
         )
         self.loadWaitTask = nil
         didLoadFile = true
-
-        if let audio = newRequest.audio {
-            let audioReadyTask = makeAudioReadyTask(for: audio, handle: mpv)
-            self.audioReadyTask = audioReadyTask
-            await audioReadyTask.value
-            self.audioReadyTask = nil
-        }
 
         startEventPump(using: mpv)
 
@@ -292,28 +282,30 @@ private extension MPVPlaybackEngine {
             "mpv set option wid=\(layerReference) \(renderController.renderSurfaceDescription())"
         )
 
+        try applyNetworkOptions(for: request.video)
+
+        try check(mpvLibrary.initialize(handle))
+        didLoadFile = false
+        return handle
+    }
+
+    func applyNetworkOptions(for request: MediaStreamRequest) throws {
         let userAgentKeys = ["user-agent"]
         let referrerKeys = ["referer", "referrer"]
-        let headers = request.video.headers
+        let headers = request.headers
 
         if let userAgent = value(forAnyOf: userAgentKeys, in: headers) {
             try setOption("user-agent", value: userAgent)
         }
 
-        if let referrer = value(forAnyOf: referrerKeys, in: headers) {
-            try setOption("referrer", value: referrer)
-        }
+        try setOption("referrer", value: value(forAnyOf: referrerKeys, in: headers) ?? "")
 
         let reservedKeys = Set(userAgentKeys + referrerKeys)
-        let headerFields = mpvCustomHeaderFields(from: headers, reservedKeys: reservedKeys)
+        try setOption("http-header-fields", value: mpvCustomHeaderFields(from: headers, reservedKeys: reservedKeys))
+    }
 
-        if headerFields.isEmpty == false {
-            try setOption("http-header-fields", value: headerFields)
-        }
-
-        try check(mpvLibrary.initialize(handle))
-        didLoadFile = false
-        return handle
+    func applyAuxiliaryAudioOption(for audio: MediaStreamRequest?) throws {
+        try setOption("audio-files", value: audio?.url.absoluteString ?? "")
     }
 
     func destroyPlayer() async {

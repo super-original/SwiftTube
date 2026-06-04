@@ -2,17 +2,22 @@ import Foundation
 
 enum InnerTubeClientProfile: Hashable, Sendable {
     case web
+    case webSafari
     case webParentTools
     case mweb
+    case android
+    case androidVR
+    case ios
 }
 
-private struct InnerTubeClientContext: Sendable {
+private struct InnerTubeClientContext: @unchecked Sendable {
     let clientName: String
     let clientVersion: String
     let clientID: Int
     let apiKey: String?
     let userAgent: String?
     let referer: String?
+    let additionalClientContext: JSONDictionary
 
     var queryItems: [URLQueryItem] {
         var items = [URLQueryItem(name: "alt", value: "json")]
@@ -38,12 +43,14 @@ private struct InnerTubeClientContext: Sendable {
     }
 
     var requestContext: JSONDictionary {
-        [
-            "client": [
-                "clientName": clientName,
-                "clientVersion": clientVersion,
-            ],
+        var client: JSONDictionary = [
+            "clientName": clientName,
+            "clientVersion": clientVersion,
         ]
+        for (key, value) in additionalClientContext {
+            client[key] = value
+        }
+        return ["client": client]
     }
 }
 
@@ -54,7 +61,21 @@ private enum InnerTubeClients {
         clientID: 1,
         apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
         userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36",
-        referer: "https://www.youtube.com/"
+        referer: "https://www.youtube.com/",
+        additionalClientContext: [:]
+    )
+
+    static let webSafari = InnerTubeClientContext(
+        clientName: "WEB",
+        clientVersion: "2.20260114.08.00",
+        clientID: 1,
+        apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)",
+        referer: "https://www.youtube.com/",
+        additionalClientContext: [
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)",
+            "hl": "en",
+        ]
     )
 
     static let webParentTools = InnerTubeClientContext(
@@ -63,26 +84,90 @@ private enum InnerTubeClients {
         clientID: 88,
         apiKey: nil,
         userAgent: web.userAgent,
-        referer: nil
+        referer: nil,
+        additionalClientContext: [:]
     )
 
     static let mweb = InnerTubeClientContext(
         clientName: "MWEB",
-        clientVersion: "2.20211214.00.00",
+        clientVersion: "2.20260115.01.00",
         clientID: 2,
         apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-        userAgent: "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.181 Mobile Safari/537.36",
-        referer: "https://m.youtube.com/"
+        userAgent: "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1,gzip(gfe)",
+        referer: "https://m.youtube.com/",
+        additionalClientContext: [
+            "userAgent": "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1,gzip(gfe)",
+            "hl": "en",
+        ]
+    )
+
+    static let android = InnerTubeClientContext(
+        clientName: "ANDROID",
+        clientVersion: "21.02.35",
+        clientID: 3,
+        apiKey: nil,
+        userAgent: "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip",
+        referer: nil,
+        additionalClientContext: [
+            "androidSdkVersion": 30,
+            "osName": "Android",
+            "osVersion": "11",
+            "userAgent": "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip",
+            "hl": "en",
+        ]
+    )
+
+    static let androidVR = InnerTubeClientContext(
+        clientName: "ANDROID_VR",
+        clientVersion: "1.65.10",
+        clientID: 28,
+        apiKey: nil,
+        userAgent: "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+        referer: nil,
+        additionalClientContext: [
+            "androidSdkVersion": 32,
+            "deviceMake": "Oculus",
+            "deviceModel": "Quest 3",
+            "osName": "Android",
+            "osVersion": "12L",
+            "userAgent": "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            "hl": "en",
+        ]
+    )
+
+    static let ios = InnerTubeClientContext(
+        clientName: "IOS",
+        clientVersion: "21.02.3",
+        clientID: 5,
+        apiKey: nil,
+        userAgent: "com.google.ios.youtube/21.02.3 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+        referer: nil,
+        additionalClientContext: [
+            "deviceMake": "Apple",
+            "deviceModel": "iPhone16,2",
+            "osName": "iPhone",
+            "osVersion": "18.3.2.22D82",
+            "userAgent": "com.google.ios.youtube/21.02.3 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+            "hl": "en",
+        ]
     )
 
     static func context(for profile: InnerTubeClientProfile) -> InnerTubeClientContext {
         switch profile {
         case .web:
             return web
+        case .webSafari:
+            return webSafari
         case .webParentTools:
             return webParentTools
         case .mweb:
             return mweb
+        case .android:
+            return android
+        case .androidVR:
+            return androidVR
+        case .ios:
+            return ios
         }
     }
 }
@@ -216,18 +301,33 @@ final class YouTubeAPI: @unchecked Sendable {
     func player(
         videoID: String,
         profile: InnerTubeClientProfile,
+        visitorData: String? = nil,
         authenticated: Bool = false
     ) async throws -> JSONDictionary {
         try await request(
             profile: profile,
             endpoint: "player",
-            body: ["videoId": videoID],
+            body: [
+                "videoId": videoID,
+                "contentCheckOk": true,
+                "racyCheckOk": true,
+                "playbackContext": [
+                    "contentPlaybackContext": [
+                        "html5Preference": "HTML5_PREF_WANTS",
+                    ],
+                ],
+            ],
+            visitorData: visitorData,
             authenticated: authenticated
         )
     }
 
-    func watchPage(videoID: String, authenticated: Bool = false) async throws -> String {
-        let context = InnerTubeClients.context(for: .web)
+    func watchPage(
+        videoID: String,
+        profile: InnerTubeClientProfile = .web,
+        authenticated: Bool = false
+    ) async throws -> String {
+        let context = InnerTubeClients.context(for: profile)
         var components = URLComponents(string: "https://www.youtube.com/watch")!
         components.queryItems = [URLQueryItem(name: "v", value: videoID)]
 
@@ -256,6 +356,27 @@ final class YouTubeAPI: @unchecked Sendable {
         }
 
         return html
+    }
+
+    func textResource(url: URL, referer: String? = "https://www.youtube.com/") async throws -> String {
+        let context = InnerTubeClients.context(for: .web)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+
+        for (header, value) in context.requestHeaders {
+            request.setValue(value, forHTTPHeaderField: header)
+        }
+        if let referer {
+            request.setValue(referer, forHTTPHeaderField: "Referer")
+        }
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTPResponse(response, data: data)
+
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw BackendClientError(message: "YouTube returned an unreadable text resource.")
+        }
+        return text
     }
 
     func sendTrackingEvent(url: URL, videoID: String, authenticated: Bool) async throws {
@@ -377,6 +498,7 @@ final class YouTubeAPI: @unchecked Sendable {
         endpoint: String,
         body: JSONDictionary,
         extraContext: JSONDictionary = [:],
+        visitorData: String? = nil,
         authenticated: Bool
     ) async throws -> JSONDictionary {
         let context = InnerTubeClients.context(for: profile)
@@ -399,7 +521,7 @@ final class YouTubeAPI: @unchecked Sendable {
             request.setValue(value, forHTTPHeaderField: header)
         }
 
-        if let visitor = visitorDataValue(for: visitorKey) {
+        if let visitor = visitorData ?? visitorDataValue(for: visitorKey) {
             request.setValue(visitor, forHTTPHeaderField: "X-Goog-Visitor-Id")
         }
 

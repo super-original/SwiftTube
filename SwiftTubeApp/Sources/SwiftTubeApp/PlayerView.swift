@@ -2187,6 +2187,7 @@ private struct PlayerStageSurface: View {
 
                 if let engine = coordinator.mpvEngine {
                     MPVMetalRenderView(engine: engine, onLayoutChange: coordinator.handlePlayerSurfaceLayoutChange)
+                        .id(engine.id)
                 }
 
                 if !coordinator.isScrubbing,

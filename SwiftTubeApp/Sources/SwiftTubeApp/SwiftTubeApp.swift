@@ -52,6 +52,7 @@ struct SwiftTubeApp: App {
 
         Window("SwiftTube", id: "settings") {
             SettingsView()
+                .environmentObject(authSession)
                 .preferredColorScheme(settings.preferredColorScheme)
         }
         .windowStyle(.hiddenTitleBar)

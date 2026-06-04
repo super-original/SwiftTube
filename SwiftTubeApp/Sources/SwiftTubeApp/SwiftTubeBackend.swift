@@ -1,4 +1,5 @@
 import Foundation
+import JavaScriptCore
 
 extension Notification.Name {
     static let playbackProgressDidUpdate = Notification.Name("SwiftTubePlaybackProgressDidUpdate")
@@ -38,6 +39,7 @@ actor SwiftTubeBackend {
     private var playbackCache: [String: YTDLPPlaybackData] = [:]
     private var inlinePlaybackCache: [String: InlinePlaybackPayload] = [:]
     private var trackingCache: [String: WatchTrackingSnapshot] = [:]
+    private var playerScriptResolverCache: [String: YouTubeStreamURLResolver] = [:]
     private var activeWatchSyncSessions: [String: ActiveWatchSyncSession] = [:]
 
     func start() async throws {
@@ -47,6 +49,10 @@ actor SwiftTubeBackend {
     func authStatus() async throws -> AuthStatusResponse {
         guard await authManager.currentMaterial() != nil else {
             return await authManager.signedOutStatus()
+        }
+
+        if await authManager.needsAccountIdentifierRefresh() {
+            await refreshSignedInAccountProfile()
         }
 
         return await authManager.authStatus()
@@ -62,6 +68,98 @@ actor SwiftTubeBackend {
             _ = try? await authManager.clear()
             throw error
         }
+    }
+
+    func discoverBrowserAccounts() async throws -> [BrowserAccountDiscoveryResponse] {
+        let browsers = BrowserLoginOption.installedOptions.filter { $0.cookieSource != nil }
+
+        let probes = await withTaskGroup(of: BrowserAccountProbe?.self) { group in
+            for browser in browsers {
+                group.addTask {
+                    await probeBrowserAccount(browser)
+                }
+            }
+
+            var values: [BrowserAccountProbe] = []
+            for await probe in group {
+                if let probe {
+                    values.append(probe)
+                }
+            }
+            return values
+        }
+
+        return groupedBrowserAccounts(from: probes)
+    }
+
+    func runExtractorSpeedTest(videoID: String) async throws -> [ExtractorSpeedTestResult] {
+        var results: [ExtractorSpeedTestResult] = []
+
+        for mode in ExtractorSpeedTestMode.allCases {
+            if let unavailableMessage = unavailableExtractorMessage(for: mode) {
+                results.append(
+                    ExtractorSpeedTestResult(
+                        mode: mode,
+                        isAvailable: false,
+                        elapsedMilliseconds: nil,
+                        streamCount: 0,
+                        bestFormatID: nil,
+                        errorMessage: unavailableMessage
+                    )
+                )
+                continue
+            }
+
+            playbackCache.removeAll()
+            let startDate = Date()
+
+            do {
+                let playbackData: (streamCount: Int, bestFormatID: String?)
+                if mode == .nativeSwift {
+                    let playback = try await withTimeout(
+                        seconds: extractorSpeedTestModeTimeoutSeconds,
+                        timeoutMessage: "\(mode.title) timed out."
+                    ) {
+                        try await self.buildVideoPlayback(videoID: videoID, authenticated: false, allowYTDLPFallback: false)
+                    }
+                    playbackData = (playback.streams.count, playback.bestStream?.formatId)
+                } else if let ytdlpPlayback = try await extractYTDLPPlayback(
+                    videoID: videoID,
+                    cookieFileURL: nil,
+                    source: mode.dependencySource,
+                    timeout: ytDLPPlaybackTimeoutSeconds
+                ) {
+                    playbackData = (ytdlpPlayback.streams.count, ytdlpPlayback.streams.first?.formatId)
+                } else {
+                    throw BackendClientError(message: "\(mode.title) did not return playback formats.")
+                }
+                let elapsedMilliseconds = Int(Date().timeIntervalSince(startDate) * 1000)
+                results.append(
+                    ExtractorSpeedTestResult(
+                        mode: mode,
+                        isAvailable: true,
+                        elapsedMilliseconds: elapsedMilliseconds,
+                        streamCount: playbackData.streamCount,
+                        bestFormatID: playbackData.bestFormatID,
+                        errorMessage: nil
+                    )
+                )
+            } catch {
+                let elapsedMilliseconds = Int(Date().timeIntervalSince(startDate) * 1000)
+                results.append(
+                    ExtractorSpeedTestResult(
+                        mode: mode,
+                        isAvailable: true,
+                        elapsedMilliseconds: elapsedMilliseconds,
+                        streamCount: 0,
+                        bestFormatID: nil,
+                        errorMessage: error.localizedDescription
+                    )
+                )
+            }
+        }
+
+        return results
     }
 
     func clearAuthSession() async throws -> AuthStatusResponse {
@@ -337,17 +435,17 @@ actor SwiftTubeBackend {
 
         if usingAuth {
             do {
-                return try await buildVideoPlayback(videoID: videoID, authenticated: true)
+                return try await loadVideoPlaybackWithTimeout(videoID: videoID, authenticated: true)
             } catch {
                 if await refreshAuthenticatedSessionIfPossible() {
                     do {
-                        return try await buildVideoPlayback(videoID: videoID, authenticated: true)
+                        return try await loadVideoPlaybackWithTimeout(videoID: videoID, authenticated: true)
                     } catch {}
                 }
             }
         }
 
-        return try await buildVideoPlayback(videoID: videoID, authenticated: false)
+        return try await loadVideoPlaybackWithTimeout(videoID: videoID, authenticated: false)
     }
 
     func fetchInlinePlayback(id videoID: String) async throws -> InlinePlaybackPayload {
@@ -939,84 +1037,121 @@ actor SwiftTubeBackend {
         trackingCache[videoID] = tracking
     }
 
-    private func buildVideoPlayback(videoID: String, authenticated: Bool) async throws -> VideoPlayback {
+    private func buildVideoPlayback(
+        videoID: String,
+        authenticated: Bool,
+        allowYTDLPFallback: Bool = true
+    ) async throws -> VideoPlayback {
         async let watchTask = api.next(videoID: videoID, authenticated: authenticated)
-        async let playerTask = api.player(videoID: videoID, profile: .webParentTools, authenticated: authenticated)
-        async let webPlayerTask = api.player(videoID: videoID, profile: .web, authenticated: authenticated)
-        async let mwebPlayerTask = api.player(videoID: videoID, profile: .mweb, authenticated: authenticated)
-        let watchPageTask = Task<String?, Never> {
-            try? await self.api.watchPage(videoID: videoID, authenticated: authenticated)
-        }
+        async let webSafariWatchPageTask = api.watchPage(videoID: videoID, profile: .webSafari, authenticated: false)
+        async let androidPlayerTask = api.player(videoID: videoID, profile: .android, authenticated: false)
+        async let iosPlayerTask = api.player(videoID: videoID, profile: .ios, authenticated: false)
 
         let watchData = try await watchTask
-        let playerData = try await playerTask
-        let webPlayerData = (try? await webPlayerTask) ?? [:]
-        let mwebPlayerData = (try? await mwebPlayerTask) ?? [:]
-        let watchPageHTML = await watchPageTask.value
-        let watchPagePlayerData = watchPageHTML.flatMap(extractInitialPlayerResponse) ?? [:]
+        let webSafariWatchPageHTML = try? await webSafariWatchPageTask
+        let webSafariPlayerData = webSafariWatchPageHTML.flatMap(extractInitialPlayerResponse) ?? [:]
+        let webSafariVisitorData = webSafariWatchPageHTML.flatMap(extractVisitorData)
+        let androidVRPlayerData: JSONDictionary
+        if let webSafariVisitorData {
+            androidVRPlayerData = (try? await api.player(
+                videoID: videoID,
+                profile: .androidVR,
+                visitorData: webSafariVisitorData,
+                authenticated: false
+            )) ?? [:]
+        } else {
+            androidVRPlayerData = [:]
+        }
+        let androidPlayerData = (try? await androidPlayerTask) ?? [:]
+        let iosPlayerData = (try? await iosPlayerTask) ?? [:]
 
         let metadata = extractWatchMetadata(from: watchData)
-        var playlistOptions: [PlaylistOption] = []
-        if authenticated, extractWatchPageSaveCommand(from: watchData) != nil {
-            if let sheet = try? await loadPlaylistSheet(from: watchData) {
-                playlistOptions = extractPlaylistOptions(from: sheet)
-            }
+        let liveBroadcastDetails = [webSafariPlayerData, androidPlayerData, iosPlayerData].compactMap {
+            (($0["microformat"] as? JSONDictionary)?["playerMicroformatRenderer"] as? JSONDictionary)?["liveBroadcastDetails"] as? JSONDictionary
         }
 
-        let watchPageStreams = parseStreams(from: watchPagePlayerData, defaultHeaders: api.streamRequestHeaders(for: .web))
-        let webParentToolsStreams = parseStreams(from: playerData, defaultHeaders: api.streamRequestHeaders(for: .webParentTools))
-        let webStreams = parseStreams(from: webPlayerData, defaultHeaders: api.streamRequestHeaders(for: .web))
-        let mwebStreams = parseStreams(from: mwebPlayerData, defaultHeaders: api.streamRequestHeaders(for: .mweb))
-        let playerAPIStreams = mergeStreams(
-            webParentToolsStreams,
-            webStreams,
-            mwebStreams
-        )
-        let playerStreams = mergeStreams(
-            watchPageStreams,
-            playerAPIStreams
-        )
+        let androidVRStreams = parseStreams(from: androidVRPlayerData, defaultHeaders: api.streamRequestHeaders(for: .androidVR))
+        var androidStreams = parseStreams(from: androidPlayerData, defaultHeaders: api.streamRequestHeaders(for: .android))
+        var iosStreams = parseStreams(from: iosPlayerData, defaultHeaders: api.streamRequestHeaders(for: .ios))
+        let webSafariStreams = parseStreams(from: webSafariPlayerData, defaultHeaders: api.streamRequestHeaders(for: .webSafari))
+        var hlsManifestSources = webSafariStreams
+        if liveBroadcastDetails.isEmpty == false {
+            hlsManifestSources += iosStreams
+        }
+        var hlsVariantStreams = await loadHLSVariantStreams(from: hlsManifestSources)
+        let fallbackAudioLanguage = preferredNativeAudioLanguage(in: androidVRStreams + androidStreams + iosStreams)
+            ?? automaticCaptionLanguage(from: webSafariPlayerData)
+        var playerAPIStreams = sortedYouTubePlaybackStreams(applyingFallbackAudioLanguage(
+            fallbackAudioLanguage,
+            to: mergeYouTubeFormatStreams(
+            hlsVariantStreams,
+            androidVRStreams,
+            androidStreams,
+            iosStreams.filter { $0.formatId != "hls-manifest" }
+            )
+        ))
+
+        if playerAPIStreams.count <= 1 {
+            if let retriedAndroidData = try? await api.player(videoID: videoID, profile: .android, authenticated: false) {
+                androidStreams = parseStreams(from: retriedAndroidData, defaultHeaders: api.streamRequestHeaders(for: .android))
+            }
+            if let retriedIOSData = try? await api.player(videoID: videoID, profile: .ios, authenticated: false) {
+                iosStreams = parseStreams(from: retriedIOSData, defaultHeaders: api.streamRequestHeaders(for: .ios))
+            }
+            if hlsVariantStreams.isEmpty {
+                hlsManifestSources = webSafariStreams
+                if liveBroadcastDetails.isEmpty == false {
+                    hlsManifestSources += iosStreams
+                }
+                hlsVariantStreams = await loadHLSVariantStreams(from: hlsManifestSources)
+            }
+            playerAPIStreams = sortedYouTubePlaybackStreams(applyingFallbackAudioLanguage(
+                fallbackAudioLanguage,
+                to: mergeYouTubeFormatStreams(
+                hlsVariantStreams,
+                androidVRStreams,
+                androidStreams,
+                iosStreams.filter { $0.formatId != "hls-manifest" }
+                )
+            ))
+        }
+        let playerStreams = playerAPIStreams
         let playerSubtitles = deduplicatedSubtitles(
-            extractSubtitles(from: watchPagePlayerData)
-                + extractSubtitles(from: playerData)
-                + extractSubtitles(from: webPlayerData)
-                + extractSubtitles(from: mwebPlayerData)
+            extractSubtitles(from: androidVRPlayerData)
+                + extractSubtitles(from: androidPlayerData)
+                + extractSubtitles(from: iosPlayerData)
         )
         let playbackTags = deduplicatedVideoTags(
             extractVideoTags(from: watchData),
-            extractVideoTags(from: watchPagePlayerData),
-            extractVideoTags(from: playerData),
-            extractVideoTags(from: webPlayerData),
-            extractVideoTags(from: mwebPlayerData)
+            extractVideoTags(from: webSafariPlayerData),
+            extractVideoTags(from: androidVRPlayerData),
+            extractVideoTags(from: androidPlayerData),
+            extractVideoTags(from: iosPlayerData)
         )
         let accessIssue = resolveVideoAccessIssue(
             from: [
-                PlaybackIssueSource(data: watchPagePlayerData, streams: watchPageStreams),
-                PlaybackIssueSource(data: playerData, streams: webParentToolsStreams),
-                PlaybackIssueSource(data: webPlayerData, streams: webStreams),
-                PlaybackIssueSource(data: mwebPlayerData, streams: mwebStreams),
+                PlaybackIssueSource(data: androidVRPlayerData, streams: androidVRStreams),
+                PlaybackIssueSource(data: webSafariPlayerData, streams: mergeStreams(webSafariStreams, hlsVariantStreams)),
+                PlaybackIssueSource(data: androidPlayerData, streams: androidStreams),
+                PlaybackIssueSource(data: iosPlayerData, streams: mergeStreams(iosStreams, hlsVariantStreams)),
             ],
             fallbackTags: playbackTags
         )
 
-        let details = playerData["videoDetails"] as? JSONDictionary
-        let webDetails = webPlayerData["videoDetails"] as? JSONDictionary
-        let mwebDetails = mwebPlayerData["videoDetails"] as? JSONDictionary
-        let watchPageDetails = watchPagePlayerData["videoDetails"] as? JSONDictionary
-        let liveBroadcastDetails = [watchPagePlayerData, playerData, webPlayerData, mwebPlayerData].compactMap {
-            (($0["microformat"] as? JSONDictionary)?["playerMicroformatRenderer"] as? JSONDictionary)?["liveBroadcastDetails"] as? JSONDictionary
-        }
+        let androidDetails = androidPlayerData["videoDetails"] as? JSONDictionary
+        let iosDetails = iosPlayerData["videoDetails"] as? JSONDictionary
+        let webSafariDetails = webSafariPlayerData["videoDetails"] as? JSONDictionary
         let isLive = liveBroadcastDetails.contains { ($0["isLiveNow"] as? Bool) == true }
-        let isUpcoming = [watchPageDetails, details, webDetails, mwebDetails].contains { ($0?["isUpcoming"] as? Bool) == true }
+        let isUpcoming = [webSafariDetails, androidDetails, iosDetails].contains { ($0?["isUpcoming"] as? Bool) == true }
         let liveManifestMetadata = isLive
-            ? await loadLiveManifestMetadata(from: watchPagePlayerData.isEmpty ? playerData : watchPagePlayerData, api: api)
+            ? await loadLiveManifestMetadata(from: iosPlayerData.isEmpty ? androidPlayerData : iosPlayerData, api: api)
             : nil
-        let livePlaybackStreams = mergeStreams(
-            webParentToolsStreams,
-            watchPageStreams.filter { $0.streamKind == "manifest" },
-            webStreams,
-            mwebStreams
-        )
+        let livePlaybackStreams = hlsVariantStreams.isEmpty
+            ? sortedYouTubePlaybackStreams(mergeYouTubeFormatStreams(
+                androidStreams.filter { $0.formatId != "hls-manifest" && $0.formatId != "dash-manifest" },
+                iosStreams.filter { $0.formatId != "hls-manifest" && $0.formatId != "dash-manifest" }
+            ))
+            : hlsVariantStreams
         let nativePlaybackStreams = isLive ? livePlaybackStreams : playerStreams
         let nativePlaybackBundle = buildPlaybackBundle(
             streams: nativePlaybackStreams,
@@ -1028,7 +1163,8 @@ actor SwiftTubeBackend {
         )
 
         let preferredYTDLPPlayback: YTDLPPlaybackData?
-        let shouldProbeYTDLP = AppSettings.shared.ytDLPDependencySource != .nativeSwift
+        let shouldProbeYTDLP = allowYTDLPFallback
+            && AppSettings.shared.ytDLPDependencySource != .nativeSwift
             && (!isLive || nativePlaybackBundle.bestStream == nil)
         if shouldProbeYTDLP {
             let publicPlayback = try? await cachedYTDLPPlayback(
@@ -1073,16 +1209,23 @@ actor SwiftTubeBackend {
 
         let title: String? = metadata["title"]
             ?? preferredYTDLPPlayback?.title
-            ?? (watchPageDetails?["title"] as? String)
-            ?? (details?["title"] as? String)
+            ?? (webSafariDetails?["title"] as? String)
+            ?? (androidDetails?["title"] as? String)
+            ?? (iosDetails?["title"] as? String)
         let duration = metadata["durationText"]
             ?? preferredYTDLPPlayback?.durationText
-            ?? metadataDurationText(from: watchPageDetails)
-            ?? metadataDurationText(from: details)
+            ?? metadataDurationText(from: webSafariDetails)
+            ?? metadataDurationText(from: androidDetails)
+            ?? metadataDurationText(from: iosDetails)
         let durationSeconds = parseDurationSeconds(from: duration)
-        let tracking = extractWatchTracking(from: watchPageHTML, fallbackDuration: durationSeconds)
-        if let tracking {
-            trackingCache[videoID] = tracking
+        if authenticated {
+            Task {
+                await self.cacheInlineWatchTracking(
+                    videoID: videoID,
+                    authenticated: authenticated,
+                    fallbackDuration: durationSeconds
+                )
+            }
         }
         let liveChatSession = extractLiveChatSession(from: watchData)
         let progress = mergeVideoProgress(
@@ -1091,9 +1234,8 @@ actor SwiftTubeBackend {
             durationSeconds: durationSeconds
         )
         let relatedItems = await mergeStoredProgress(into: extractRelatedVideos(from: watchData, currentVideoID: videoID))
-        let storyboard = extractStoryboard(from: watchPagePlayerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
-            ?? extractStoryboard(from: webPlayerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
-            ?? extractStoryboard(from: playerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
+        let storyboard = extractStoryboard(from: androidPlayerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
+            ?? extractStoryboard(from: iosPlayerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
 
         return VideoPlayback(
             id: videoID,
@@ -1126,7 +1268,7 @@ actor SwiftTubeBackend {
             resumeStartTimeSeconds: progress?.bestResumeSeconds,
             subscription: extractSubscriptionState(from: watchData, metadata: metadata),
             rating: extractRatingState(from: watchData),
-            watchLater: findPlaylistOption(in: playlistOptions, playlistID: "WL"),
+            watchLater: nil,
             playlistSaveEnabled: extractWatchPageSaveCommand(from: watchData) != nil,
             recommendationsContinuation: extractRelatedContinuationToken(from: watchData),
             tags: playbackTags,
@@ -1136,6 +1278,15 @@ actor SwiftTubeBackend {
             liveWindowDurationSeconds: liveManifestMetadata?.windowDurationSeconds,
             liveChat: liveChatSession
         )
+    }
+
+    private func loadVideoPlaybackWithTimeout(videoID: String, authenticated: Bool) async throws -> VideoPlayback {
+        try await withTimeout(
+            seconds: videoPlaybackTimeoutSeconds,
+            timeoutMessage: "Video loading timed out."
+        ) {
+            try await self.buildVideoPlayback(videoID: videoID, authenticated: authenticated)
+        }
     }
 
     private func cachedYTDLPPlayback(videoID: String, cookieFileURL: URL?, cacheScope: String) async throws -> YTDLPPlaybackData? {
@@ -1159,6 +1310,48 @@ actor SwiftTubeBackend {
             playbackCache[cacheKey] = playback
         }
         return playback
+    }
+
+    private func streamURLResolver(from watchPageHTML: String?) async -> YouTubeStreamURLResolver? {
+        guard
+            let watchPageHTML,
+            let playerScriptURL = extractPlayerJavaScriptURL(from: watchPageHTML)
+        else {
+            return nil
+        }
+
+        let cacheKey = playerScriptURL.absoluteString
+        if let cached = playerScriptResolverCache[cacheKey] {
+            return cached
+        }
+
+        guard
+            let script = try? await api.textResource(url: playerScriptURL),
+            let resolver = YouTubeStreamURLResolver(javaScript: script)
+        else {
+            return nil
+        }
+
+        playerScriptResolverCache[cacheKey] = resolver
+        return resolver
+    }
+
+    private func loadHLSVariantStreams(from streams: [StreamInfo]) async -> [StreamInfo] {
+        let manifests = streams.filter { $0.formatId == "hls-manifest" }
+        guard manifests.isEmpty == false else { return [] }
+
+        var variants: [StreamInfo] = []
+        for manifest in manifests {
+            guard
+                let url = URL(string: manifest.url),
+                let manifestText = try? await api.textResource(url: url),
+                manifestText.isEmpty == false
+            else {
+                continue
+            }
+            variants = mergeStreams(variants, parseHLSVariantStreams(from: manifestText, manifest: manifest))
+        }
+        return variants
     }
 
     private func loadPlaylistSheet(from watchData: JSONDictionary) async throws -> JSONDictionary {
@@ -1297,23 +1490,29 @@ actor SwiftTubeBackend {
     }
 
     private func refreshSignedInAccountProfile() async {
-        var profile = SignedInAccountProfile()
-
-        if let accountMenu = try? await api.accountMenu(authenticated: true) {
-            profile.merge(extractSignedInAccountProfile(from: accountMenu))
-        }
-
-        if profile.avatarURL == nil {
-            if let payload = try? await api.browse(browseID: "FEwhat_to_watch", authenticated: true) {
-                profile.merge(extractSignedInAccountProfile(from: payload))
-            }
-        }
+        let profile = await currentSignedInAccountProfile()
 
         try? await authManager.updateAccountProfile(
             displayName: profile.displayName,
             email: profile.email,
+            handle: profile.handle,
             avatarURL: profile.avatarURL
         )
+    }
+
+    private func currentSignedInAccountProfile() async -> SignedInAccountProfile {
+        await signedInAccountProfile(using: api)
+    }
+
+    private func unavailableExtractorMessage(for mode: ExtractorSpeedTestMode) -> String? {
+        switch mode {
+        case .nativeSwift:
+            return nil
+        case .systemYTDLP:
+            return SwiftTubeDependencyManager.detectSystemYTDLP() == nil ? "Not found" : nil
+        case .provisionedYTDLP:
+            return SwiftTubeDependencyManager.detectProvisionedYTDLP() == nil ? "Not installed" : nil
+        }
     }
 
     private func loadRecommendations(continuation: String?, authenticated: Bool) async throws -> JSONDictionary {
@@ -1690,6 +1889,33 @@ private struct LiveManifestMetadata {
 }
 
 private let ytDLPPlaybackTimeoutSeconds: TimeInterval = 12
+private let extractorSpeedTestModeTimeoutSeconds: TimeInterval = 24
+private let videoPlaybackTimeoutSeconds: TimeInterval = 24
+
+private func withTimeout<T: Sendable>(
+    seconds: TimeInterval,
+    timeoutMessage: String,
+    operation: @escaping @Sendable () async throws -> T
+) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await operation()
+        }
+        group.addTask {
+            let duration = max(seconds, 0)
+            try await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            throw BackendClientError(message: timeoutMessage)
+        }
+
+        guard let result = try await group.next() else {
+            group.cancelAll()
+            throw BackendClientError(message: timeoutMessage)
+        }
+
+        group.cancelAll()
+        return result
+    }
+}
 
 private func resolveVideoAccessIssue(
     from sources: [PlaybackIssueSource],
@@ -1714,15 +1940,28 @@ private func resolveVideoAccessIssue(
 private func extractYTDLPPlayback(
     videoID: String,
     cookieFileURL: URL?,
+    source explicitSource: YTDLPDependencySource? = nil,
     timeout: TimeInterval? = nil
 ) async throws -> YTDLPPlaybackData? {
-    guard AppSettings.shared.ytDLPDependencySource != .nativeSwift else {
+    let settings = AppSettings.shared
+    let source = explicitSource ?? settings.ytDLPDependencySource
+    guard source != .nativeSwift else {
         return nil
     }
 
     let ytDLPPath: URL
     do {
-        ytDLPPath = try YTDLPTool.resolvePath()
+        if let explicitSource {
+            guard let explicitPath = try SwiftTubeDependencyManager.resolvedYTDLPExecutable(
+                source: explicitSource,
+                customPath: settings.ytDLPCustomPath
+            ) else {
+                return nil
+            }
+            ytDLPPath = explicitPath
+        } else {
+            ytDLPPath = try YTDLPTool.resolvePath()
+        }
     } catch {
         return nil
     }
@@ -1757,7 +1996,7 @@ private func extractYTDLPPlayback(
     let streams = parseYTDLPStreams(from: payload)
     let subtitles = parseYTDLPSubtitles(from: payload)
     PlaybackDebugLogger.log(
-        "yt-dlp extraction video=\(videoID) source=\(AppSettings.shared.ytDLPDependencySource.rawValue) elapsed=\(String(format: "%.3f", elapsed)) streams=\(streams.count) subtitles=\(subtitles.count)"
+        "yt-dlp extraction video=\(videoID) source=\(source.rawValue) elapsed=\(String(format: "%.3f", elapsed)) streams=\(streams.count) subtitles=\(subtitles.count)"
     )
 
     return YTDLPPlaybackData(
@@ -1814,6 +2053,226 @@ private func mergeStreams(_ groups: [StreamInfo]...) -> [StreamInfo] {
     }
 
     return order.compactMap { mergedByKey[$0] }
+}
+
+private func mergeYouTubeFormatStreams(_ groups: [StreamInfo]...) -> [StreamInfo] {
+    var mergedByKey: [String: StreamInfo] = [:]
+    var order: [String] = []
+
+    for group in groups {
+        for stream in group {
+            let key = youtubeFormatMergeKey(for: stream)
+            if let existing = mergedByKey[key] {
+                if preferredYouTubeFormatStream(existing: existing, candidate: stream) == stream {
+                    mergedByKey[key] = stream
+                }
+            } else {
+                mergedByKey[key] = stream
+                order.append(key)
+            }
+        }
+    }
+
+    return order.compactMap { mergedByKey[$0] }
+}
+
+private func sortedYouTubePlaybackStreams(_ streams: [StreamInfo]) -> [StreamInfo] {
+    streams.sorted { lhs, rhs in
+        youtubeStreamOrderKey(for: lhs).lexicographicallyPrecedes(youtubeStreamOrderKey(for: rhs))
+    }
+}
+
+private func applyingFallbackAudioLanguage(_ language: String?, to streams: [StreamInfo]) -> [StreamInfo] {
+    guard let language, language.isEmpty == false else { return streams }
+    let preservesMuxedNilLanguage = preservesMuxedNilAudioLanguage(in: streams, fallbackLanguage: language)
+    return streams.map { stream in
+        guard stream.hasAudio, stream.audioLanguage == nil else { return stream }
+        if preservesMuxedNilLanguage && stream.hasVideo {
+            return stream
+        }
+        return StreamInfo(
+            url: stream.url,
+            formatId: stream.formatId,
+            mimeType: stream.mimeType,
+            qualityLabel: stream.qualityLabel,
+            httpHeaders: stream.httpHeaders,
+            bitrate: stream.bitrate,
+            width: stream.width,
+            height: stream.height,
+            fps: stream.fps,
+            audioChannels: stream.audioChannels,
+            audioCodec: stream.audioCodec,
+            videoCodec: stream.videoCodec,
+            container: stream.container,
+            hasAudio: stream.hasAudio,
+            hasVideo: stream.hasVideo,
+            isAdaptive: stream.isAdaptive,
+            streamKind: stream.streamKind,
+            audioLanguage: language,
+            audioTrackKind: stream.audioTrackKind,
+            audioLanguagePreference: stream.audioLanguagePreference,
+            audioIsDefault: stream.audioIsDefault
+        )
+    }
+}
+
+private func preservesMuxedNilAudioLanguage(in streams: [StreamInfo], fallbackLanguage: String) -> Bool {
+    let manifestAudioStreams = streams.filter {
+        $0.streamKind == "manifest" && $0.hasAudio && $0.hasVideo
+    }
+    guard manifestAudioStreams.isEmpty == false else { return false }
+    if fallbackLanguage.lowercased().hasPrefix("en"),
+       manifestAudioStreams.contains(where: { $0.audioLanguage != nil }),
+       manifestAudioStreams.contains(where: { $0.audioLanguage == nil && isNonStandardHLSHeight($0.height) }) {
+        return true
+    }
+    return manifestAudioStreams.allSatisfy { $0.audioTrackKind == "original" }
+}
+
+private func isNonStandardHLSHeight(_ height: Int?) -> Bool {
+    guard let height else { return false }
+    return [144, 240, 360, 480, 720, 1080].contains(height) == false
+}
+
+private func preferredNativeAudioLanguage(in streams: [StreamInfo]) -> String? {
+    streams
+        .filter { $0.hasAudio && $0.audioLanguage != nil }
+        .sorted { lhs, rhs in
+            nativeAudioLanguageScore(lhs).lexicographicallyPrecedes(nativeAudioLanguageScore(rhs))
+        }
+        .last?
+        .audioLanguage
+}
+
+private func nativeAudioLanguageScore(_ stream: StreamInfo) -> [Int] {
+    let audioScore = adaptiveAudioScore(stream)
+    return [
+        stream.audioIsDefault == true ? 4 : 0,
+        stream.audioTrackKind == "original" ? 2 : 0,
+        audioScore.0,
+        audioScore.1,
+        audioScore.2,
+        audioScore.3,
+    ]
+}
+
+private func automaticCaptionLanguage(from playerData: JSONDictionary) -> String? {
+    let captionTracks = ((((playerData["captions"] as? JSONDictionary)?["playerCaptionsTracklistRenderer"] as? JSONDictionary)?["captionTracks"] as? [Any])) ?? []
+    for item in captionTracks {
+        guard let item = item as? JSONDictionary,
+              (item["kind"] as? String) == "asr",
+              let language = item["languageCode"] as? String,
+              language.isEmpty == false else {
+            continue
+        }
+        return language
+    }
+    return nil
+}
+
+private func youtubeStreamOrderKey(for stream: StreamInfo) -> [Int] {
+    if stream.hasAudio && stream.hasVideo == false {
+        return [
+            0,
+            youtubeAudioFormatOrder(for: stream),
+            numericFormatID(stream.formatId) ?? 0,
+        ]
+    }
+
+    if stream.streamKind == "manifest" {
+        return [
+            1,
+            stream.height ?? 0,
+            0,
+            stream.fps ?? 0,
+            stream.audioTrackKind == "original" ? 1 : 0,
+            stream.bitrate ?? 0,
+            numericFormatID(stream.formatId) ?? 0,
+            hlsVariantIndex(stream.formatId) ?? 0,
+        ]
+    }
+
+    return [
+        1,
+        stream.height ?? 0,
+        youtubeVideoFormatKindOrder(for: stream),
+        stream.fps ?? 0,
+        stream.bitrate ?? 0,
+        numericFormatID(stream.formatId) ?? 0,
+    ]
+}
+
+private func youtubeAudioFormatOrder(for stream: StreamInfo) -> Int {
+    switch stream.formatId {
+    case "139":
+        return 0
+    case "249":
+        return 1
+    case "256":
+        return 2
+    case "140":
+        return 3
+    case "251":
+        return 4
+    case "258":
+        return 5
+    default:
+        return 100 + (stream.bitrate ?? 0)
+    }
+}
+
+private func youtubeVideoFormatKindOrder(for stream: StreamInfo) -> Int {
+    if stream.streamKind == "manifest" {
+        return 0
+    }
+    if stream.hasAudio && stream.hasVideo {
+        return 2
+    }
+    if stream.videoCodec?.hasPrefix("avc1") == true {
+        return 1
+    }
+    if stream.videoCodec?.hasPrefix("vp9.2") == true || stream.videoCodec?.hasPrefix("vp09.2") == true {
+        return 4
+    }
+    if stream.videoCodec?.hasPrefix("vp9") == true || stream.videoCodec?.hasPrefix("vp09") == true {
+        return 3
+    }
+    if stream.videoCodec?.hasPrefix("av01") == true {
+        return 5
+    }
+    return 6
+}
+
+private func numericFormatID(_ formatID: String?) -> Int? {
+    guard let formatID else { return nil }
+    return Int(formatID.split(separator: "-").first.map(String.init) ?? formatID)
+}
+
+private func hlsVariantIndex(_ formatID: String?) -> Int? {
+    guard let suffix = formatID?.split(separator: "-", maxSplits: 1).dropFirst().first else {
+        return nil
+    }
+    return Int(suffix)
+}
+
+private func youtubeFormatMergeKey(for stream: StreamInfo) -> String {
+    if let formatId = stream.formatId, formatId.isEmpty == false {
+        return "format:\(formatId)"
+    }
+    return "url:\(stream.url)|\(stream.streamKind)"
+}
+
+private func preferredYouTubeFormatStream(existing: StreamInfo, candidate: StreamInfo) -> StreamInfo {
+    if existing.httpHeaders == nil, candidate.httpHeaders != nil {
+        return candidate
+    }
+    if existing.formatId == nil, candidate.formatId != nil {
+        return candidate
+    }
+    if existing.height == nil, candidate.height != nil {
+        return candidate
+    }
+    return existing
 }
 
 private func deduplicatedSubtitles(_ subtitles: [SubtitleTrack]) -> [SubtitleTrack] {
@@ -1952,7 +2411,11 @@ private func pickBestStream(in streams: [StreamInfo]) -> StreamInfo? {
     return pool.max(by: { simpleStreamScore($0) < simpleStreamScore($1) })
 }
 
-private func parseStreams(from playerResponse: JSONDictionary, defaultHeaders: [String: String]? = nil) -> [StreamInfo] {
+private func parseStreams(
+    from playerResponse: JSONDictionary,
+    defaultHeaders: [String: String]? = nil,
+    urlResolver: YouTubeStreamURLResolver? = nil
+) -> [StreamInfo] {
     guard let streaming = playerResponse["streamingData"] as? JSONDictionary else {
         return []
     }
@@ -2011,7 +2474,9 @@ private func parseStreams(from playerResponse: JSONDictionary, defaultHeaders: [
         guard let entries = streaming[key] as? [Any] else { continue }
         for entry in entries {
             guard let entry = entry as? JSONDictionary else { continue }
-            guard let url = entry["url"] as? String, !url.isEmpty else { continue }
+            guard let url = streamURL(from: entry, resolver: urlResolver), !url.isEmpty else { continue }
+            let baseFormatId = stringify(entry["itag"])
+            guard isSkippedNativeFormatID(baseFormatId) == false else { continue }
 
             let mimeType = entry["mimeType"] as? String
             let parsedMime = parseMimeType(mimeType)
@@ -2022,13 +2487,33 @@ private func parseStreams(from playerResponse: JSONDictionary, defaultHeaders: [
             let hasVideo = parsedMime.videoCodec != nil
                 || entry["qualityLabel"] != nil
                 || (mimeType?.contains("video/") == true)
+            let audioLanguage = audioLanguage(from: entry, url: url)
+            let audioTrackKind = audioTrackKind(from: entry, url: url)
+            let audioIsDefault = (entry["audioTrack"] as? JSONDictionary)?["audioIsDefault"] as? Bool
+            let isSuperResolution = isSuperResolutionFormat(url: url)
+            let formatId = nativeFormatID(baseFormatId, isSuperResolution: isSuperResolution)
+            let qualityLabel = nativeQualityLabel(
+                (entry["qualityLabel"] as? String)
+                    ?? ytdlpAudioFormatNote(
+                        quality: audioQualityLabel(from: entry["audioQuality"]),
+                        language: audioLanguage,
+                        trackKind: audioTrackKind,
+                        isDefault: audioIsDefault
+                    ),
+                isSuperResolution: isSuperResolution
+            )
+            let container = normalizedNativeContainer(
+                parsedMime.container ?? (entry["container"] as? String),
+                hasAudio: hasAudio,
+                hasVideo: hasVideo
+            )
 
             results.append(
                 StreamInfo(
                     url: url,
-                    formatId: stringify(entry["itag"]),
+                    formatId: formatId,
                     mimeType: mimeType,
-                    qualityLabel: entry["qualityLabel"] as? String,
+                    qualityLabel: qualityLabel,
                     httpHeaders: defaultHeaders,
                     bitrate: intValue(entry["bitrate"]),
                     width: intValue(entry["width"]),
@@ -2037,17 +2522,659 @@ private func parseStreams(from playerResponse: JSONDictionary, defaultHeaders: [
                     audioChannels: intValue(entry["audioChannels"]),
                     audioCodec: parsedMime.audioCodec ?? (entry["audioQuality"] as? String),
                     videoCodec: parsedMime.videoCodec,
-                    container: parsedMime.container ?? (entry["container"] as? String),
+                    container: container,
                     hasAudio: hasAudio,
                     hasVideo: hasVideo,
                     isAdaptive: key == "adaptiveFormats",
-                    streamKind: streamKind(for: url, hasAudio: hasAudio, hasVideo: hasVideo)
+                    streamKind: streamKind(for: url, hasAudio: hasAudio, hasVideo: hasVideo),
+                    audioLanguage: audioLanguage,
+                    audioTrackKind: audioTrackKind,
+                    audioLanguagePreference: nil,
+                    audioIsDefault: audioIsDefault
                 )
             )
         }
     }
 
     return results
+}
+
+private func isSkippedNativeFormatID(_ formatId: String?) -> Bool {
+    guard let formatId else { return false }
+    return ["250", "598", "599", "600"].contains(formatId)
+}
+
+private func nativeFormatID(_ formatId: String?, isSuperResolution: Bool) -> String? {
+    guard let formatId else { return nil }
+    return isSuperResolution ? "\(formatId)-sr" : formatId
+}
+
+private func nativeQualityLabel(_ label: String?, isSuperResolution: Bool) -> String? {
+    guard let label else { return nil }
+    if isSuperResolution && label.localizedCaseInsensitiveContains("AI-upscaled") == false {
+        return "\(label), AI-upscaled"
+    }
+    return label
+}
+
+private func isSuperResolutionFormat(url: String) -> Bool {
+    audioTrackAttributes(from: url)["sr"] == "1"
+}
+
+private func audioQualityLabel(from value: Any?) -> String? {
+    guard let value = stringify(value)?.lowercased(), value.hasPrefix("audio_quality_") else {
+        return nil
+    }
+    return String(value.dropFirst("audio_quality_".count))
+}
+
+private func ytdlpAudioFormatNote(
+    quality: String?,
+    language: String?,
+    trackKind: String?,
+    isDefault: Bool?
+) -> String? {
+    guard let quality else { return nil }
+    guard let language, trackKind == "original" || isDefault == true else {
+        return quality
+    }
+
+    var components = [languageLabel(for: language)]
+    if trackKind == "original" {
+        components.append("original")
+    }
+    if isDefault == true {
+        components.append("(default)")
+    }
+    return "\(components.joined(separator: " ")), \(quality)"
+}
+
+private func normalizedNativeContainer(_ container: String?, hasAudio: Bool, hasVideo: Bool) -> String? {
+    guard let container else { return nil }
+    if hasAudio, hasVideo == false, container.lowercased() == "mp4" {
+        return "m4a"
+    }
+    return container
+}
+
+private func parseHLSVariantStreams(from manifest: String, manifest baseStream: StreamInfo) -> [StreamInfo] {
+    let lines = manifest
+        .split(whereSeparator: \.isNewline)
+        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var results: [StreamInfo] = []
+    var pendingAttributes: [String: String]?
+
+    for line in lines {
+        if line.hasPrefix("#EXT-X-STREAM-INF:") {
+            let rawAttributes = String(line.dropFirst("#EXT-X-STREAM-INF:".count))
+            pendingAttributes = parseHLSAttributes(rawAttributes)
+            continue
+        }
+
+        guard
+            line.hasPrefix("#") == false,
+            line.isEmpty == false,
+            let attributes = pendingAttributes
+        else {
+            continue
+        }
+
+        pendingAttributes = nil
+        let absoluteURL = absoluteHLSURL(line, relativeTo: baseStream.url)
+        guard absoluteURL.isEmpty == false else { continue }
+
+        let codecs = attributes["CODECS"]?.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? []
+        let videoCodec = codecs.first { !$0.hasPrefix("mp4a") && !$0.hasPrefix("opus") }
+        let audioCodec = codecs.first { $0.hasPrefix("mp4a") || $0.hasPrefix("opus") }
+        let size = parseHLSResolution(attributes["RESOLUTION"])
+        guard let height = size.height, (100...1080).contains(height) else { continue }
+        let fps = intValue(attributes["FRAME-RATE"])
+        let formatId = hlsFormatID(from: absoluteURL, height: size.height, fps: fps)
+        let hlsAudioLanguage = hlsAudioLanguage(from: attributes, url: absoluteURL)
+        let hlsAudioTrackKind = hlsAudioTrackKind(from: attributes, url: absoluteURL)
+        let hlsAudioIsDefault = hlsAudioIsDefault(from: attributes, url: absoluteURL)
+        let hlsAudioLanguagePreference = hlsAudioLanguagePreference(
+            trackKind: hlsAudioTrackKind,
+            isDefault: hlsAudioIsDefault
+        )
+
+        results.append(
+            StreamInfo(
+                url: absoluteURL,
+                formatId: formatId,
+                mimeType: "application/x-mpegURL",
+                qualityLabel: hlsQualityLabel(
+                    height: size.height,
+                    trackKind: hlsAudioTrackKind,
+                    isDefault: hlsAudioIsDefault
+                ),
+                httpHeaders: baseStream.httpHeaders,
+                bitrate: intValue(attributes["BANDWIDTH"]),
+                width: size.width,
+                height: size.height,
+                fps: fps,
+                audioChannels: nil,
+                audioCodec: audioCodec,
+                videoCodec: videoCodec,
+                container: "mp4",
+                hasAudio: true,
+                hasVideo: true,
+                isAdaptive: false,
+                streamKind: "manifest",
+                audioLanguage: hlsAudioLanguage,
+                audioTrackKind: hlsAudioTrackKind,
+                audioLanguagePreference: hlsAudioLanguagePreference,
+                audioIsDefault: hlsAudioIsDefault
+            )
+        )
+    }
+
+    return hlsVariantsWithYTDLPFormatIDs(results)
+}
+
+private func hlsVariantsWithYTDLPFormatIDs(_ streams: [StreamInfo]) -> [StreamInfo] {
+    var groups: [String: [StreamInfo]] = [:]
+    var order: [String] = []
+    for stream in streams {
+        guard let formatId = stream.formatId else {
+            order.append(UUID().uuidString)
+            continue
+        }
+        if groups[formatId] == nil {
+            order.append(formatId)
+            groups[formatId] = []
+        }
+        groups[formatId]?.append(stream)
+    }
+
+    return order.flatMap { formatId -> [StreamInfo] in
+        guard let variants = groups[formatId] else { return [] }
+        guard variants.count > 1 else { return variants }
+        return variants
+            .sorted {
+                hlsVariantYTDLPSortKey($0).lexicographicallyPrecedes(hlsVariantYTDLPSortKey($1))
+            }
+            .enumerated()
+            .map { index, stream in
+                copyStream(stream, formatId: "\(formatId)-\(index)")
+            }
+    }
+}
+
+private func hlsVariantYTDLPSortKey(_ stream: StreamInfo) -> [Int] {
+    [
+        stream.audioTrackKind == "original" ? 1 : 0,
+        stream.bitrate ?? 0,
+        hlsLanguageTieBreak(stream.audioLanguage),
+    ]
+}
+
+private func hlsLanguageTieBreak(_ language: String?) -> Int {
+    guard let language else { return 0 }
+    switch language {
+    case "zh-Hans":
+        return 1
+    case "zh-Hant":
+        return 2
+    default:
+        return 0
+    }
+}
+
+private func copyStream(_ stream: StreamInfo, formatId: String?) -> StreamInfo {
+    StreamInfo(
+        url: stream.url,
+        formatId: formatId,
+        mimeType: stream.mimeType,
+        qualityLabel: stream.qualityLabel,
+        httpHeaders: stream.httpHeaders,
+        bitrate: stream.bitrate,
+        width: stream.width,
+        height: stream.height,
+        fps: stream.fps,
+        audioChannels: stream.audioChannels,
+        audioCodec: stream.audioCodec,
+        videoCodec: stream.videoCodec,
+        container: stream.container,
+        hasAudio: stream.hasAudio,
+        hasVideo: stream.hasVideo,
+        isAdaptive: stream.isAdaptive,
+        streamKind: stream.streamKind,
+        audioLanguage: stream.audioLanguage,
+        audioTrackKind: stream.audioTrackKind,
+        audioLanguagePreference: stream.audioLanguagePreference,
+        audioIsDefault: stream.audioIsDefault
+    )
+}
+
+private func hlsAudioLanguage(from attributes: [String: String], url: String) -> String? {
+    if let language = hlsAudioTrackAttributes(from: attributes, url: url)["lang"] {
+        return language
+    }
+    if let id = attributes["YT-EXT-AUDIO-CONTENT-ID"],
+       let language = audioLanguage(fromAudioTrackID: id) {
+        return language
+    }
+    return audioLanguage(from: attributes, url: url)
+}
+
+private func hlsAudioTrackKind(from attributes: [String: String], url: String) -> String? {
+    if hlsAudioTrackAttributes(from: attributes, url: url)["acont"] == "original" {
+        return "original"
+    }
+    return nil
+}
+
+private func hlsAudioIsDefault(from attributes: [String: String], url: String) -> Bool? {
+    let audioAttributes = hlsAudioTrackAttributes(from: attributes, url: url)
+    if audioAttributes["acont"] == "dubbed-auto",
+       audioAttributes["lang"]?.lowercased().hasPrefix("en") == true {
+        return true
+    }
+    return nil
+}
+
+private func hlsAudioLanguagePreference(trackKind: String?, isDefault: Bool?) -> Int? {
+    if isDefault == true {
+        return 5
+    }
+    if trackKind == "original" {
+        return 10
+    }
+    return nil
+}
+
+private func hlsQualityLabel(height: Int?, trackKind: String?, isDefault: Bool?) -> String? {
+    if trackKind == "original" {
+        return "(original)"
+    }
+    if isDefault == true {
+        return "(default)"
+    }
+    return height.map { "\($0)p" }
+}
+
+private func hlsAudioTrackAttributes(from attributes: [String: String], url: String) -> [String: String] {
+    var result = audioTrackAttributes(from: url)
+    if let encodedTags = attributes["YT-EXT-XTAGS"] {
+        for (key, value) in decodedHLSAudioTrackAttributes(from: encodedTags) {
+            result[key] = value
+        }
+    }
+    if result["lang"] == nil,
+       let id = attributes["YT-EXT-AUDIO-CONTENT-ID"],
+       let language = audioLanguage(fromAudioTrackID: id) {
+        result["lang"] = language
+    }
+    return result
+}
+
+private func decodedHLSAudioTrackAttributes(from encodedTags: String) -> [String: String] {
+    var padded = encodedTags
+    let remainder = padded.count % 4
+    if remainder != 0 {
+        padded.append(String(repeating: "=", count: 4 - remainder))
+    }
+    guard let data = Data(base64Encoded: padded) else { return [:] }
+
+    var tokens: [String] = []
+    var current: [UInt8] = []
+    for byte in data {
+        if (32...126).contains(byte) {
+            current.append(byte)
+        } else if current.isEmpty == false {
+            if let token = String(bytes: current, encoding: .utf8) {
+                tokens.append(token)
+            }
+            current.removeAll()
+        }
+    }
+    if current.isEmpty == false,
+       let token = String(bytes: current, encoding: .utf8) {
+        tokens.append(token)
+    }
+
+    let knownKeys = Set(["acont", "lang"])
+    var result: [String: String] = [:]
+    var pendingKey: String?
+    for token in tokens {
+        if knownKeys.contains(token) {
+            pendingKey = token
+        } else if let key = pendingKey {
+            result[key] = token
+            pendingKey = nil
+        }
+    }
+    return result
+}
+
+private func parseHLSAttributes(_ rawValue: String) -> [String: String] {
+    var attributes: [String: String] = [:]
+    var current = ""
+    var inQuotes = false
+
+    func appendCurrent() {
+        let parts = current.split(separator: "=", maxSplits: 1).map(String.init)
+        if parts.count == 2 {
+            attributes[parts[0]] = parts[1].trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        }
+        current = ""
+    }
+
+    for character in rawValue {
+        if character == "\"" {
+            inQuotes.toggle()
+            current.append(character)
+        } else if character == ",", inQuotes == false {
+            appendCurrent()
+        } else {
+            current.append(character)
+        }
+    }
+    appendCurrent()
+
+    return attributes
+}
+
+private func parseHLSResolution(_ value: String?) -> (width: Int?, height: Int?) {
+    guard let value else { return (nil, nil) }
+    let parts = value.split(separator: "x").compactMap { Int($0) }
+    guard parts.count == 2 else { return (nil, nil) }
+    return (parts[0], parts[1])
+}
+
+private func hlsFormatID(from urlString: String, height: Int?, fps: Int?) -> String? {
+    if let url = URL(string: urlString),
+       let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+       let itag = components.queryItems?.first(where: { $0.name == "itag" })?.value,
+       itag.isEmpty == false {
+        return itag
+    }
+
+    if let path = URL(string: urlString)?.path,
+       let itag = firstMatch(in: path, pattern: #"/itag/(\d+)(?:/|$)"#) {
+        return itag
+    }
+
+    switch height {
+    case 144: return "91"
+    case 240: return "92"
+    case 360: return "93"
+    case 480: return "94"
+    case 720: return (fps ?? 0) >= 50 ? "300" : "95"
+    case 1080: return (fps ?? 0) >= 50 ? "301" : "96"
+    default: return nil
+    }
+}
+
+private func absoluteHLSURL(_ value: String, relativeTo baseURLString: String) -> String {
+    if URL(string: value)?.scheme != nil {
+        return value
+    }
+    guard let baseURL = URL(string: baseURLString),
+          let url = URL(string: value, relativeTo: baseURL) else {
+        return value
+    }
+    return url.absoluteURL.absoluteString
+}
+
+private func streamURL(from entry: JSONDictionary, resolver: YouTubeStreamURLResolver?) -> String? {
+    if let url = entry["url"] as? String, !url.isEmpty {
+        return url
+    }
+
+    guard let cipher = (entry["signatureCipher"] as? String) ?? (entry["cipher"] as? String) else {
+        return nil
+    }
+
+    return resolver?.resolvedURL(fromCipher: cipher)
+}
+
+private final class YouTubeStreamURLResolver: @unchecked Sendable {
+    private let context: JSContext?
+    private let lock = NSLock()
+
+    init?(javaScript: String) {
+        guard let components = Self.decipherComponents(from: javaScript) else {
+            return nil
+        }
+
+        let context = JSContext()
+        context?.exceptionHandler = { _, exception in
+            PlaybackDebugLogger.log("youtube player decipher exception=\(exception?.toString() ?? "unknown")")
+        }
+        context?.evaluateScript(components.helperScript)
+        context?.evaluateScript(components.functionScript)
+
+        guard context?.objectForKeyedSubscript("__swiftTubeDecipher").isUndefined == false else {
+            return nil
+        }
+
+        self.context = context
+    }
+
+    func resolvedURL(fromCipher cipher: String) -> String? {
+        let values = cipherQueryValues(from: cipher)
+        guard let baseURL = values["url"], baseURL.isEmpty == false else {
+            return nil
+        }
+
+        if let directSignature = values["sig"], directSignature.isEmpty == false {
+            return appendSignature(directSignature, named: values["sp"] ?? "signature", to: baseURL)
+        }
+
+        guard let encryptedSignature = values["s"], encryptedSignature.isEmpty == false else {
+            return baseURL
+        }
+
+        guard let signature = decipher(encryptedSignature), signature.isEmpty == false else {
+            return nil
+        }
+
+        return appendSignature(signature, named: values["sp"] ?? "signature", to: baseURL)
+    }
+
+    private func decipher(_ signature: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard let function = context?.objectForKeyedSubscript("__swiftTubeDecipher") else {
+            return nil
+        }
+        return function.call(withArguments: [signature])?.toString()
+    }
+
+    private static func decipherComponents(from javaScript: String) -> (helperScript: String, functionScript: String)? {
+        let functionPatterns = [
+            #"(?:function\s+[A-Za-z0-9_$]+\s*\(\s*([A-Za-z0-9_$]+)\s*\)|[A-Za-z0-9_$]+\s*=\s*function\s*\(\s*([A-Za-z0-9_$]+)\s*\))\s*\{"#,
+            #"([A-Za-z0-9_$]+)\s*:\s*function\s*\(\s*([A-Za-z0-9_$]+)\s*\)\s*\{"#,
+        ]
+
+        for pattern in functionPatterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let nsRange = NSRange(javaScript.startIndex..<javaScript.endIndex, in: javaScript)
+            let matches = regex.matches(in: javaScript, options: [], range: nsRange)
+
+            for match in matches {
+                guard
+                    let matchRange = Range(match.range(at: 0), in: javaScript),
+                    let braceIndex = javaScript[matchRange].firstIndex(of: "{"),
+                    let block = extractBalancedJavaScriptBlock(in: javaScript, startingAt: braceIndex),
+                    block.contains(".split(\"\")"),
+                    block.contains(".join(\"\")")
+                else {
+                    continue
+                }
+
+                let parameter = firstCapturedString(in: javaScript, match: match, groups: [1, 2]) ?? "a"
+                guard
+                    let helperName = extractHelperObjectName(from: block, parameter: parameter),
+                    let helperScript = extractHelperScript(named: helperName, from: javaScript)
+                else {
+                    continue
+                }
+
+                let functionScript = "var __swiftTubeDecipher = function(\(parameter)) \(block);"
+                return (helperScript, functionScript)
+            }
+        }
+
+        return nil
+    }
+}
+
+private func cipherQueryValues(from cipher: String) -> [String: String] {
+    let query = cipher.hasPrefix("?") ? String(cipher.dropFirst()) : cipher
+    if let components = URLComponents(string: "https://youtube.local/stream?\(query)") {
+        let pairs = components.queryItems ?? []
+        if pairs.isEmpty == false {
+            return pairs.reduce(into: [String: String]()) { result, item in
+                result[item.name] = item.value ?? ""
+            }
+        }
+    }
+
+    return query
+        .split(separator: "&")
+        .reduce(into: [String: String]()) { result, pair in
+            let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            guard let name = parts.first?.removingPercentEncoding else { return }
+            result[name] = parts.dropFirst().first?.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? ""
+        }
+}
+
+private func appendSignature(_ signature: String, named name: String, to urlString: String) -> String {
+    guard var components = URLComponents(string: urlString) else {
+        let separator = urlString.contains("?") ? "&" : "?"
+        return "\(urlString)\(separator)\(name)=\(signature)"
+    }
+
+    var queryItems = components.queryItems ?? []
+    if queryItems.contains(where: { $0.name == name }) == false {
+        queryItems.append(URLQueryItem(name: name, value: signature))
+    }
+    components.queryItems = queryItems
+    return components.url?.absoluteString ?? urlString
+}
+
+private func extractPlayerJavaScriptURL(from html: String) -> URL? {
+    let patterns = [
+        #""jsUrl"\s*:\s*"([^"]+)""#,
+        #""PLAYER_JS_URL"\s*:\s*"([^"]+)""#,
+        #"(/s/player/[^"]+/base\.js)"#,
+    ]
+
+    for pattern in patterns {
+        guard let rawValue = firstMatch(in: html, pattern: pattern) else { continue }
+        let cleaned = rawValue
+            .replacingOccurrences(of: #"\/"#, with: "/")
+            .replacingOccurrences(of: #"\\u0026"#, with: "&")
+
+        if cleaned.hasPrefix("//") {
+            return URL(string: "https:\(cleaned)")
+        }
+        if cleaned.hasPrefix("/") {
+            return URL(string: "https://www.youtube.com\(cleaned)")
+        }
+        if let url = URL(string: cleaned), url.scheme != nil {
+            return url
+        }
+    }
+
+    return nil
+}
+
+private func extractBalancedJavaScriptBlock(in source: String, startingAt startIndex: String.Index) -> String? {
+    guard source[startIndex] == "{" else { return nil }
+
+    var depth = 0
+    var inString: Character?
+    var isEscaped = false
+    var index = startIndex
+
+    while index < source.endIndex {
+        let character = source[index]
+
+        if let quote = inString {
+            if isEscaped {
+                isEscaped = false
+            } else if character == "\\" {
+                isEscaped = true
+            } else if character == quote {
+                inString = nil
+            }
+        } else {
+            if character == "\"" || character == "'" || character == "`" {
+                inString = character
+            } else if character == "{" {
+                depth += 1
+            } else if character == "}" {
+                depth -= 1
+                if depth == 0 {
+                    return String(source[startIndex...index])
+                }
+            }
+        }
+
+        index = source.index(after: index)
+    }
+
+    return nil
+}
+
+private func extractHelperObjectName(from functionBlock: String, parameter: String) -> String? {
+    guard let regex = try? NSRegularExpression(pattern: #"\b([A-Za-z_$][A-Za-z0-9_$]*)\.[A-Za-z_$][A-Za-z0-9_$]*\("#) else {
+        return nil
+    }
+    let nsRange = NSRange(functionBlock.startIndex..<functionBlock.endIndex, in: functionBlock)
+    let matches = regex.matches(in: functionBlock, options: [], range: nsRange)
+
+    for match in matches {
+        guard let name = firstCapturedString(in: functionBlock, match: match, groups: [1]),
+              name != parameter else {
+            continue
+        }
+        return name
+    }
+
+    return nil
+}
+
+private func extractHelperScript(named helperName: String, from javaScript: String) -> String? {
+    let escapedName = NSRegularExpression.escapedPattern(for: helperName)
+    let patterns = [
+        #"(?:var|let|const)\s+\#(escapedName)\s*=\s*\{"#,
+        #"\b\#(escapedName)\s*=\s*\{"#,
+    ]
+
+    for pattern in patterns {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+        let nsRange = NSRange(javaScript.startIndex..<javaScript.endIndex, in: javaScript)
+        guard
+            let match = regex.firstMatch(in: javaScript, options: [], range: nsRange),
+            let matchRange = Range(match.range(at: 0), in: javaScript),
+            let braceIndex = javaScript[matchRange].firstIndex(of: "{"),
+            let objectBlock = extractBalancedJavaScriptBlock(in: javaScript, startingAt: braceIndex)
+        else {
+            continue
+        }
+
+        return "var \(helperName) = \(objectBlock);"
+    }
+
+    return nil
+}
+
+private func firstCapturedString(in source: String, match: NSTextCheckingResult, groups: [Int]) -> String? {
+    for group in groups where group < match.numberOfRanges {
+        guard let range = Range(match.range(at: group), in: source) else { continue }
+        let value = String(source[range])
+        if value.isEmpty == false {
+            return value
+        }
+    }
+    return nil
 }
 
 private func parseYTDLPStreams(from payload: JSONDictionary) -> [StreamInfo] {
@@ -2085,7 +3212,11 @@ private func parseYTDLPStreams(from payload: JSONDictionary) -> [StreamInfo] {
             hasAudio: hasAudio,
             hasVideo: hasVideo,
             isAdaptive: hasAudio != hasVideo,
-            streamKind: streamKind(for: url, hasAudio: hasAudio, hasVideo: hasVideo)
+            streamKind: streamKind(for: url, hasAudio: hasAudio, hasVideo: hasVideo),
+            audioLanguage: stringify(format["language"]) ?? audioLanguage(from: format, url: url),
+            audioTrackKind: audioTrackKind(from: format, url: url),
+            audioLanguagePreference: intValue(format["language_preference"]),
+            audioIsDefault: audioIsDefault(from: format, url: url)
         )
     }
 }
@@ -4836,13 +5967,106 @@ private func trackedURL(
 private struct SignedInAccountProfile {
     var displayName: String?
     var email: String?
+    var handle: String?
     var avatarURL: String?
 
     mutating func merge(_ other: SignedInAccountProfile) {
         displayName = displayName ?? other.displayName
         email = email ?? other.email
+        handle = handle ?? other.handle
         avatarURL = avatarURL ?? other.avatarURL
     }
+}
+
+private struct BrowserAccountProbe {
+    let displayName: String
+    let identifier: String?
+    let avatarURL: String?
+    let source: BrowserAccountSource
+}
+
+private func probeBrowserAccount(_ browser: BrowserLoginOption) async -> BrowserAccountProbe? {
+    do {
+        let authManager = YouTubeAuthManager()
+        let material = try await authManager.probeMaterial(for: browser)
+        _ = await authManager.activateProbeMaterial(material)
+        let api = YouTubeAPI(authManager: authManager)
+        let profile = await signedInAccountProfile(using: api)
+        try? FileManager.default.removeItem(at: material.cookieFileURL)
+
+        let displayName = profile.displayName?.nonEmptyTrimmed
+            ?? profile.email?.nonEmptyTrimmed
+            ?? profile.handle?.nonEmptyTrimmed
+            ?? browser.displayName
+        let source = BrowserAccountSource(
+            browser: browser.rawValue,
+            browserLabel: browser.displayName,
+            bundleIdentifier: browser.primaryBundleIdentifier
+        )
+
+        return BrowserAccountProbe(
+            displayName: displayName,
+            identifier: profile.email?.nonEmptyTrimmed ?? profile.handle?.nonEmptyTrimmed,
+            avatarURL: profile.avatarURL?.nonEmptyTrimmed,
+            source: source
+        )
+    } catch {
+        return nil
+    }
+}
+
+private func groupedBrowserAccounts(from probes: [BrowserAccountProbe]) -> [BrowserAccountDiscoveryResponse] {
+    var grouped: [String: [BrowserAccountProbe]] = [:]
+
+    for probe in probes {
+        let key = browserAccountGroupingKey(for: probe)
+        grouped[key, default: []].append(probe)
+    }
+
+    return grouped.map { key, probes in
+        let sortedProbes = probes.sorted { lhs, rhs in
+            let lhsRank = BrowserLoginOption(rawValue: lhs.source.browser)?.sortRank ?? 999
+            let rhsRank = BrowserLoginOption(rawValue: rhs.source.browser)?.sortRank ?? 999
+            return lhsRank < rhsRank
+        }
+        let first = sortedProbes[0]
+        let sources = sortedProbes.map(\.source)
+
+        return BrowserAccountDiscoveryResponse(
+            id: key,
+            displayName: first.displayName,
+            identifier: first.identifier,
+            avatarUrl: first.avatarURL,
+            sources: sources
+        )
+    }
+    .sorted { lhs, rhs in
+        lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
+    }
+}
+
+private func browserAccountGroupingKey(for probe: BrowserAccountProbe) -> String {
+    let rawKey = probe.identifier?.nonEmptyTrimmed
+        ?? probe.avatarURL?.nonEmptyTrimmed
+        ?? probe.displayName.nonEmptyTrimmed
+        ?? probe.source.browser
+    return rawKey.lowercased()
+}
+
+private func signedInAccountProfile(using api: YouTubeAPI) async -> SignedInAccountProfile {
+    var profile = SignedInAccountProfile()
+
+    if let accountMenu = try? await api.accountMenu(authenticated: true) {
+        profile.merge(extractSignedInAccountProfile(from: accountMenu))
+    }
+
+    if profile.avatarURL == nil || profile.email == nil || profile.displayName == nil {
+        if let payload = try? await api.browse(browseID: "FEwhat_to_watch", authenticated: true) {
+            profile.merge(extractSignedInAccountProfile(from: payload))
+        }
+    }
+
+    return profile
 }
 
 private func extractSignedInAccountProfile(from data: Any) -> SignedInAccountProfile {
@@ -4857,6 +6081,10 @@ private func extractSignedInAccountProfile(from data: Any) -> SignedInAccountPro
         if let renderer = node["activeAccountHeaderRenderer"] as? JSONDictionary {
             profile.displayName = profile.displayName ?? textValue(from: renderer["accountName"])
             profile.email = profile.email ?? textValue(from: renderer["email"])
+            profile.handle = profile.handle
+                ?? textValue(from: renderer["channelHandle"])
+                ?? textValue(from: renderer["handle"])
+                ?? textValue(from: renderer["accountHandle"])
             profile.avatarURL = profile.avatarURL
                 ?? bestThumbnailURL(thumbnails(from: renderer["accountPhoto"]))
                 ?? bestThumbnailURL(thumbnails(from: renderer["avatar"]))
@@ -4870,14 +6098,26 @@ private func extractSignedInAccountProfile(from data: Any) -> SignedInAccountPro
             profile.email = profile.email
                 ?? textValue(from: renderer["email"])
                 ?? textValue(from: renderer["accountEmail"])
-                ?? textValue(from: renderer["subtitle"])
+                ?? emailCandidate(from: textValue(from: renderer["subtitle"]))
+            profile.handle = profile.handle
+                ?? textValue(from: renderer["channelHandle"])
+                ?? textValue(from: renderer["handle"])
+                ?? textValue(from: renderer["accountHandle"])
+                ?? handleCandidate(from: textValue(from: renderer["subtitle"]))
             profile.avatarURL = profile.avatarURL
                 ?? bestThumbnailURL(thumbnails(from: renderer["accountPhoto"]))
                 ?? bestThumbnailURL(thumbnails(from: renderer["avatar"]))
                 ?? bestThumbnailURL(thumbnails(from: renderer["thumbnail"]))
         }
 
-        if let email = profile.email, profile.displayName != nil, profile.avatarURL != nil, email.contains("@") {
+        if profile.handle == nil {
+            profile.handle = handleCandidate(from: textValue(from: node["channelHandle"]))
+                ?? handleCandidate(from: textValue(from: node["handle"]))
+                ?? handleCandidate(from: textValue(from: node["ownerHandle"]))
+                ?? firstHandleCandidate(in: node)
+        }
+
+        if (profile.email != nil || profile.handle != nil), profile.displayName != nil, profile.avatarURL != nil {
             return .stop
         }
 
@@ -4885,6 +6125,52 @@ private func extractSignedInAccountProfile(from data: Any) -> SignedInAccountPro
     }
 
     return profile
+}
+
+private func emailCandidate(from value: String?) -> String? {
+    guard let value = value?.nonEmptyTrimmed, value.contains("@"), value.contains(".") else {
+        return nil
+    }
+    return value
+}
+
+private func handleCandidate(from value: String?) -> String? {
+    guard let value = value?.nonEmptyTrimmed else { return nil }
+    let components = value.components(separatedBy: .whitespacesAndNewlines)
+    return components.first { component in
+        component.hasPrefix("@") && component.count > 1
+    } ?? (value.hasPrefix("@") && value.count > 1 ? value : nil)
+}
+
+private func firstHandleCandidate(in value: Any) -> String? {
+    if let string = value as? String {
+        return handleCandidate(from: string)
+    }
+
+    if let array = value as? [Any] {
+        for item in array {
+            if let handle = firstHandleCandidate(in: item) {
+                return handle
+            }
+        }
+    }
+
+    if let dictionary = value as? JSONDictionary {
+        for item in dictionary.values {
+            if let handle = firstHandleCandidate(in: item) {
+                return handle
+            }
+        }
+    }
+
+    return nil
+}
+
+private extension String {
+    var nonEmptyTrimmed: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 private func randomPlaybackNonce() -> String {
@@ -4932,6 +6218,12 @@ private func extractInitialPlayerResponse(from html: String) -> JSONDictionary? 
     }
 
     return nil
+}
+
+private func extractVisitorData(from html: String) -> String? {
+    firstMatch(in: html, pattern: #""visitorData"\s*:\s*"([^"]+)""#)?
+        .replacingOccurrences(of: #"\/"#, with: "/")
+        .replacingOccurrences(of: #"\\u0026"#, with: "&")
 }
 
 private func extractBalancedJSONObject(in source: String, startingAt startIndex: String.Index) -> String? {
@@ -5380,9 +6672,99 @@ private func languageLabel(for code: String) -> String {
     }
     let base = code.components(separatedBy: "-").first ?? code
     if let baseLabel = labels[base] {
+        let subtags = code.components(separatedBy: "-")
+        if subtags.count == 2, subtags[1].count == 2 {
+            return "\(baseLabel) (\(subtags[1].uppercased()))"
+        }
         return "\(baseLabel) (\(code))"
     }
     return code.uppercased()
+}
+
+private func audioLanguage(from data: JSONDictionary, url: String) -> String? {
+    if let audioTrack = data["audioTrack"] as? JSONDictionary {
+        if let languageCode = stringify(audioTrack["languageCode"]) {
+            return languageCode
+        }
+        if let id = stringify(audioTrack["id"]),
+           let language = audioLanguage(fromAudioTrackID: id) {
+            return language
+        }
+    }
+
+    if let language = stringify(data["LANGUAGE"]) ?? stringify(data["language"]) {
+        return language
+    }
+
+    return audioTrackAttributes(from: url)["lang"]
+}
+
+private func audioLanguage(from data: [String: String], url: String) -> String? {
+    data["LANGUAGE"] ?? data["language"] ?? audioTrackAttributes(from: url)["lang"]
+}
+
+private func audioTrackKind(from data: JSONDictionary, url: String) -> String? {
+    if let audioTrack = data["audioTrack"] as? JSONDictionary {
+        if let kind = stringify(audioTrack["audioTrackKind"]) ?? stringify(audioTrack["kind"]) {
+            return kind
+        }
+    }
+
+    if let note = stringify(data["format_note"])?.lowercased() {
+        if note.contains("original") {
+            return "original"
+        }
+        if note.contains("dubbed") || note.contains("translated") {
+            return "dubbed-auto"
+        }
+    }
+
+    return audioTrackAttributes(from: url)["acont"]
+}
+
+private func audioTrackKind(from data: [String: String], url: String) -> String? {
+    data["ACONT"] ?? data["acont"] ?? audioTrackAttributes(from: url)["acont"]
+}
+
+private func audioIsDefault(from data: JSONDictionary, url: String) -> Bool? {
+    if let audioTrack = data["audioTrack"] as? JSONDictionary,
+       let value = audioTrack["audioIsDefault"] as? Bool {
+        return value
+    }
+
+    if let note = stringify(data["format_note"])?.lowercased(),
+       note.contains("default") {
+        return true
+    }
+
+    let attributes = audioTrackAttributes(from: url)
+    if attributes["acont"] == "original", attributes["lang"]?.hasPrefix("en") == true {
+        return true
+    }
+
+    return nil
+}
+
+private func audioLanguage(fromAudioTrackID id: String) -> String? {
+    let parts = id.split(separator: ".").map(String.init)
+    return parts.first { part in
+        part.range(of: #"^[a-z]{2,3}(-[A-Za-z0-9]+)?$"#, options: .regularExpression) != nil
+    }
+}
+
+private func audioTrackAttributes(from url: String) -> [String: String] {
+    guard let components = URLComponents(string: url),
+          let xtags = components.queryItems?.first(where: { $0.name == "xtags" })?.value else {
+        return [:]
+    }
+
+    return xtags
+        .split(separator: ":")
+        .reduce(into: [String: String]()) { result, part in
+            let pieces = part.split(separator: "=", maxSplits: 1).map(String.init)
+            guard pieces.count == 2 else { return }
+            result[pieces[0]] = pieces[1]
+        }
 }
 
 private func stringify(_ value: Any?) -> String? {

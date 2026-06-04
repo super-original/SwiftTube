@@ -133,9 +133,14 @@ struct OnboardingView: View {
             AccountStage(
                 status: authSession.status,
                 isWorking: authSession.isWorking,
+                isDiscoveringAccounts: authSession.isDiscoveringAccounts,
+                discoveredAccounts: authSession.discoveredAccounts,
                 errorMessage: authSession.errorMessage,
-                connect: { browser in
-                    await authSession.connect(using: browser)
+                discover: {
+                    await authSession.discoverAccounts()
+                },
+                connect: { source in
+                    await authSession.connect(using: source)
                 },
                 continueWithoutAccount: {
                     stepStage()
@@ -734,10 +739,13 @@ private struct PrivacyChoiceCard: View {
 private struct AccountStage: View {
     let status: AuthStatusResponse
     let isWorking: Bool
+    let isDiscoveringAccounts: Bool
+    let discoveredAccounts: [BrowserAccountDiscoveryResponse]
     let errorMessage: String?
-    let connect: (BrowserLoginOption) async -> Bool
+    let discover: () async -> Void
+    let connect: (BrowserAccountSource) async -> Bool
     let continueWithoutAccount: () -> Void
-    @State private var pendingChoice: BrowserLoginOption?
+    @State private var pendingSource: BrowserAccountSource?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -748,21 +756,40 @@ private struct AccountStage: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 VStack(spacing: 14) {
-                    ForEach(BrowserLoginOption.allCases) { browser in
-                        AccountChoiceButton(
-                            title: browser.shortTitle,
-                            subtitle: browser.onboardingSubtitle,
-                            icon: .app(browser.appIcon),
-                            isWorking: isWorking,
-                            isLoading: pendingChoice == browser,
-                            action: {
+                    if isDiscoveringAccounts {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Scanning browsers...")
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if discoveredAccounts.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("No signed-in YouTube accounts found")
+                                .font(.headline)
+                            Button {
                                 Task {
-                                    pendingChoice = browser
-                                    _ = await connect(browser)
-                                    pendingChoice = nil
+                                    await discover()
+                                }
+                            } label: {
+                                Label("Scan Again", systemImage: "arrow.clockwise")
+                            }
+                            .disabled(isWorking || isDiscoveringAccounts)
+                        }
+                    } else {
+                        ForEach(discoveredAccounts) { account in
+                            AccountDiscoveryCard(
+                                account: account,
+                                isWorking: isWorking,
+                                pendingSource: pendingSource
+                            ) { source in
+                                Task {
+                                    pendingSource = source
+                                    _ = await connect(source)
+                                    pendingSource = nil
                                 }
                             }
-                        )
+                        }
                     }
 
                     AccountChoiceButton(
@@ -785,6 +812,9 @@ private struct AccountStage: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .task {
+            await discover()
+        }
     }
 }
 
@@ -810,8 +840,8 @@ private struct SignedInAccountCard: View {
                     .font(.title2.weight(.bold))
                     .lineLimit(2)
 
-                if let email = status.email?.nilIfBlank {
-                    Text(email)
+                if let identifier = status.accountIdentifier {
+                    Text(identifier)
                         .font(.title3)
                         .foregroundStyle(.secondary)
                 } else {
@@ -1066,47 +1096,6 @@ private func choosePath(allowsDirectories: Bool) -> String? {
     panel.canChooseDirectories = allowsDirectories
     panel.resolvesAliases = true
     return panel.runModal() == .OK ? panel.url?.path : nil
-}
-
-private func browserAppIcon(for browser: BrowserLoginOption) -> NSImage {
-    let bundleIdentifier: String
-    switch browser {
-    case .chrome:
-        bundleIdentifier = "com.google.Chrome"
-    case .safari:
-        bundleIdentifier = "com.apple.Safari"
-    }
-
-    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
-        return NSWorkspace.shared.icon(forFile: url.path)
-    }
-
-    switch browser {
-    case .chrome:
-        return NSImage(systemSymbolName: "globe", accessibilityDescription: nil) ?? NSImage()
-    case .safari:
-        return NSImage(systemSymbolName: "safari", accessibilityDescription: nil) ?? NSImage()
-    }
-}
-
-private extension BrowserLoginOption {
-    var appIcon: NSImage {
-        browserAppIcon(for: self)
-    }
-
-    var shortTitle: String {
-        switch self {
-        case .chrome: return "Chrome"
-        case .safari: return "Safari"
-        }
-    }
-
-    var onboardingSubtitle: String {
-        switch self {
-        case .chrome: return "Use the YouTube account already signed in there."
-        case .safari: return "Use the YouTube account already signed in there."
-        }
-    }
 }
 
 private extension String {

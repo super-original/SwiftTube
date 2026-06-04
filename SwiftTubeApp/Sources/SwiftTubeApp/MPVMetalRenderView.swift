@@ -114,13 +114,23 @@ final class MPVRenderViewController: NSViewController {
         return "attached=\(isDisplayAttached) drawable=\(Int(drawableSize.width))x\(Int(drawableSize.height))"
     }
 
-    func waitForDisplayReady() async -> MPVMetalLayer {
+    func waitForDisplayReady(timeout: TimeInterval = 2) async throws -> MPVMetalLayer {
         _ = view
+        let deadline = Date().addingTimeInterval(timeout)
+
         while true {
+            try Task.checkCancellation()
             if let layer = readyLayerIfAvailable() {
                 return layer
             }
-            await Task.yield()
+            if Date() >= deadline {
+                throw NSError(
+                    domain: "SwiftTube.MPVRender",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for mpv render surface."]
+                )
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
         }
     }
 

@@ -8,6 +8,14 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.9
+
+- Added an Advanced Settings speed test for Native Swift, system yt-dlp, and installed yt-dlp YouTube extractors.
+- Expanded the Native Swift YouTube extractor with mobile InnerTube player profiles so it returns direct adaptive stream choices instead of only the legacy muxed stream.
+- Restyled Settings cards with glass surfaces and moved account access into the lower main-app sidebar area, with a compact signed-out sign-in action.
+- Expanded browser account discovery for onboarding and account switching, grouping detected YouTube accounts across supported browsers before selection and showing channel handles when YouTube does not expose email.
+- Parallelized browser account probes so slow or unsupported browser stores no longer hold up the whole account picker.
+
 ## 0.15.8
 
 - Fixed a startup crash caused by concurrent YouTube visitor-data updates during initial authenticated playlist loading.
