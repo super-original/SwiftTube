@@ -102,7 +102,7 @@ actor YouTubeAuthManager {
         }
         let browserLabel = browserOption.displayName
 
-        try await YTDLPTool.exportCookies(from: cookieSource, to: cookieFileURL, timeout: 30)
+        try await exportBrowserCookies(for: browserOption, cookieSource: cookieSource, to: cookieFileURL, timeout: 30)
         let config = AuthSessionConfig(
             browser: browserKey,
             browserLabel: browserLabel,
@@ -128,7 +128,7 @@ actor YouTubeAuthManager {
             return signedOutStatus(message: "The saved browser profile is no longer available.")
         }
 
-        try await YTDLPTool.exportCookies(from: cookieSource, to: cookieFileURL, timeout: 30)
+        try await exportBrowserCookies(for: browserOption, cookieSource: cookieSource, to: cookieFileURL, timeout: 30)
         let material = try Self.loadMaterial(config: config, cookieFileURL: cookieFileURL)
         self.material = material
         return authStatus()
@@ -205,7 +205,7 @@ actor YouTubeAuthManager {
         let probesDirectory = supportDirectoryURL.appendingPathComponent("CookieProbes", isDirectory: true)
         try FileManager.default.createDirectory(at: probesDirectory, withIntermediateDirectories: true)
         let probeCookieURL = probesDirectory.appendingPathComponent("\(browser.rawValue)-\(UUID().uuidString).txt")
-        try await YTDLPTool.exportCookies(from: cookieSource, to: probeCookieURL, timeout: timeout)
+        try await exportBrowserCookies(for: browser, cookieSource: cookieSource, to: probeCookieURL, timeout: timeout)
 
         let config = AuthSessionConfig(
             browser: browser.rawValue,
@@ -228,6 +228,19 @@ actor YouTubeAuthManager {
     func restoreProbeMaterial(_ snapshot: AuthSessionSnapshot) {
         config = snapshot.config
         material = snapshot.material
+    }
+
+    private func exportBrowserCookies(
+        for browser: BrowserLoginOption,
+        cookieSource: String,
+        to destinationURL: URL,
+        timeout: TimeInterval
+    ) async throws {
+        do {
+            try NativeBrowserCookieImporter.exportCookies(for: browser, to: destinationURL)
+        } catch {
+            try await YTDLPTool.exportCookies(from: cookieSource, to: destinationURL, timeout: timeout)
+        }
     }
 
     private static func loadConfig(at url: URL) -> AuthSessionConfig? {

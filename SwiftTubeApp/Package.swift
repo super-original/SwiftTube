@@ -21,6 +21,10 @@ let package = Package(
             path: "Sources/SwiftTubeApp",
             resources: [
                 .copy("Resources")
+            ],
+            linkerSettings: [
+                .linkedFramework("Security"),
+                .linkedLibrary("sqlite3")
             ]
         ),
         .testTarget(
