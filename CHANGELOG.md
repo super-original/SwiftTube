@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.10
+
+- Fixed Native Swift playback startup so Auto begins on a fast direct stream, waits until playback is moving, and then upgrades without leaving Auto selected.
+- Stopped normal VOD playback and manual quality choices from preferring HLS manifest variants when direct streams are available, preventing MPV manifest-load rollbacks and frozen first-frame starts.
+- Added a debug autoplay launch hook for repeatable playback verification with `SWIFTTUBE_AUTOPLAY_VIDEO_ID`.
+
 ## 0.15.9
 
 - Added an Advanced Settings speed test for Native Swift, system yt-dlp, and installed yt-dlp YouTube extractors.

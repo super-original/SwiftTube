@@ -186,7 +186,7 @@ final class DependencySelectionTests: XCTestCase {
         })
     }
 
-    func testAutomaticPlaybackFastStartsThenTargetsBestSteadyQuality() throws {
+    func testAutomaticPlaybackKeepsDirectVODStreamOverHLSManifest() throws {
         let muxed = stream(
             url: "https://example.com/360.mp4",
             formatId: "18",
@@ -219,7 +219,7 @@ final class DependencySelectionTests: XCTestCase {
         let steadySelections = debugAutomaticSteadyStateMPVSelectionsForTesting(playback: playback)
 
         XCTAssertEqual(startupSelections.first?.stream.url, muxed.url)
-        XCTAssertEqual(steadySelections.first?.stream.url, hls.url)
+        XCTAssertEqual(steadySelections.first?.stream.url, muxed.url)
     }
 
     func testAutomaticSteadyQualityPrefersAndroidSplitStreamOverVODHLS() throws {
@@ -272,6 +272,40 @@ final class DependencySelectionTests: XCTestCase {
         XCTAssertEqual(selections.first?.stream.url, video.url)
         XCTAssertEqual(selections.first?.audioStream?.url, audio.url)
     }
+
+    func testAutomaticLivePlaybackCanUseHLSManifest() throws {
+        let muxed = stream(
+            url: "https://example.com/live-360.mp4",
+            formatId: "18",
+            headers: ["X-YouTube-Client-Name": "3"],
+            height: 360,
+            audioCodec: "mp4a.40.2",
+            videoCodec: "avc1.42001e",
+            container: "mp4",
+            hasAudio: true,
+            hasVideo: true,
+            streamKind: "muxed",
+            bitrate: 400_000
+        )
+        let hls = stream(
+            url: "https://example.com/live-1080.m3u8",
+            formatId: "hls-1080",
+            headers: ["X-YouTube-Client-Name": "5"],
+            height: 1080,
+            audioCodec: "mp4a.40.2",
+            videoCodec: "avc1.640028",
+            container: "m3u8",
+            hasAudio: true,
+            hasVideo: true,
+            streamKind: "manifest",
+            bitrate: 1_500_000
+        )
+
+        let selections = debugAutomaticSteadyStateMPVSelectionsForTesting(playback: playback(streams: [muxed, hls], isLive: true))
+
+        XCTAssertEqual(selections.first?.stream.url, hls.url)
+    }
+
 
     func testManualQualityPrefersOriginalEnglishAudio() throws {
         let video = stream(
@@ -328,7 +362,7 @@ final class DependencySelectionTests: XCTestCase {
     }
 
     @MainActor
-    func testManualQualityPrefersHLSOverIOSDirectStreamForSameQuality() throws {
+    func testManualQualityIgnoresVODHLSWhenDirectStreamExists() throws {
         let iosVideo = stream(
             url: "https://example.com/ios-1080.mp4",
             formatId: "137",
@@ -380,8 +414,8 @@ final class DependencySelectionTests: XCTestCase {
         guard case .manual(let selection) = option.selection else {
             return XCTFail("Expected manual quality option")
         }
-        XCTAssertEqual(selection.stream.url, hls.url)
-        XCTAssertNil(selection.audioStream)
+        XCTAssertEqual(selection.stream.url, iosVideo.url)
+        XCTAssertEqual(selection.audioStream?.url, iosAudio.url)
     }
 
     func testNativeSwiftExtractorLoadsRealYouTubeWhenEnabled() async throws {
@@ -877,7 +911,7 @@ final class DependencySelectionTests: XCTestCase {
         )
     }
 
-    private func playback(streams: [StreamInfo]) -> VideoPlayback {
+    private func playback(streams: [StreamInfo], isLive: Bool = false) -> VideoPlayback {
         VideoPlayback(
             id: "test-video",
             title: "Test Video",
@@ -914,7 +948,7 @@ final class DependencySelectionTests: XCTestCase {
             recommendationsContinuation: nil,
             tags: [],
             accessIssue: nil,
-            isLive: false,
+            isLive: isLive,
             isUpcoming: false,
             liveWindowDurationSeconds: nil,
             liveChat: nil

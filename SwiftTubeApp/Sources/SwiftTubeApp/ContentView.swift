@@ -52,6 +52,7 @@ struct ContentView: View {
     @StateObject private var searchViewModel = SearchViewModel()
     @StateObject private var playlistLibraryViewModel = PlaylistLibraryViewModel()
     @State private var isSearchFieldFocused = false
+    @State private var didHandleAutomationLaunch = false
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var mutationCenter = AppMutationCenter.shared
     @EnvironmentObject private var backend: BackendManager
@@ -147,6 +148,7 @@ struct ContentView: View {
         }
         .onAppear {
             navigation.ensureValidSidebarSelection(visibleItems: visibleSidebarItems)
+            handleAutomationLaunchIfNeeded()
         }
         .onChange(of: authSession.status.authenticated) { _, _ in
             navigation.ensureValidSidebarSelection(visibleItems: visibleSidebarItems)
@@ -176,6 +178,39 @@ struct ContentView: View {
             historyViewModel.applyLocalProgress(progress, to: videoID)
             searchViewModel.applyLocalProgress(progress, to: videoID)
         }
+    }
+}
+
+private extension ContentView {
+    func handleAutomationLaunchIfNeeded() {
+        guard didHandleAutomationLaunch == false else { return }
+        guard let videoID = ProcessInfo.processInfo.environment["SWIFTTUBE_AUTOPLAY_VIDEO_ID"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              videoID.isEmpty == false else {
+            return
+        }
+
+        didHandleAutomationLaunch = true
+        let startTime = ProcessInfo.processInfo.environment["SWIFTTUBE_AUTOPLAY_START_TIME"]
+            .flatMap(Double.init)
+            .map { max($0, 0) }
+        let thumbnail = Thumbnail(
+            url: "https://i.ytimg.com/vi/\(videoID)/hq720.jpg",
+            width: 1280,
+            height: 720
+        )
+        let video = VideoItem(
+            id: videoID,
+            title: "Loading",
+            channel: nil,
+            channelId: nil,
+            channelAvatarUrl: nil,
+            viewCountText: nil,
+            publishedTimeText: nil,
+            durationText: nil,
+            thumbnails: [thumbnail]
+        )
+        navigation.showVideo(video, startTime: startTime)
     }
 }
 

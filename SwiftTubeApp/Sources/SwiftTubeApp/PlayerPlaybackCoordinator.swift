@@ -310,6 +310,7 @@ private func manualQualityCandidate(
     playback: VideoPlayback
 ) -> ManualQualityCandidate? {
     if stream.streamKind == "manifest" {
+        guard playback.isLive else { return nil }
         return ManualQualityCandidate(
             selection: ManualPlaybackSelection(
                 stream: stream,
@@ -443,7 +444,7 @@ private func automaticSteadyStateSortKey(for selection: ManualPlaybackSelection)
 }
 
 private func automaticStartupMPVSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
-    automaticSteadyStateMPVSelection(for: playback)
+    automaticStartupMPVSelections(for: playback).first
 }
 
 private func automaticSteadyStateMPVSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
@@ -451,9 +452,19 @@ private func automaticSteadyStateMPVSelection(for playback: VideoPlayback) -> Ma
 }
 
 private func automaticPlayableMPVSelections(for playback: VideoPlayback) -> [ManualPlaybackSelection] {
+    func directSelectionExists() -> Bool {
+        playback.streams.contains { stream in
+            guard stream.hasVideo, stream.streamKind != "manifest" else { return false }
+            return stream.hasAudio || preferredStartupMPVAudioStream(for: playback, videoStream: stream) != nil
+        }
+    }
+
+    let shouldAllowManifestFallback = playback.isLive || directSelectionExists() == false
+
     func buildSelection(for stream: StreamInfo?) -> ManualPlaybackSelection? {
         guard let stream, isMPVStartupVideoStream(stream) else { return nil }
         if stream.streamKind == "manifest" {
+            guard shouldAllowManifestFallback else { return nil }
             return ManualPlaybackSelection(stream: stream, audioStream: nil)
         }
         let audioStream = stream.hasAudio ? nil : preferredStartupMPVAudioStream(for: playback, videoStream: stream)
@@ -466,7 +477,7 @@ private func automaticPlayableMPVSelections(for playback: VideoPlayback) -> [Man
     let candidates = playback.streams
         .filter(isMPVStartupVideoStream)
         .filter { stream in
-            stream.streamKind == "manifest"
+            (stream.streamKind == "manifest" && shouldAllowManifestFallback)
                 || stream.hasAudio
                 || preferredStartupMPVAudioStream(for: playback, videoStream: stream) != nil
         }
@@ -597,6 +608,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         static let interactionThrottle: TimeInterval = 0.16
         static let visibilityAnimationDuration = 0.10
         static let spacebarHoldDelay: UInt64 = 800_000_000
+        static let automaticQualityUpgradePollInterval: UInt64 = 250_000_000
+        static let automaticQualityUpgradeMinimumDelay: TimeInterval = 1.5
+        static let automaticQualityUpgradeTimeout: TimeInterval = 10.0
+        static let automaticQualityUpgradeMinimumAdvance: Double = 0.75
+        static let automaticQualityUpgradeMinimumBufferedAhead: Double = 2.0
     }
 
     private enum HideMonitorResult {
@@ -1549,13 +1565,62 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         )
 
         automaticQualityUpgradeTask = Task { [weak self] in
-            await Task.yield()
-            await self?.performAutomaticQualityUpgrade(
+            guard let self else { return }
+            let baselineTime = self.currentTime
+            guard await self.waitForAutomaticQualityUpgradeReadiness(
+                playbackID: playback.id,
+                baselineTime: baselineTime
+            ) else {
+                return
+            }
+            await self.performAutomaticQualityUpgrade(
                 to: targetSelection,
                 fallback: startupSelection,
                 playbackID: playback.id
             )
         }
+    }
+
+    private func waitForAutomaticQualityUpgradeReadiness(
+        playbackID: String,
+        baselineTime: Double
+    ) async -> Bool {
+        let startedAt = Date()
+        let deadline = startedAt.addingTimeInterval(Timing.automaticQualityUpgradeTimeout)
+
+        while Date() < deadline {
+            if Task.isCancelled { return false }
+            guard selectedQualityOptionID == QualityOption.automaticID,
+                  pendingQualityOptionID == nil,
+                  currentPlayback?.id == playbackID,
+                  let existingEngine = mpvEngine else {
+                return false
+            }
+
+            let snapshot = existingEngine.snapshot()
+            let elapsed = Date().timeIntervalSince(startedAt)
+            let advanced = snapshot.currentTime >= baselineTime + Timing.automaticQualityUpgradeMinimumAdvance
+            let bufferedAhead = snapshot.bufferedRanges
+                .filter { $0.upperBound >= snapshot.currentTime }
+                .map { $0.upperBound - snapshot.currentTime }
+                .max() ?? Timing.automaticQualityUpgradeMinimumBufferedAhead
+            let hasEnoughBuffer = bufferedAhead >= Timing.automaticQualityUpgradeMinimumBufferedAhead
+
+            if elapsed >= Timing.automaticQualityUpgradeMinimumDelay,
+               snapshot.isPlaying,
+               snapshot.isBuffering == false,
+               advanced,
+               hasEnoughBuffer {
+                return true
+            }
+
+            try? await Task.sleep(nanoseconds: Timing.automaticQualityUpgradePollInterval)
+        }
+
+        PlaybackDebugLogger.log(
+            "automatic quality upgrade skipped waiting for stable playback id=\(playbackID) baseline=\(baselineTime) current=\(currentTime)"
+        )
+        return false
     }
 
     private func performAutomaticQualityUpgrade(
@@ -1627,7 +1692,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 }
             }
             if let optionID = manualQualityOptionID(for: selection) {
-                selectedQualityOptionID = optionID
+                PlaybackDebugLogger.log(
+                    "automatic quality upgrade active stream option=\(optionID)"
+                )
             }
             PlaybackDebugLogger.log(
                 "automatic quality upgrade success id=\(playbackID) selected=\(selectedQualityOptionID) currentTime=\(currentTime)"
@@ -1758,9 +1825,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             if let engine = mpvEngine {
                 reapplySubtitlesAfterSwitch(for: playback, engine: engine)
             }
-            if case .automatic = option.selection,
-               let optionID = manualQualityOptionID(for: selection) {
-                selectedQualityOptionID = optionID
+            if case .automatic = option.selection {
+                selectedQualityOptionID = QualityOption.automaticID
+                scheduleAutomaticQualityUpgrade(for: playback, from: selection)
             } else {
                 selectedQualityOptionID = option.id
             }

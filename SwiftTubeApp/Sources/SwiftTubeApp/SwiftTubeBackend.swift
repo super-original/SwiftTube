@@ -2339,7 +2339,7 @@ private func buildPlaybackBundle(
 ) -> PlaybackBundle {
     PlaybackBundle(
         streams: streams,
-        preferredManifestStream: bestManifestStream(in: streams, preferHLS: preferHLSManifest),
+        preferredManifestStream: preferHLSManifest ? bestManifestStream(in: streams, preferHLS: true) : nil,
         preferredMuxedStream: bestMuxedStream(in: streams),
         preferredVideoStream: bestVideoStream(in: streams),
         preferredAudioStream: bestAudioStream(in: streams),
