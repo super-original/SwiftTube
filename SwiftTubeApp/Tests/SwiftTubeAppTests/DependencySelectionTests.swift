@@ -313,6 +313,56 @@ final class DependencySelectionTests: XCTestCase {
         XCTAssertEqual(selections.first?.stream.url, hls.url)
     }
 
+    func testQualityOptionsExposeConcreteQualitiesWithoutAuto() async throws {
+        let muxed = stream(
+            url: "https://example.com/360.mp4",
+            formatId: "18",
+            headers: ["X-YouTube-Client-Name": "3"],
+            height: 360,
+            audioCodec: "mp4a.40.2",
+            videoCodec: "avc1.42001e",
+            container: "mp4",
+            hasAudio: true,
+            hasVideo: true,
+            streamKind: "muxed",
+            bitrate: 400_000
+        )
+        let video = stream(
+            url: "https://example.com/1080.mp4",
+            formatId: "137",
+            headers: ["X-YouTube-Client-Name": "3"],
+            height: 1080,
+            audioCodec: nil,
+            videoCodec: "avc1.640028",
+            container: "mp4",
+            hasAudio: false,
+            hasVideo: true,
+            streamKind: "video",
+            bitrate: 2_300_000
+        )
+        let audio = stream(
+            url: "https://example.com/audio.m4a",
+            formatId: "140",
+            headers: ["X-YouTube-Client-Name": "3"],
+            height: nil,
+            audioCodec: "mp4a.40.2",
+            videoCodec: nil,
+            container: "m4a",
+            hasAudio: true,
+            hasVideo: false,
+            streamKind: "audio",
+            bitrate: 130_000
+        )
+
+        let testPlayback = playback(streams: [muxed, video, audio])
+        let options = await MainActor.run {
+            PlayerPlaybackCoordinator().debugQualityOptionsForTesting(playback: testPlayback)
+        }
+
+        XCTAssertEqual(options.map(\.title), ["1080p", "360p"])
+        XCTAssertFalse(options.contains { $0.title == "Auto" })
+    }
+
 
     func testManualQualityPrefersOriginalEnglishAudio() throws {
         let video = stream(
@@ -418,9 +468,7 @@ final class DependencySelectionTests: XCTestCase {
         let options = coordinator.debugQualityOptionsForTesting(playback: playback(streams: [iosVideo, iosAudio, hls]))
         let option = try XCTUnwrap(options.first { $0.title == "1080p" })
 
-        guard case .manual(let selection) = option.selection else {
-            return XCTFail("Expected manual quality option")
-        }
+        let selection = option.selection
         XCTAssertEqual(selection.stream.url, iosVideo.url)
         XCTAssertEqual(selection.audioStream?.url, iosAudio.url)
     }
@@ -844,13 +892,7 @@ final class DependencySelectionTests: XCTestCase {
 
             let coordinator = PlayerPlaybackCoordinator()
             return coordinator.debugQualityOptionsForTesting(playback: playback).reduce(into: [String: String]()) { result, option in
-                guard option.title != "Auto" else { return }
-                switch option.selection {
-                case .automatic:
-                    break
-                case .manual(let selection):
-                    result[option.title] = selectionKey(selection)
-                }
+                result[option.title] = selectionKey(option.selection)
             }
         }
     }

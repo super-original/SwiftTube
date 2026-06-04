@@ -7,52 +7,23 @@ struct ManualPlaybackSelection: Hashable, Sendable {
 }
 
 struct QualityOption: Identifiable, Hashable, Sendable {
-    static let automaticID = "quality-auto"
-
-    enum Selection: Hashable, Sendable {
-        case automatic
-        case manual(ManualPlaybackSelection)
-    }
-
     let id: String
     let title: String
     let detail: String?
-    let selection: Selection
-
-    static let automatic = QualityOption(
-        id: automaticID,
-        title: "Auto",
-        detail: nil,
-        selection: .automatic
-    )
+    let selection: ManualPlaybackSelection
 }
 
-private extension QualityOption.Selection {
+private extension QualityOption {
     var streamHeight: Int {
-        switch self {
-        case .manual(let selection):
-            return selection.stream.height ?? 0
-        case .automatic:
-            return 0
-        }
+        selection.stream.height ?? 0
     }
 
     var streamFPS: Int {
-        switch self {
-        case .manual(let selection):
-            return selection.stream.fps ?? 0
-        case .automatic:
-            return 0
-        }
+        selection.stream.fps ?? 0
     }
 
     var streamBitrate: Int {
-        switch self {
-        case .manual(let selection):
-            return selection.stream.bitrate ?? 0
-        case .automatic:
-            return 0
-        }
+        selection.stream.bitrate ?? 0
     }
 }
 
@@ -263,7 +234,6 @@ private func isManualQualityVideoStream(_ stream: StreamInfo) -> Bool {
     }
 
     guard stream.hasVideo,
-          !stream.hasAudio,
           stream.streamKind != "manifest",
           (stream.height ?? 0) > 0,
           stream.container?.lowercased().hasPrefix("mp4") == true,
@@ -320,10 +290,11 @@ private func manualQualityCandidate(
         )
     }
 
-    guard isManualQualityVideoStream(stream),
-          let audioStream = preferredManualQualityAudioStream(for: playback, videoStream: stream) else {
+    guard isManualQualityVideoStream(stream) else {
         return nil
     }
+    let audioStream = stream.hasAudio ? nil : preferredManualQualityAudioStream(for: playback, videoStream: stream)
+    guard stream.hasAudio || audioStream != nil else { return nil }
 
     return ManualQualityCandidate(
         selection: ManualPlaybackSelection(
@@ -567,8 +538,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var currentTime: Double = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var scrubPosition: Double = 0
-    @Published private(set) var qualityOptions: [QualityOption] = [QualityOption.automatic]
-    @Published private(set) var selectedQualityOptionID = QualityOption.automaticID
+    @Published private(set) var qualityOptions: [QualityOption] = []
+    @Published private(set) var selectedQualityOptionID = ""
     @Published private(set) var pendingQualityOptionID: String? = nil
     @Published private(set) var subtitleOptions: [SubtitleOption] = []
     @Published private(set) var selectedSubtitleOptionID = SubtitleOption.offID
@@ -631,16 +602,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var playbackBadgeText: String {
-        if selectedQualityOptionID == QualityOption.automaticID {
-            return "Auto"
-        }
         return activeQualityOption?.title ?? "Quality"
     }
 
     var qualityControlText: String {
-        if qualityControlSelectionID == QualityOption.automaticID {
-            return "Auto"
-        }
         return displayedQualityOption?.title ?? "Quality"
     }
 
@@ -649,9 +614,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var qualityControlDetail: String? {
-        guard qualityControlSelectionID != QualityOption.automaticID else {
-            return nil
-        }
         return displayedQualityOption?.detail
     }
 
@@ -935,8 +897,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         currentTime = 0
         duration = 0
         scrubPosition = 0
-        qualityOptions = [QualityOption.automatic]
-        selectedQualityOptionID = QualityOption.automaticID
+        qualityOptions = []
+        selectedQualityOptionID = ""
         pendingQualityOptionID = nil
         subtitleOptions = []
         selectedSubtitleOptionID = SubtitleOption.offID
@@ -1355,15 +1317,21 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         qualityOptions.first(where: { $0.id == qualityControlSelectionID })
     }
 
+    private func preferredStartupQualityOption(for playback: VideoPlayback) -> QualityOption? {
+        let options = qualityOptions.isEmpty ? buildQualityOptions(for: playback) : qualityOptions
+        guard let preferredHeight = AppSettings.shared.defaultQuality.preferredHeight else {
+            return options.first
+        }
+        return options.first { $0.streamHeight <= preferredHeight }
+            ?? options.last
+            ?? options.first
+    }
+
     private func manualQualityOptionID(for selection: ManualPlaybackSelection) -> String? {
         qualityOptions.first(where: { option in
-            switch option.selection {
-            case .manual(let candidateSelection):
-                return candidateSelection.stream.url == selection.stream.url
-                    && candidateSelection.audioStream?.url == selection.audioStream?.url
-            case .automatic:
-                return false
-            }
+            let candidateSelection = option.selection
+            return candidateSelection.stream.url == selection.stream.url
+                && candidateSelection.audioStream?.url == selection.audioStream?.url
         })?.id
     }
 
@@ -1389,12 +1357,19 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         do {
             currentPlayback = playback
             sponsorSegments = playback.sponsorSegments
-            selectedQualityOptionID = QualityOption.automaticID
+            qualityOptions = buildQualityOptions(for: playback)
+            selectedQualityOptionID = ""
             mpvStateTask?.cancel()
             scheduleMPVStop(mpvEngine, pauseFirst: true)
             mpvEngine = nil
 
-            let startupSelections = automaticStartupMPVSelections(for: playback)
+            let preferredStartupOption = preferredStartupQualityOption(for: playback)
+            let startupSelections: [ManualPlaybackSelection]
+            if let selection = preferredStartupOption?.selection {
+                startupSelections = [selection]
+            } else {
+                startupSelections = automaticStartupMPVSelections(for: playback)
+            }
             guard startupSelections.isEmpty == false else {
                 PlaybackDebugLogger.log(
                     "prepare playback missing startup source id=\(playback.id) streams=\(playback.streams.count)"
@@ -1410,6 +1385,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             let startupLimit = min(startupSelections.count, playback.isLive ? 4 : 5)
             let candidateSelections = Array(startupSelections.prefix(startupLimit))
             var preparedEngine: MPVPlaybackEngine?
+            var preparedSelection: ManualPlaybackSelection?
             var lastPreparationError: Error?
 
             for (index, selection) in candidateSelections.enumerated() {
@@ -1433,6 +1409,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                     let startTime = initialStartTime
                     try await engine.prepare(startTime: startTime, autoPlay: false)
                     preparedEngine = engine
+                    preparedSelection = selection
                     break
                 } catch {
                     lastPreparationError = error
@@ -1460,6 +1437,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             initialStartTime = 0
             startPollingMPVState(using: engine)
             refreshQualityOptions(for: playback)
+            if let preparedSelection, let startupOptionID = manualQualityOptionID(for: preparedSelection) {
+                selectedQualityOptionID = startupOptionID
+            } else if let preferredStartupOption {
+                selectedQualityOptionID = preferredStartupOption.id
+            } else {
+                selectedQualityOptionID = qualityOptions.first?.id ?? ""
+            }
             loadSubtitleTracks(for: playback, engine: engine)
             startHideMonitorIfNeeded()
         } catch {
@@ -1490,17 +1474,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         )
 
         do {
-            let selection: ManualPlaybackSelection
-            switch option.selection {
-            case .manual(let manualSelection):
-                selection = manualSelection
-            case .automatic:
-                guard let autoSelection = automaticStartupMPVSelection(for: playback) else {
-                    throw URLError(.badURL)
-                }
-                selection = autoSelection
-            }
-
+            let selection = option.selection
             let request = try mpvRequest(for: selection)
 
             func prepareFreshEngine(startTime: Double, wasPlaying: Bool) async throws -> MPVPlaybackEngine {
@@ -1597,11 +1571,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             if let engine = mpvEngine {
                 reapplySubtitlesAfterSwitch(for: playback, engine: engine)
             }
-            if case .automatic = option.selection {
-                selectedQualityOptionID = QualityOption.automaticID
-            } else {
-                selectedQualityOptionID = option.id
-            }
+            selectedQualityOptionID = option.id
             PlaybackDebugLogger.log(
                 "quality switch success option=\(debugDescription(for: option)) duration=\(duration) currentTime=\(currentTime)"
             )
@@ -1623,12 +1593,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func refreshQualityOptions(for playback: VideoPlayback) {
-        qualityOptions = [QualityOption.automatic] + buildQualityOptions(for: playback)
+        qualityOptions = buildQualityOptions(for: playback)
         PlaybackDebugLogger.log(
             "quality options refreshed options=\(qualityOptions.map(debugDescription(for:)).joined(separator: " | ")) selected=\(selectedQualityOptionID)"
         )
         if qualityOptions.contains(where: { $0.id == selectedQualityOptionID }) == false {
-            selectedQualityOptionID = QualityOption.automaticID
+            selectedQualityOptionID = qualityOptions.first?.id ?? ""
         }
         if let pendingQualityOptionID,
            qualityOptions.contains(where: { $0.id == pendingQualityOptionID }) == false {
@@ -2048,16 +2018,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                     id: "stream-\(candidate.selection.stream.url)",
                     title: title,
                     detail: bitrateText(Double(candidate.bitrate)),
-                    selection: .manual(candidate.selection)
+                    selection: candidate.selection
                 )
             }
             .sorted { lhs, rhs in
-                let lhsHeight = lhs.selection.streamHeight
-                let rhsHeight = rhs.selection.streamHeight
-                let lhsFPS = lhs.selection.streamFPS
-                let rhsFPS = rhs.selection.streamFPS
-                let lhsBitrate = lhs.selection.streamBitrate
-                let rhsBitrate = rhs.selection.streamBitrate
+                let lhsHeight = lhs.streamHeight
+                let rhsHeight = rhs.streamHeight
+                let lhsFPS = lhs.streamFPS
+                let rhsFPS = rhs.streamFPS
+                let lhsBitrate = lhs.streamBitrate
+                let rhsBitrate = rhs.streamBitrate
                 return (lhsHeight, lhsFPS, lhsBitrate) > (rhsHeight, rhsFPS, rhsBitrate)
             }
     }
@@ -2101,12 +2071,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func debugDescription(for option: QualityOption) -> String {
-        switch option.selection {
-        case .automatic:
-            return "option[id=\(option.id),title=\(option.title),automatic]"
-        case .manual(let selection):
-            return "option[id=\(option.id),title=\(option.title),video=\(debugDescription(for: selection.stream)),audio=\(debugDescription(for: selection.audioStream))]"
-        }
+        let selection = option.selection
+        return "option[id=\(option.id),title=\(option.title),video=\(debugDescription(for: selection.stream)),audio=\(debugDescription(for: selection.audioStream))]"
     }
 
     private func debugDescription(for stream: StreamInfo?) -> String {

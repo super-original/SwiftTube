@@ -834,7 +834,12 @@ final class AppSettings: ObservableObject {
         }
 
         self.appearanceMode = resolvedAppearance
-        self.defaultQuality = DefaultQuality(rawValue: defaults.string(forKey: "defaultQuality") ?? "") ?? .auto
+        let storedDefaultQuality = defaults.string(forKey: "defaultQuality") ?? ""
+        let resolvedDefaultQuality = DefaultQuality(rawValue: storedDefaultQuality) ?? .highest
+        self.defaultQuality = resolvedDefaultQuality
+        if storedDefaultQuality != resolvedDefaultQuality.rawValue {
+            defaults.set(resolvedDefaultQuality.rawValue, forKey: "defaultQuality")
+        }
 
         let storedDefaultPlaybackSpeed = defaults.double(forKey: "defaultPlaybackSpeed")
         self.defaultPlaybackSpeed = Self.playbackSpeedOptions.contains(storedDefaultPlaybackSpeed)
@@ -1150,7 +1155,7 @@ final class AppSettings: ObservableObject {
     }
 
     enum DefaultQuality: String, CaseIterable, Identifiable {
-        case auto   = "Auto"
+        case highest = "Highest"
         case p360   = "360p"
         case p480   = "480p"
         case p720   = "720p"
@@ -1162,7 +1167,7 @@ final class AppSettings: ObservableObject {
 
         var preferredHeight: Int? {
             switch self {
-            case .auto: return nil
+            case .highest: return nil
             case .p360: return 360
             case .p480: return 480
             case .p720: return 720

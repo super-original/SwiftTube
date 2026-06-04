@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.13
+
+- Removed the fake Auto entry from the player quality selector so playback starts on and displays the selected concrete quality.
+- Changed the default playback quality setting to Highest, migrating old Auto defaults to the new concrete default.
+
 ## 0.15.12
 
 - Changed Auto quality to load the highest selected playable stream immediately instead of starting low and switching upward after playback begins.
