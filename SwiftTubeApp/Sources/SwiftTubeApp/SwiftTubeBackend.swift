@@ -5988,19 +5988,10 @@ private struct BrowserAccountProbe {
     let identifier: String?
     let avatarURL: String?
     let source: BrowserAccountSource
-
-    var hasStableIdentity: Bool {
-        identifier?.nonEmptyTrimmed != nil || avatarURL?.nonEmptyTrimmed != nil
-    }
 }
 
 private func probeBrowserAccount(_ browser: BrowserLoginOption) async -> BrowserAccountProbe? {
-    let fastProbe = await probeBrowserAccount(browser, timeout: 4, allowBrowseFallback: false)
-    if fastProbe?.hasStableIdentity == true {
-        return fastProbe
-    }
-
-    return await probeBrowserAccount(browser, timeout: 7, allowBrowseFallback: true) ?? fastProbe
+    await probeBrowserAccount(browser, timeout: 4.5, allowBrowseFallback: true)
 }
 
 private func probeBrowserAccount(

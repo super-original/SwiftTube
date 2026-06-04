@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.22
+
+- Fixed account discovery taking up to 11 seconds by removing the second slow browser-cookie probe while keeping the fuller account profile lookup.
+
 ## 0.15.21
 
 - Matched browser scan icon bounce timing to the loading-dot animation.
