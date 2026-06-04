@@ -179,7 +179,7 @@ private struct BrowserLoadingIcon: View {
 
     var body: some View {
         TimelineView(.animation) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate / 1.20 - Double(index) * 0.14
+            let phase = timeline.date.timeIntervalSinceReferenceDate / 1.18 - Double(index) * 0.17
             let lift = smoothWave(phase)
 
             Image(nsImage: icon)
