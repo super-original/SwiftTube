@@ -5988,16 +5988,35 @@ private struct BrowserAccountProbe {
     let identifier: String?
     let avatarURL: String?
     let source: BrowserAccountSource
+
+    var hasStableIdentity: Bool {
+        identifier?.nonEmptyTrimmed != nil || avatarURL?.nonEmptyTrimmed != nil
+    }
 }
 
 private func probeBrowserAccount(_ browser: BrowserLoginOption) async -> BrowserAccountProbe? {
+    let fastProbe = await probeBrowserAccount(browser, timeout: 4, allowBrowseFallback: false)
+    if fastProbe?.hasStableIdentity == true {
+        return fastProbe
+    }
+
+    return await probeBrowserAccount(browser, timeout: 7, allowBrowseFallback: true) ?? fastProbe
+}
+
+private func probeBrowserAccount(
+    _ browser: BrowserLoginOption,
+    timeout: TimeInterval,
+    allowBrowseFallback: Bool
+) async -> BrowserAccountProbe? {
     do {
         let authManager = YouTubeAuthManager()
-        let material = try await authManager.probeMaterial(for: browser)
+        let material = try await authManager.probeMaterial(for: browser, timeout: timeout)
+        defer {
+            try? FileManager.default.removeItem(at: material.cookieFileURL)
+        }
         _ = await authManager.activateProbeMaterial(material)
         let api = YouTubeAPI(authManager: authManager)
-        let profile = await signedInAccountProfile(using: api, allowBrowseFallback: false)
-        try? FileManager.default.removeItem(at: material.cookieFileURL)
+        let profile = await signedInAccountProfile(using: api, allowBrowseFallback: allowBrowseFallback)
 
         let displayName = profile.displayName?.nonEmptyTrimmed
             ?? profile.email?.nonEmptyTrimmed

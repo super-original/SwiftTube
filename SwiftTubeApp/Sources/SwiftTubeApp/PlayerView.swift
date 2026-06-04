@@ -1550,7 +1550,7 @@ private extension PlayerScreen {
                         .onAppear {
                             viewModel.loadMoreRecommendationsIfNeeded(currentVideo: relatedVideo)
                         }
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
                     }
                     .animation(.easeOut(duration: 0.16), value: recommendations)
 

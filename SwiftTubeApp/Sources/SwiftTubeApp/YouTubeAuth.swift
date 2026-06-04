@@ -197,7 +197,7 @@ actor YouTubeAuthManager {
         material?.cookieFileURL
     }
 
-    func probeMaterial(for browser: BrowserLoginOption) async throws -> AuthMaterial {
+    func probeMaterial(for browser: BrowserLoginOption, timeout: TimeInterval = 8) async throws -> AuthMaterial {
         guard let cookieSource = browser.cookieSource else {
             throw BackendClientError(message: "\(browser.displayName) does not expose a readable profile.")
         }
@@ -205,7 +205,7 @@ actor YouTubeAuthManager {
         let probesDirectory = supportDirectoryURL.appendingPathComponent("CookieProbes", isDirectory: true)
         try FileManager.default.createDirectory(at: probesDirectory, withIntermediateDirectories: true)
         let probeCookieURL = probesDirectory.appendingPathComponent("\(browser.rawValue)-\(UUID().uuidString).txt")
-        try await YTDLPTool.exportCookies(from: cookieSource, to: probeCookieURL, timeout: 4)
+        try await YTDLPTool.exportCookies(from: cookieSource, to: probeCookieURL, timeout: timeout)
 
         let config = AuthSessionConfig(
             browser: browser.rawValue,
@@ -250,8 +250,11 @@ actor YouTubeAuthManager {
             .split(whereSeparator: \.isNewline)
             .compactMap(parseCookieLine)
 
-        let sapisid = cookies.first(where: { $0.name == "SAPISID" && $0.domain.contains("youtube") })?.value
-            ?? cookies.first(where: { $0.name == "SAPISID" && $0.domain.contains("google") })?.value
+        let authCookieNames = ["SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID", "APISID"]
+        let sapisid = authCookieNames.lazy.compactMap { name in
+            cookies.first(where: { $0.name == name && $0.domain.contains("youtube") })?.value
+                ?? cookies.first(where: { $0.name == name && $0.domain.contains("google") })?.value
+        }.first
 
         guard let sapisid, !sapisid.isEmpty else {
             throw BackendClientError(message: "Your browser session is missing the SAPISID cookie needed for authenticated YouTube requests.")

@@ -41,25 +41,18 @@ struct SwiftTubeSpinner: View {
     var body: some View {
         TimelineView(.animation) { timeline in
             let phase = timeline.date.timeIntervalSinceReferenceDate
-            ZStack {
-                ForEach(0..<10, id: \.self) { index in
-                    Capsule()
-                        .fill(segmentColor(index: index, phase: phase))
-                        .frame(width: max(size * 0.12, 3), height: size * 0.32)
-                        .offset(y: -size * 0.34)
-                        .rotationEffect(.degrees(Double(index) * 36))
+            HStack(spacing: max(size * 0.16, 4)) {
+                ForEach(0..<3, id: \.self) { index in
+                    let localPhase = phase * 3.2 - Double(index) * 0.32
+                    let lift = sin(localPhase * .pi)
+                    Circle()
+                        .fill(Color.white.opacity(0.56 + max(lift, 0) * 0.36))
+                        .frame(width: size * 0.22, height: size * 0.22)
+                        .offset(y: -max(lift, 0) * size * 0.24)
                 }
             }
-            .rotationEffect(.degrees(phase * 220))
             .frame(width: size, height: size)
         }
-    }
-
-    private func segmentColor(index: Int, phase: TimeInterval) -> Color {
-        let head = Int((phase * 10).rounded(.down)) % 10
-        let distance = (index - head + 10) % 10
-        let opacity = max(0.18, 1.0 - Double(distance) * 0.095)
-        return BrandAssets.swiftTubeBlue.opacity(opacity)
     }
 }
 
@@ -70,17 +63,17 @@ struct LoadingStatusView: View {
     var browsers: [BrowserLoginOption] = []
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 9) {
             SwiftTubeSpinner(size: spinnerSize)
             ShimmerText(text: text)
 
             if browsers.isEmpty == false {
-                HStack(spacing: -5) {
-                    ForEach(browsers) { browser in
-                        BrowserLoadingIcon(browser: browser, size: iconSize)
+                HStack(spacing: 4) {
+                    ForEach(Array(browsers.enumerated()), id: \.element.id) { index, browser in
+                        BrowserLoadingIcon(browser: browser, index: index, size: iconSize)
                     }
                 }
-                .padding(.leading, 2)
+                .padding(.leading, 1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -102,18 +95,25 @@ struct LoadingMoreIndicator: View {
 
 private struct BrowserLoadingIcon: View {
     let browser: BrowserLoginOption
+    let index: Int
     let size: CGFloat
 
     var body: some View {
-        Image(nsImage: icon)
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: size, height: size)
-            .padding(4)
-            .background(.regularMaterial, in: Circle())
-            .overlay(Circle().stroke(Color.primary.opacity(0.10), lineWidth: 0.7))
-            .shadow(color: .black.opacity(0.12), radius: 5, y: 2)
-            .help(browser.displayName)
+        TimelineView(.animation) { timeline in
+            let phase = timeline.date.timeIntervalSinceReferenceDate * 2.2 + Double(index) * 0.42
+            let lift = max(sin(phase * .pi), 0)
+
+            Image(nsImage: icon)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size, height: size)
+                .brightness(lift * 0.10)
+                .opacity(0.74 + lift * 0.26)
+                .scaleEffect(0.94 + lift * 0.06)
+                .offset(y: -lift * 3)
+                .help(browser.displayName)
+        }
+        .frame(width: size, height: size)
     }
 
     private var icon: NSImage {

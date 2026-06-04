@@ -474,10 +474,11 @@ private extension ContentView {
                     .onAppear {
                         viewModel.loadMoreIfNeeded(currentVideo: video)
                     }
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
                 }
             }
             .animation(.easeOut(duration: 0.18), value: viewModel.videos)
+            .transition(.opacity)
 
             if viewModel.isLoading {
                 LoadingMoreIndicator(text: "Loading more videos...")
@@ -573,7 +574,7 @@ private extension ContentView {
                     .onAppear {
                         searchViewModel.loadMoreIfNeeded(currentVideo: video)
                     }
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
                 }
             }
             .animation(.easeOut(duration: 0.18), value: searchViewModel.results)
@@ -834,7 +835,7 @@ private extension ContentView {
                         .onAppear {
                             historyViewModel.loadMoreIfNeeded(currentVideo: video)
                         }
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
                     }
                 }
                 .animation(.easeOut(duration: 0.16), value: historyViewModel.filteredItems)

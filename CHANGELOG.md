@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.16
+
+- Replaced the blue spinner with a minimal white three-dot loading animation and made browser scan icons sit inline without capsule backgrounds.
+- Improved browser account discovery reliability by retrying incomplete scanner probes with a fuller profile fallback and accepting secure PAPISID cookie variants from Safari-style exports.
+- Changed newly loaded video animations from top-slide transitions to fast fade/scale transitions, including the first Home recommendations load.
+
 ## 0.15.15
 
 - Sped up browser account discovery by trimming scanner-only profile fallback work and shortening slow browser probe timeouts, with a shimmering account-scan status row that shows the browsers being scanned.
