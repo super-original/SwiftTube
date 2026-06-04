@@ -52,6 +52,9 @@ struct ContentView: View {
     @StateObject private var searchViewModel = SearchViewModel()
     @StateObject private var playlistLibraryViewModel = PlaylistLibraryViewModel()
     @State private var isSearchFieldFocused = false
+    @State private var selectedSearchSuggestionIndex = 0
+    @State private var keepSearchAssistVisibleUntil = Date.distantPast
+    @State private var searchAssistDismissTask: Task<Void, Never>?
     @State private var didHandleAutomationLaunch = false
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var mutationCenter = AppMutationCenter.shared
@@ -91,8 +94,12 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {
-                    searchViewModel.clear()
-                    navigation.showHome()
+                    if case .home = navigation.currentRoute {
+                        viewModel.reload()
+                    } else {
+                        searchViewModel.clear()
+                        navigation.showHome()
+                    }
                 } label: {
                     BrandToolbarLabel()
                 }
@@ -120,7 +127,9 @@ struct ContentView: View {
                     placeholder: toolbarSearchPlaceholder,
                     onSubmit: handleToolbarSubmit,
                     onClear: handleToolbarClear,
-                    onFocusChange: handleSearchFieldFocusChange
+                    onFocusChange: handleSearchFieldFocusChange,
+                    onMoveSuggestion: moveSelectedSearchSuggestion,
+                    onAcceptAssist: acceptSelectedSearchAssist
                 )
                 .frame(width: searchChromeWidth)
             }
@@ -178,6 +187,13 @@ struct ContentView: View {
             historyViewModel.applyLocalProgress(progress, to: videoID)
             searchViewModel.applyLocalProgress(progress, to: videoID)
         }
+        .background(
+            AppCommandHandler(
+                onRefresh: refreshCurrentRoute,
+                onSelectNumberedTab: selectNumberedSidebarItem,
+                onEscape: exitFullscreenIfNeeded
+            )
+        )
     }
 }
 
@@ -241,7 +257,13 @@ private extension ContentView {
     }
 
     var shouldShowSidebar: Bool {
-        visibleSidebarItems.count > 1
+        if case .video = navigation.currentRoute, settings.autoHideSidebarOnPlayback {
+            return false
+        }
+        if case .home = navigation.currentRoute, settings.showSidebarOnHome == false {
+            return false
+        }
+        return visibleSidebarItems.count > 1
     }
 
     var toolbarSearchScope: SearchViewModel.Scope {
@@ -267,8 +289,15 @@ private extension ContentView {
     }
 
     var searchAssistState: SearchAssistState {
-        guard isSearchFieldFocused else {
-            return .hidden
+        if !isSearchFieldFocused {
+            if Date() >= keepSearchAssistVisibleUntil {
+                return .hidden
+            }
+            if searchViewModel.linkPreview == nil,
+               searchViewModel.suggestions.isEmpty,
+               searchViewModel.isLoadingSuggestions == false {
+                return .hidden
+            }
         }
         if let linkPreview = searchViewModel.linkPreview {
             return .link(linkPreview)
@@ -445,13 +474,14 @@ private extension ContentView {
                     .onAppear {
                         viewModel.loadMoreIfNeeded(currentVideo: video)
                     }
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
+            .animation(.easeOut(duration: 0.18), value: viewModel.videos)
 
             if viewModel.isLoading {
-                ProgressView("Loading more...")
+                LoadingMoreIndicator(text: "Loading more videos...")
                     .padding(.top, 16)
-                    .frame(maxWidth: .infinity)
             }
         }
     }
@@ -543,13 +573,14 @@ private extension ContentView {
                     .onAppear {
                         searchViewModel.loadMoreIfNeeded(currentVideo: video)
                     }
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
+            .animation(.easeOut(duration: 0.18), value: searchViewModel.results)
 
             if searchViewModel.isSearching {
-                ProgressView("Loading more...")
+                LoadingMoreIndicator(text: "Loading more results...")
                     .padding(.top, 16)
-                    .frame(maxWidth: .infinity)
             }
         }
     }
@@ -583,6 +614,18 @@ private extension ContentView {
         case .video:
             navigation.refreshCurrentRoute()
         }
+    }
+
+    func selectNumberedSidebarItem(_ number: Int) {
+        let index = number - 1
+        guard visibleSidebarItems.indices.contains(index) else { return }
+        navigation.selectSidebarItem(visibleSidebarItems[index])
+    }
+
+    func exitFullscreenIfNeeded() {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
+              window.styleMask.contains(.fullScreen) else { return }
+        window.toggleFullScreen(nil)
     }
 
     @ViewBuilder
@@ -703,6 +746,7 @@ private extension ContentView {
     var searchAssistOverlay: some View {
         SearchAssistPanel(
             state: searchAssistState,
+            selectedSuggestionIndex: selectedSearchSuggestionIndex,
             onSelectSuggestion: { suggestion in
                 searchViewModel.applySuggestion(suggestion)
                 handleToolbarSubmit()
@@ -790,13 +834,14 @@ private extension ContentView {
                         .onAppear {
                             historyViewModel.loadMoreIfNeeded(currentVideo: video)
                         }
+                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
+                .animation(.easeOut(duration: 0.16), value: historyViewModel.filteredItems)
 
                 if historyViewModel.isLoading {
-                    ProgressView("Loading more history...")
+                    LoadingMoreIndicator(text: "Loading more history...")
                         .padding(.top, 8)
-                        .frame(maxWidth: .infinity)
                 }
             }
         }
@@ -848,14 +893,51 @@ private extension ContentView {
 
     func handleToolbarQueryChange() {
         searchViewModel.handleQueryChange(scope: toolbarSearchScope)
+        selectedSearchSuggestionIndex = 0
         syncHistorySearchQuery()
     }
 
     func handleSearchFieldFocusChange(_ focused: Bool) {
         isSearchFieldFocused = focused
-        if !focused {
-            searchViewModel.dismissAssist()
+        searchAssistDismissTask?.cancel()
+        if focused {
+            keepSearchAssistVisibleUntil = .distantPast
+        } else {
+            keepSearchAssistVisibleUntil = Date().addingTimeInterval(0.24)
+            searchAssistDismissTask = Task {
+                try? await Task.sleep(nanoseconds: 240_000_000)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    if !isSearchFieldFocused {
+                        searchViewModel.dismissAssist()
+                        keepSearchAssistVisibleUntil = .distantPast
+                    }
+                }
+            }
         }
+    }
+
+    func moveSelectedSearchSuggestion(by delta: Int) -> Bool {
+        let suggestions = searchViewModel.suggestions
+        guard suggestions.isEmpty == false, searchAssistState.isVisible else { return false }
+        let count = suggestions.count
+        selectedSearchSuggestionIndex = (selectedSearchSuggestionIndex + delta + count) % count
+        return true
+    }
+
+    func acceptSelectedSearchAssist() -> Bool {
+        if case .link = searchAssistState {
+            handleToolbarSubmit()
+            return true
+        }
+
+        let suggestions = searchViewModel.suggestions
+        guard suggestions.indices.contains(selectedSearchSuggestionIndex), searchAssistState.isVisible else {
+            return false
+        }
+        searchViewModel.applySuggestion(suggestions[selectedSearchSuggestionIndex])
+        handleToolbarSubmit()
+        return true
     }
 
     func openVideoFromSearch(_ video: VideoItem) {
@@ -1129,9 +1211,8 @@ private struct ChannelPageScreen: View {
         }
 
         if viewModel.isLoadingMore {
-            ProgressView("Loading more...")
+            LoadingMoreIndicator(text: "Loading more...")
                 .padding(.top, 12)
-                .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 
@@ -1182,8 +1263,7 @@ private struct ChannelPageScreen: View {
         }
 
         if viewModel.isLoadingMore {
-            ProgressView("Loading more posts...")
-                .frame(maxWidth: .infinity, alignment: .center)
+            LoadingMoreIndicator(text: "Loading more posts...")
                 .padding(.top, 8)
         }
     }
@@ -2004,7 +2084,7 @@ private struct ChannelAboutTabContent: View {
         Group {
             if isLoading && about == nil {
                 VStack(spacing: 18) {
-                    ProgressView("Loading channel details...")
+                    LoadingStatusView(text: "Loading channel details...")
                     RoundedRectangle(cornerRadius: 24)
                         .fill(Color.white.opacity(0.04))
                         .frame(height: 240)
@@ -2145,8 +2225,7 @@ private struct ChannelAboutSheet: View {
 
             if isLoading && about == nil {
                 Spacer()
-                ProgressView("Loading details...")
-                    .frame(maxWidth: .infinity, alignment: .center)
+                LoadingStatusView(text: "Loading details...")
                 Spacer()
             } else if let errorMessage {
                 Spacer()
@@ -2406,9 +2485,8 @@ private struct PlaylistLibraryScreen: View {
             }
 
             if viewModel.isLoading {
-                ProgressView("Loading more...")
+                LoadingMoreIndicator(text: "Loading more playlists...")
                     .padding(.top, 16)
-                    .frame(maxWidth: .infinity)
             }
         }
     }
@@ -2611,9 +2689,8 @@ private struct PlaylistFeedScreen: View {
                     }
 
                     if viewModel.isLoading {
-                        ProgressView("Loading more...")
+                        LoadingMoreIndicator(text: "Loading more videos...")
                             .padding(.top, 8)
-                            .frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -3219,12 +3296,10 @@ private struct AuthConnectionSheet: View {
             }
 
             if authSession.isDiscoveringAccounts {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("Scanning browsers...")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                LoadingStatusView(
+                    text: "Looking for accounts...",
+                    browsers: authSession.accountScanningBrowsers
+                )
             } else if authSession.discoveredAccounts.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("No signed-in YouTube accounts found")
@@ -3258,11 +3333,7 @@ private struct AuthConnectionSheet: View {
             }
 
             if authSession.isWorking {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("Connecting...")
-                        .foregroundStyle(.secondary)
-                }
+                LoadingStatusView(text: "Connecting...", spinnerSize: 20)
             }
 
             if let errorMessage = authSession.errorMessage, !errorMessage.isEmpty {
@@ -3363,6 +3434,8 @@ private struct ToolbarSearchField: NSViewRepresentable {
     var onSubmit: () -> Void
     var onClear: () -> Void
     var onFocusChange: (Bool) -> Void
+    var onMoveSuggestion: (Int) -> Bool
+    var onAcceptAssist: () -> Bool
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = ResignableSearchField()
@@ -3477,11 +3550,20 @@ private struct ToolbarSearchField: NSViewRepresentable {
             doCommandBy commandSelector: Selector
         ) -> Bool {
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                if parent.onAcceptAssist() {
+                    return true
+                }
                 parent.onSubmit()
                 parent.isFocused = false
                 parent.onFocusChange(false)
                 control.window?.makeFirstResponder(nil)
                 return true
+            }
+            if commandSelector == #selector(NSResponder.moveUp(_:)) {
+                return parent.onMoveSuggestion(-1)
+            }
+            if commandSelector == #selector(NSResponder.moveDown(_:)) {
+                return parent.onMoveSuggestion(1)
             }
             if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
                 if control.stringValue.isEmpty {
@@ -3498,6 +3580,98 @@ private struct ToolbarSearchField: NSViewRepresentable {
                 return true
             }
             return false
+        }
+    }
+}
+
+private struct AppCommandHandler: NSViewRepresentable {
+    let onRefresh: () -> Void
+    let onSelectNumberedTab: (Int) -> Void
+    let onEscape: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.installMonitor()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.parent = self
+    }
+
+    func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.removeMonitor()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    final class Coordinator {
+        var parent: AppCommandHandler
+        private var monitor: Any?
+
+        init(parent: AppCommandHandler) {
+            self.parent = parent
+        }
+
+        func installMonitor() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else { return event }
+                let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+                if flags == .command, event.keyCode == 15 {
+                    let action = self.parent.onRefresh
+                    MainActor.assumeIsolated {
+                        action()
+                    }
+                    return nil
+                }
+
+                if flags == .command, let number = Self.commandNumber(from: event) {
+                    let action = self.parent.onSelectNumberedTab
+                    MainActor.assumeIsolated {
+                        action(number)
+                    }
+                    return nil
+                }
+
+                if flags.isEmpty, event.keyCode == 53 {
+                    let action = self.parent.onEscape
+                    MainActor.assumeIsolated {
+                        action()
+                    }
+                }
+
+                return event
+            }
+        }
+
+        func removeMonitor() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+
+        deinit {
+            removeMonitor()
+        }
+
+        private static func commandNumber(from event: NSEvent) -> Int? {
+            switch event.keyCode {
+            case 18: return 1
+            case 19: return 2
+            case 20: return 3
+            case 21: return 4
+            case 23: return 5
+            case 22: return 6
+            case 26: return 7
+            case 28: return 8
+            case 25: return 9
+            default: return nil
+            }
         }
     }
 }
@@ -3532,6 +3706,7 @@ private struct PlaceholderCard: View {
 private struct SearchAssistPanel: View {
     @ObservedObject private var settings = AppSettings.shared
     let state: SearchAssistState
+    let selectedSuggestionIndex: Int
     let onSelectSuggestion: (String) -> Void
     let onOpenLink: () -> Void
 
@@ -3544,19 +3719,14 @@ private struct SearchAssistPanel: View {
                 SearchLinkDetectedCard(linkPreview: linkPreview, onOpen: onOpenLink)
                     .transition(.scale(scale: 0.98).combined(with: .opacity))
             case .loading:
-                HStack(spacing: 10) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Finding suggestions...")
-                        .foregroundStyle(.secondary)
-                }
-                .font(.subheadline)
+                LoadingStatusView(text: "Finding suggestions...", spinnerSize: 18)
                 .padding(14)
                 .transition(.move(edge: .top).combined(with: .opacity))
             case .suggestions(let suggestions):
-                ForEach(suggestions, id: \.self) { suggestion in
+                ForEach(Array(suggestions.enumerated()), id: \.element) { index, suggestion in
                     SearchSuggestionRow(
                         suggestion: suggestion,
+                        isSelected: index == selectedSuggestionIndex,
                         onSelect: { onSelectSuggestion(suggestion) }
                     )
                 }
@@ -3578,6 +3748,7 @@ private struct SearchAssistPanel: View {
 
 private struct SearchSuggestionRow: View {
     let suggestion: String
+    let isSelected: Bool
     let onSelect: () -> Void
 
     @State private var isHovered = false
@@ -3587,8 +3758,8 @@ private struct SearchSuggestionRow: View {
             HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(isHovered ? .primary : .secondary)
-                    .scaleEffect(isHovered ? 1.06 : 1)
+                    .foregroundStyle(isHovered || isSelected ? .primary : .secondary)
+                    .scaleEffect(isHovered || isSelected ? 1.06 : 1)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(suggestion)
                         .font(.body.weight(.semibold))
@@ -3600,10 +3771,10 @@ private struct SearchSuggestionRow: View {
             .padding(.vertical, 11)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(isHovered ? Color.white.opacity(0.08) : .clear)
+                    .fill(isHovered || isSelected ? Color.white.opacity(0.08) : .clear)
             )
-            .offset(x: isHovered ? 3 : 0)
-            .scaleEffect(isHovered ? 1.008 : 1)
+            .offset(x: isHovered || isSelected ? 3 : 0)
+            .scaleEffect(isHovered || isSelected ? 1.008 : 1)
         }
         .buttonStyle(.plain)
         .contentShape(RoundedRectangle(cornerRadius: 16))

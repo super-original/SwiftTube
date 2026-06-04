@@ -5996,7 +5996,7 @@ private func probeBrowserAccount(_ browser: BrowserLoginOption) async -> Browser
         let material = try await authManager.probeMaterial(for: browser)
         _ = await authManager.activateProbeMaterial(material)
         let api = YouTubeAPI(authManager: authManager)
-        let profile = await signedInAccountProfile(using: api)
+        let profile = await signedInAccountProfile(using: api, allowBrowseFallback: false)
         try? FileManager.default.removeItem(at: material.cookieFileURL)
 
         let displayName = profile.displayName?.nonEmptyTrimmed
@@ -6058,14 +6058,14 @@ private func browserAccountGroupingKey(for probe: BrowserAccountProbe) -> String
     return rawKey.lowercased()
 }
 
-private func signedInAccountProfile(using api: YouTubeAPI) async -> SignedInAccountProfile {
+private func signedInAccountProfile(using api: YouTubeAPI, allowBrowseFallback: Bool = true) async -> SignedInAccountProfile {
     var profile = SignedInAccountProfile()
 
     if let accountMenu = try? await api.accountMenu(authenticated: true) {
         profile.merge(extractSignedInAccountProfile(from: accountMenu))
     }
 
-    if profile.avatarURL == nil || profile.email == nil || profile.displayName == nil {
+    if allowBrowseFallback, profile.avatarURL == nil || profile.email == nil || profile.displayName == nil {
         if let payload = try? await api.browse(browseID: "FEwhat_to_watch", authenticated: true) {
             profile.merge(extractSignedInAccountProfile(from: payload))
         }

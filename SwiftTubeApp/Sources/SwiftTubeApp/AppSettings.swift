@@ -621,6 +621,54 @@ enum NotificationPlacement: String, CaseIterable, Identifiable {
     }
 }
 
+enum TimedDebugNotification: String, CaseIterable, Identifiable {
+    case recommendations
+    case history
+    case search
+    case watchPage
+    case comments
+    case nextUp
+    case playbackStartup
+    case qualitySwitch
+    case playlists
+    case channel
+    case accountScan
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .recommendations: return "Recommendations"
+        case .history: return "History"
+        case .search: return "Search"
+        case .watchPage: return "Watch page"
+        case .comments: return "Comments"
+        case .nextUp: return "Next up"
+        case .playbackStartup: return "Playback start"
+        case .qualitySwitch: return "Quality switch"
+        case .playlists: return "Playlists"
+        case .channel: return "Channels"
+        case .accountScan: return "Account scan"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .recommendations: return "house"
+        case .history: return "clock.arrow.trianglehead.counterclockwise.rotate.90"
+        case .search: return "magnifyingglass"
+        case .watchPage: return "play.rectangle"
+        case .comments: return "text.bubble"
+        case .nextUp: return "list.bullet.rectangle"
+        case .playbackStartup: return "play.fill"
+        case .qualitySwitch: return "slider.horizontal.3"
+        case .playlists: return "music.note.list"
+        case .channel: return "person.crop.rectangle.stack"
+        case .accountScan: return "person.crop.circle.badge.magnifyingglass"
+        }
+    }
+}
+
 enum BrowseVideoGridPreset: String, CaseIterable, Identifiable {
     case compact
     case standard
@@ -684,9 +732,12 @@ final class AppSettings: ObservableObject {
     private let sidebarPlaylistOrderKey = "sidebarPlaylistOrder"
     private let hiddenSidebarPlaylistIDsKey = "hiddenSidebarPlaylistIDs"
     private let keyBindingsKey = "playerKeyBindings"
+    private let autoHideSidebarOnPlaybackKey = "autoHideSidebarOnPlayback"
+    private let showSidebarOnHomeKey = "showSidebarOnHome"
     private let notificationDisplayModeKey = "notificationDisplayMode"
     private let notificationPlacementKey = "notificationPlacement"
     private let notificationAutoHideDelayKey = "notificationAutoHideDelay"
+    private let timedDebugNotificationsKey = "timedDebugNotifications"
     private let browseVideoGridPresetKey = "browseVideoGridPreset"
     private let browseVideoCardWidthKey = "browseVideoCardWidth"
     private let appearanceModeMigrationKey = "appearanceModeMigration0130"
@@ -753,6 +804,14 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(Array(hiddenSidebarPlaylistIDs), forKey: hiddenSidebarPlaylistIDsKey) }
     }
 
+    @Published var autoHideSidebarOnPlayback: Bool {
+        didSet { defaults.set(autoHideSidebarOnPlayback, forKey: autoHideSidebarOnPlaybackKey) }
+    }
+
+    @Published var showSidebarOnHome: Bool {
+        didSet { defaults.set(showSidebarOnHome, forKey: showSidebarOnHomeKey) }
+    }
+
     @Published var notificationDisplayMode: NotificationDisplayMode {
         didSet { defaults.set(notificationDisplayMode.rawValue, forKey: notificationDisplayModeKey) }
     }
@@ -763,6 +822,10 @@ final class AppSettings: ObservableObject {
 
     @Published var notificationAutoHideDelay: Double {
         didSet { defaults.set(notificationAutoHideDelay, forKey: notificationAutoHideDelayKey) }
+    }
+
+    @Published var enabledTimedDebugNotifications: Set<String> {
+        didSet { defaults.set(Array(enabledTimedDebugNotifications), forKey: timedDebugNotificationsKey) }
     }
 
     @Published var browseVideoGridPreset: BrowseVideoGridPreset {
@@ -872,6 +935,12 @@ final class AppSettings: ObservableObject {
         self.hiddenSidebarItems = Set((defaults.array(forKey: sidebarHiddenKey) as? [String]) ?? [])
         self.sidebarPlaylistOrder = (defaults.array(forKey: sidebarPlaylistOrderKey) as? [String]) ?? []
         self.hiddenSidebarPlaylistIDs = Set((defaults.array(forKey: hiddenSidebarPlaylistIDsKey) as? [String]) ?? [])
+        self.autoHideSidebarOnPlayback = defaults.object(forKey: autoHideSidebarOnPlaybackKey) == nil
+            ? true
+            : defaults.bool(forKey: autoHideSidebarOnPlaybackKey)
+        self.showSidebarOnHome = defaults.object(forKey: showSidebarOnHomeKey) == nil
+            ? true
+            : defaults.bool(forKey: showSidebarOnHomeKey)
         self.notificationDisplayMode = NotificationDisplayMode(
             rawValue: defaults.string(forKey: notificationDisplayModeKey) ?? ""
         ) ?? .errorsOnly
@@ -883,6 +952,7 @@ final class AppSettings: ObservableObject {
         self.notificationAutoHideDelay = Self.notificationAutoHideDelayOptions.contains(storedNotificationDelay)
             ? storedNotificationDelay
             : 4
+        self.enabledTimedDebugNotifications = Set((defaults.array(forKey: timedDebugNotificationsKey) as? [String]) ?? [])
 
         if let storedGridPreset = BrowseVideoGridPreset(rawValue: defaults.string(forKey: browseVideoGridPresetKey) ?? "") {
             self.browseVideoGridPreset = storedGridPreset
@@ -991,6 +1061,18 @@ final class AppSettings: ObservableObject {
             return true
         case .none:
             return false
+        }
+    }
+
+    func isTimedDebugNotificationEnabled(_ category: TimedDebugNotification) -> Bool {
+        enabledTimedDebugNotifications.contains(category.rawValue)
+    }
+
+    func setTimedDebugNotification(_ category: TimedDebugNotification, enabled: Bool) {
+        if enabled {
+            enabledTimedDebugNotifications.insert(category.rawValue)
+        } else {
+            enabledTimedDebugNotifications.remove(category.rawValue)
         }
     }
 

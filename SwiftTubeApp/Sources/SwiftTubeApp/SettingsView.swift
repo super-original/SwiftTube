@@ -2,9 +2,12 @@ import AppKit
 import SwiftUI
 
 private enum SettingsPane: String, CaseIterable, Identifiable {
+    case general
     case appearance
+    case themes
     case sidebar
     case notifications
+    case extractor
     case advanced
     case playback
     case controls
@@ -14,7 +17,11 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     static var appSection: [SettingsPane] {
-        [.appearance, .sidebar, .notifications, .advanced]
+        [.general, .appearance, .themes, .sidebar, .notifications]
+    }
+
+    static var toolsSection: [SettingsPane] {
+        [.extractor, .advanced]
     }
 
     static var playbackSection: [SettingsPane] {
@@ -27,9 +34,12 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .general: return "General"
         case .appearance: return "Appearance"
+        case .themes: return "Themes"
         case .sidebar: return "Sidebar"
         case .notifications: return "Notifications"
+        case .extractor: return "YouTube Extractor"
         case .advanced: return "Advanced"
         case .playback: return "Playback"
         case .controls: return "Controls"
@@ -40,9 +50,12 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .general: return "gearshape"
         case .appearance: return "circle.lefthalf.filled"
+        case .themes: return "paintpalette"
         case .sidebar: return "sidebar.left"
         case .notifications: return "bell.badge"
+        case .extractor: return "shippingbox"
         case .advanced: return "wrench.and.screwdriver"
         case .playback: return "play.circle"
         case .controls: return "keyboard"
@@ -54,7 +67,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var selection: SettingsPane = .appearance
+    @State private var selection: SettingsPane = .general
     @Namespace private var settingsScrollTop
 
     var body: some View {
@@ -113,6 +126,14 @@ struct SettingsView: View {
                 }
                 .collapsible(false)
 
+                Section("Tools") {
+                    ForEach(SettingsPane.toolsSection) { pane in
+                        Label(pane.title, systemImage: pane.systemImage)
+                            .tag(pane)
+                    }
+                }
+                .collapsible(false)
+
                 Section("About") {
                     ForEach(SettingsPane.aboutSection) { pane in
                         Label(pane.title, systemImage: pane.systemImage)
@@ -140,12 +161,18 @@ struct SettingsView: View {
                         .id(settingsScrollTop)
 
                     switch selection {
+                    case .general:
+                        GeneralPane()
                     case .appearance:
                         AppearancePane()
+                    case .themes:
+                        ThemesPane()
                     case .sidebar:
                         SidebarPane()
                     case .notifications:
                         NotificationsPane()
+                    case .extractor:
+                        ExtractorPane()
                     case .advanced:
                         AdvancedPane()
                     case .playback:
@@ -169,6 +196,35 @@ struct SettingsView: View {
     }
 }
 
+private struct GeneralPane: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsHeader(
+                title: "General",
+                subtitle: "Navigation and startup behavior."
+            )
+
+            SettingsCard(title: nil, icon: nil) {
+                VStack(spacing: 18) {
+                    NativeToggleRow(
+                        title: "Hide sidebar on video pages",
+                        isOn: $settings.autoHideSidebarOnPlayback
+                    )
+
+                    SettingsDivider()
+
+                    NativeToggleRow(
+                        title: "Show sidebar on Home",
+                        isOn: $settings.showSidebarOnHome
+                    )
+                }
+            }
+        }
+    }
+}
+
 private struct AppearancePane: View {
     @ObservedObject private var settings = AppSettings.shared
 
@@ -176,16 +232,8 @@ private struct AppearancePane: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
                 title: "Appearance",
-                subtitle: "Theme and browse layout."
+                subtitle: "Browse layout."
             )
-
-            SettingsCard(title: "Default Themes", icon: "circle.lefthalf.filled") {
-                ThemeGroup(themes: AppAppearanceMode.defaultThemes)
-            }
-
-            SettingsCard(title: "Colored Themes", icon: "paintpalette") {
-                ThemeGroup(themes: AppAppearanceMode.coloredThemes)
-            }
 
             SettingsCard(title: "Video Grid", icon: "rectangle.grid.2x2") {
                 VStack(alignment: .leading, spacing: 14) {
@@ -205,6 +253,25 @@ private struct AppearancePane: View {
                     }
                     .pickerStyle(.segmented)
                 }
+            }
+        }
+    }
+}
+
+private struct ThemesPane: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsHeader(
+                title: "Themes",
+                subtitle: "Color presets."
+            )
+
+            SettingsCard(title: "Default Themes", icon: "circle.lefthalf.filled") {
+                ThemeGroup(themes: AppAppearanceMode.defaultThemes)
+            }
+
+            SettingsCard(title: "Colored Themes", icon: "paintpalette") {
+                ThemeGroup(themes: AppAppearanceMode.coloredThemes)
             }
         }
     }
@@ -419,13 +486,31 @@ private struct NotificationsPane: View {
                     .labelsHidden()
                 }
             }
+
+            SettingsCard(title: "Debug Timings", icon: "timer") {
+                VStack(spacing: 0) {
+                    ForEach(Array(TimedDebugNotification.allCases.enumerated()), id: \.element.id) { index, category in
+                        NativeToggleRow(
+                            title: category.title,
+                            isOn: Binding(
+                                get: { settings.isTimedDebugNotificationEnabled(category) },
+                                set: { settings.setTimedDebugNotification(category, enabled: $0) }
+                            )
+                        )
+
+                        if index < TimedDebugNotification.allCases.count - 1 {
+                            SettingsDivider()
+                                .padding(.vertical, 14)
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
-private struct AdvancedPane: View {
+private struct ExtractorPane: View {
     @ObservedObject private var settings = AppSettings.shared
-    @ObservedObject private var mutationCenter = AppMutationCenter.shared
     @State private var dependencySnapshot = DependencyDetectionSnapshot.empty
     @State private var isInstallingYTDLP = false
     @State private var dependencyError: String?
@@ -433,19 +518,15 @@ private struct AdvancedPane: View {
     @State private var isRunningExtractorSpeedTest = false
     @State private var extractorSpeedResults: [ExtractorSpeedTestResult] = []
     @State private var extractorSpeedError: String?
-    @State private var customTitle = "Custom notification"
-    @State private var customMessage = "This is how your custom toast will look."
-    @State private var customSymbol = "wand.and.stars"
-    @State private var customColor = Color(red: 0.49, green: 0.75, blue: 1.0)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
-                title: "Advanced",
-                subtitle: "Testing and reset options."
+                title: "YouTube Extractor",
+                subtitle: "Playback extraction and speed tests."
             )
 
-            SettingsCard(title: "Dependencies", icon: "shippingbox") {
+            SettingsCard(title: nil, icon: nil) {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("YouTube extractor")
@@ -475,39 +556,6 @@ private struct AdvancedPane: View {
                             if let path = chooseDependencyPath(allowsDirectories: false) {
                                 settings.ytDLPCustomPath = path
                                 settings.ytDLPDependencySource = .custom
-                            }
-                        }
-                    }
-
-                    SettingsDivider()
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("MPVKit")
-                            .font(.headline)
-
-                        VStack(spacing: 8) {
-                            ForEach(MPVKitDependencySource.allCases) { source in
-                                SettingsDependencyChoice(
-                                    title: source.title,
-                                    value: mpvStatus(for: source),
-                                    isSelected: settings.mpvKitDependencySource == source,
-                                    isEnabled: mpvEnabled(for: source)
-                                ) {
-                                    settings.mpvKitDependencySource = source
-                                }
-                            }
-                        }
-                    }
-
-                    HStack(spacing: 10) {
-                        Button("Use bundled MPVKit") {
-                            settings.mpvKitDependencySource = .provisioned
-                        }
-
-                        Button("Choose MPVKit") {
-                            if let path = chooseDependencyPath(allowsDirectories: true) {
-                                settings.mpvKitCustomPath = path
-                                settings.mpvKitDependencySource = .custom
                             }
                         }
                     }
@@ -544,11 +592,7 @@ private struct AdvancedPane: View {
                     }
 
                     if isRunningExtractorSpeedTest {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Testing extractors...")
-                                .foregroundStyle(.secondary)
-                        }
+                        LoadingStatusView(text: "Testing extractors...", spinnerSize: 20)
                     }
 
                     if extractorSpeedResults.isEmpty == false {
@@ -565,68 +609,6 @@ private struct AdvancedPane: View {
                             .foregroundStyle(.red)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                }
-            }
-
-            SettingsCard(title: "Onboarding", icon: "sparkles.tv") {
-                HStack {
-                    Text("First-time setup")
-                        .font(.headline)
-                    Spacer()
-                    Button("Restart Onboarding") {
-                        settings.onboardingCompleted = false
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-            }
-
-            SettingsCard(title: "Notification Tester", icon: "sparkles") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Quick presets")
-                        .font(.headline)
-
-                    HStack(spacing: 10) {
-                        ForEach(NotificationPreviewPreset.allCases) { preset in
-                            Button(preset.title) {
-                                mutationCenter.showPreview(preset.notice)
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-
-                    Rectangle()
-                        .fill(settings.separatorColor)
-                        .frame(height: 1)
-
-                    Text("Custom test notification")
-                        .font(.headline)
-
-                    TextField("Title", text: $customTitle)
-                        .textFieldStyle(.roundedBorder)
-
-                    TextField("Message", text: $customMessage)
-                        .textFieldStyle(.roundedBorder)
-
-                    HStack(spacing: 12) {
-                        TextField("SF Symbol", text: $customSymbol)
-                            .textFieldStyle(.roundedBorder)
-
-                        ColorPicker("Color", selection: $customColor, supportsOpacity: false)
-                            .labelsHidden()
-                    }
-
-                    Button("Show Custom Notification") {
-                        mutationCenter.showPreview(
-                            MutationNotice(
-                                title: customTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Custom notification" : customTitle,
-                                message: customMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : customMessage,
-                                symbol: customSymbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "wand.and.stars" : customSymbol,
-                                accent: .blue,
-                                customColor: customColor.notificationColorValue
-                            )
-                        )
-                    }
-                    .buttonStyle(.borderedProminent)
                 }
             }
         }
@@ -655,28 +637,6 @@ private struct AdvancedPane: View {
             return dependencySnapshot.provisionedYTDLP != nil
         case .custom:
             return settings.ytDLPCustomPath.isEmpty == false
-        }
-    }
-
-    private func mpvStatus(for source: MPVKitDependencySource) -> String? {
-        switch source {
-        case .system:
-            return dependencySnapshot.systemMPVKit?.path ?? "Not found"
-        case .provisioned:
-            return "\(SwiftTubeDependencyManager.requiredMPVKitVersion) bundled"
-        case .custom:
-            return settings.mpvKitCustomPath.isEmpty ? "Not selected" : settings.mpvKitCustomPath
-        }
-    }
-
-    private func mpvEnabled(for source: MPVKitDependencySource) -> Bool {
-        switch source {
-        case .system:
-            return dependencySnapshot.systemMPVKit != nil
-        case .provisioned:
-            return true
-        case .custom:
-            return settings.mpvKitCustomPath.isEmpty == false
         }
     }
 
@@ -764,6 +724,84 @@ private struct AdvancedPane: View {
         panel.canChooseDirectories = allowsDirectories
         panel.resolvesAliases = true
         return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+}
+
+private struct AdvancedPane: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var mutationCenter = AppMutationCenter.shared
+    @State private var customTitle = "Custom notification"
+    @State private var customMessage = "This is how your custom toast will look."
+    @State private var customSymbol = "wand.and.stars"
+    @State private var customColor = Color(red: 0.49, green: 0.75, blue: 1.0)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsHeader(
+                title: "Advanced",
+                subtitle: "Reset and notification testing."
+            )
+
+            SettingsCard(title: nil, icon: nil) {
+                HStack {
+                    Text("First-time setup")
+                        .font(.headline)
+                    Spacer()
+                    Button("Restart Onboarding") {
+                        settings.onboardingCompleted = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+
+            SettingsCard(title: "Notification Tester", icon: "sparkles") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Quick presets")
+                        .font(.headline)
+
+                    HStack(spacing: 10) {
+                        ForEach(NotificationPreviewPreset.allCases) { preset in
+                            Button(preset.title) {
+                                mutationCenter.showPreview(preset.notice)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+
+                    SettingsDivider()
+
+                    Text("Custom test notification")
+                        .font(.headline)
+
+                    TextField("Title", text: $customTitle)
+                        .textFieldStyle(.roundedBorder)
+
+                    TextField("Message", text: $customMessage)
+                        .textFieldStyle(.roundedBorder)
+
+                    HStack(spacing: 12) {
+                        TextField("SF Symbol", text: $customSymbol)
+                            .textFieldStyle(.roundedBorder)
+
+                        ColorPicker("Color", selection: $customColor, supportsOpacity: false)
+                            .labelsHidden()
+                    }
+
+                    Button("Show Custom Notification") {
+                        mutationCenter.showPreview(
+                            MutationNotice(
+                                title: customTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Custom notification" : customTitle,
+                                message: customMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : customMessage,
+                                symbol: customSymbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "wand.and.stars" : customSymbol,
+                                accent: .blue,
+                                customColor: customColor.notificationColorValue
+                            )
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
     }
 }
 
@@ -872,7 +910,7 @@ private struct PlaybackPane: View {
 
             }
 
-            SettingsCard(title: "Player Controls", icon: "slider.horizontal.below.rectangle") {
+            SettingsCard(title: nil, icon: nil) {
                 NativePickerRow(
                     title: "Control layout"
                 ) {
@@ -885,7 +923,7 @@ private struct PlaybackPane: View {
                 }
             }
 
-            SettingsCard(title: "Privacy", icon: "lock") {
+            SettingsCard(title: nil, icon: nil) {
                 NativeToggleRow(
                     title: "Send watch progress to YouTube",
                     detail: "Turn this off to keep watch history local. YouTube recommendations will not update from SwiftTube views.",
@@ -912,7 +950,7 @@ private struct SponsorBlockPane: View {
                 subtitle: "Global toggle and category behavior."
             )
 
-            SettingsCard(title: "Global", icon: "switch.2") {
+            SettingsCard(title: nil, icon: nil) {
                 NativeToggleRow(
                     title: "Enable SponsorBlock",
                     isOn: $settings.sponsorBlockEnabled
@@ -1279,11 +1317,11 @@ private struct ChangelogRelease: Identifiable {
 
 private struct SettingsCard<Content: View>: View {
     @ObservedObject private var settings = AppSettings.shared
-    let title: String
-    let icon: String
+    let title: String?
+    let icon: String?
     @ViewBuilder let content: Content
 
-    init(title: String, icon: String, @ViewBuilder content: () -> Content) {
+    init(title: String?, icon: String?, @ViewBuilder content: () -> Content) {
         self.title = title
         self.icon = icon
         self.content = content()
@@ -1293,8 +1331,10 @@ private struct SettingsCard<Content: View>: View {
         let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
 
         VStack(alignment: .leading, spacing: 18) {
-            Label(title, systemImage: icon)
-                .font(.title3.weight(.bold))
+            if let title, let icon {
+                Label(title, systemImage: icon)
+                    .font(.title3.weight(.bold))
+            }
             content
         }
         .padding(20)

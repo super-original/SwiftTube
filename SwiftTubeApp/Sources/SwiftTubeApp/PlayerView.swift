@@ -872,11 +872,7 @@ private extension PlayerScreen {
     var playlistPopoverContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             if viewModel.isLoadingPlaylistOptions {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("Loading playlists...")
-                        .foregroundStyle(.secondary)
-                }
+                LoadingStatusView(text: "Loading playlists...", spinnerSize: 18)
                 .padding(12)
             } else if viewModel.playlistOptions.isEmpty {
                 Text("No playlists available")
@@ -1010,11 +1006,7 @@ private extension PlayerScreen {
         DetailCard(title: commentHeaderText) {
             LazyVStack(alignment: .leading, spacing: 18) {
                 if viewModel.isLoadingComments && comments.isEmpty {
-                    HStack(spacing: 12) {
-                        ProgressView()
-                        Text("Loading comments...")
-                            .foregroundStyle(.secondary)
-                    }
+                    LoadingStatusView(text: "Loading comments...", spinnerSize: 20)
                 } else if comments.isEmpty {
                     Text("Comments aren’t available for this video right now.")
                         .foregroundStyle(.secondary)
@@ -1030,9 +1022,8 @@ private extension PlayerScreen {
                     }
 
                     if viewModel.isLoadingComments {
-                        ProgressView("Loading more comments...")
+                        LoadingMoreIndicator(text: "Loading more comments...")
                             .padding(.top, 4)
-                            .frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -1559,12 +1550,13 @@ private extension PlayerScreen {
                         .onAppear {
                             viewModel.loadMoreRecommendationsIfNeeded(currentVideo: relatedVideo)
                         }
+                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
+                    .animation(.easeOut(duration: 0.16), value: recommendations)
 
                     if viewModel.isLoadingRecommendations {
-                        ProgressView("Loading more videos...")
+                        LoadingMoreIndicator(text: "Loading more videos...")
                             .padding(.top, 12)
-                            .frame(maxWidth: .infinity)
                     }
 
                     Color.clear
@@ -4031,43 +4023,62 @@ private struct ScrubPreviewPositioned: View {
 
     var body: some View {
         if let fraction = coordinator.scrubPreviewFraction,
-           let spec = coordinator.storyboard,
            coordinator.hasSeekableTimeline {
             let hoverTime = coordinator.scrubberTime(forFraction: fraction)
-            let storyboardTime = coordinator.storyboardTime(for: hoverTime, spec: spec)
-            if spec.tileInfo(at: storyboardTime) != nil {
-                // Tile display dimensions (independent of raw storyboard pixel size).
-                let dispW = previewDisplayWidth
-                let dispH = spec.tileWidth > 0
-                    ? previewDisplayWidth * CGFloat(spec.tileHeight) / CGFloat(spec.tileWidth)
-                    : previewDisplayWidth * 9 / 16
+            let categoryText = coordinator.sponsorSegment(at: hoverTime)?.categoryShortTitle
+            let edgePad = CGFloat(edgeToEdge ? 20 : 18) + sidePad
+            let statusWidth = coordinator.isLivePlayback ? liveIndicatorWidth : timeLabelWidth
+            let innerOffset: CGFloat = 14 + statusWidth + 12 + 10
+            let trackLeft = edgePad + innerOffset
+            let trackRight = stageSize.width - edgePad - innerOffset
+            let thumbX = trackLeft + fraction * max(0, trackRight - trackLeft)
+            let bottomPad = CGFloat(edgeToEdge ? 20 : 18)
 
-                // Horizontal centre of the hovered position on stage.
-                // Layout: edgePad | controlBarPad(14) | timeLabel(54) | spacing(12) | [track] | …
-                let edgePad = CGFloat(edgeToEdge ? 20 : 18) + sidePad
-                let statusWidth = coordinator.isLivePlayback ? liveIndicatorWidth : timeLabelWidth
-                let innerOffset: CGFloat = 14 + statusWidth + 12 + 10
-                let trackLeft = edgePad + innerOffset
-                let trackRight = stageSize.width - edgePad - innerOffset
-                let thumbX = trackLeft + fraction * max(0, trackRight - trackLeft)
-                let clampedX = min(max(thumbX, dispW / 2 + 8), stageSize.width - dispW / 2 - 8)
+            if let spec = coordinator.storyboard {
+                let storyboardTime = coordinator.storyboardTime(for: hoverTime, spec: spec)
+                if spec.tileInfo(at: storyboardTime) != nil {
+                    let dispW = previewDisplayWidth
+                    let dispH = spec.tileWidth > 0
+                        ? previewDisplayWidth * CGFloat(spec.tileHeight) / CGFloat(spec.tileWidth)
+                        : previewDisplayWidth * 9 / 16
+                    let clampedX = min(max(thumbX, dispW / 2 + 8), stageSize.width - dispW / 2 - 8)
+                    let popupY = stageSize.height - bottomPad - scrubberRowHeight - 10 - dispH / 2
 
-                // Vertical: just above the scrubber row.
-                let bottomPad = CGFloat(edgeToEdge ? 20 : 18)
-                let popupY = stageSize.height - bottomPad - scrubberRowHeight - 10 - dispH / 2
-
-                ScrubPreviewBubble(
-                    spec: spec,
-                    time: storyboardTime,
-                    displayWidth: dispW,
-                    displayHeight: dispH,
-                    timestampText: timestampText(for: hoverTime),
-                    categoryText: coordinator.sponsorSegment(at: hoverTime)?.categoryShortTitle
-                )
-                    .fixedSize()
-                    .position(x: clampedX, y: popupY)
+                    ScrubPreviewBubble(
+                        spec: spec,
+                        time: storyboardTime,
+                        displayWidth: dispW,
+                        displayHeight: dispH,
+                        timestampText: timestampText(for: hoverTime),
+                        categoryText: categoryText
+                    )
+                        .fixedSize()
+                        .position(x: clampedX, y: popupY)
+                } else {
+                    fallbackBubble(thumbX: thumbX, bottomPad: bottomPad, hoverTime: hoverTime, categoryText: categoryText)
+                }
+            } else {
+                fallbackBubble(thumbX: thumbX, bottomPad: bottomPad, hoverTime: hoverTime, categoryText: categoryText)
             }
         }
+    }
+
+    private func fallbackBubble(
+        thumbX: CGFloat,
+        bottomPad: CGFloat,
+        hoverTime: Double,
+        categoryText: String?
+    ) -> some View {
+        let bubbleWidth: CGFloat = categoryText == nil ? 72 : 126
+        let clampedX = min(max(thumbX, bubbleWidth / 2 + 8), stageSize.width - bubbleWidth / 2 - 8)
+        let popupY = stageSize.height - bottomPad - scrubberRowHeight - 22
+
+        return ScrubPreviewTimeBubble(
+            timestampText: timestampText(for: hoverTime),
+            categoryText: categoryText
+        )
+        .fixedSize()
+        .position(x: clampedX, y: popupY)
     }
 
     private func timestampText(for hoverTime: Double) -> String {
@@ -4112,7 +4123,8 @@ struct ScrubPreviewBubble: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(Capsule().fill(Color.black.opacity(0.72)))
+                .glassEffect(.regular, in: Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.7))
 
             if let categoryText {
                 Text(categoryText)
@@ -4120,10 +4132,36 @@ struct ScrubPreviewBubble: View {
                     .foregroundStyle(.white.opacity(0.92))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.72)))
+                    .glassEffect(.regular, in: Capsule())
+                    .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.7))
             }
         }
         .shadow(color: .black.opacity(0.55), radius: 10, y: 4)
+    }
+}
+
+private struct ScrubPreviewTimeBubble: View {
+    let timestampText: String
+    let categoryText: String?
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(timestampText)
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+
+            if let categoryText {
+                Text(categoryText)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .glassEffect(.regular, in: Capsule())
+        .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.7))
+        .shadow(color: .black.opacity(0.38), radius: 10, y: 4)
     }
 }
 

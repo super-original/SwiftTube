@@ -8,6 +8,14 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.15
+
+- Sped up browser account discovery by trimming scanner-only profile fallback work and shortening slow browser probe timeouts, with a shimmering account-scan status row that shows the browsers being scanned.
+- Reorganized Settings into General, Appearance, Themes, Notifications, YouTube Extractor, Advanced, Playback, Controls, SponsorBlock, and Changelog panes, removed the MPVKit selector, and trimmed redundant one-option card headers.
+- Added per-feature debug timing notifications for recommendations, history, search, account scanning, watch-page loading, comments, next-up pagination, playback startup, quality switching, playlists, and channel loads.
+- Added Command-R refresh, Command-number sidebar navigation, logo-click Home refresh, Escape fullscreen exit, keyboard-navigable search suggestions, and fixed search assist clicks.
+- Replaced major pagination/loading spinners with custom shimmer loading states, added quick top-fade insert animations, fixed settings background dragging, and gave timeline hover timestamps a glass bubble with SponsorBlock category fallback.
+
 ## 0.15.14
 
 - Added real adaptive Auto quality for HLS master-manifest playback, using MPV track switching instead of direct URL replacement.

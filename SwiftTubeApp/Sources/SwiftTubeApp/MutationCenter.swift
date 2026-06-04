@@ -195,6 +195,20 @@ final class AppMutationCenter: ObservableObject {
         present(notice, bypassVisibility: true)
     }
 
+    func showTimedDebug(_ category: TimedDebugNotification, title: String, elapsedMilliseconds: Int) {
+        let settings = AppSettings.shared
+        guard settings.isTimedDebugNotificationEnabled(category) else { return }
+        present(
+            MutationNotice(
+                title: "\(title) \(elapsedMilliseconds)ms",
+                message: nil,
+                symbol: category.symbol,
+                accent: .blue
+            ),
+            bypassVisibility: true
+        )
+    }
+
     private func enqueue<Output: Sendable>(
         key: String,
         successNotice: MutationNotice?,

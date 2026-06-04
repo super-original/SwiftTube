@@ -49,17 +49,6 @@ struct MPVLibrary: @unchecked Sendable {
     }
 
     static func load(settings: AppSettings = .shared) -> MPVLibrary {
-        do {
-            if let path = try SwiftTubeDependencyManager.resolvedMPVLibraryPath(
-                source: settings.mpvKitDependencySource,
-                customPath: settings.mpvKitCustomPath
-            ) {
-                return try loadDynamic(path: path)
-            }
-        } catch {
-            PlaybackDebugLogger.log("mpv dependency fallback error=\(error.localizedDescription)")
-        }
-
         return linked
     }
 

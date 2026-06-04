@@ -240,6 +240,7 @@ final class AuthSessionModel: ObservableObject {
     @Published private(set) var status: AuthStatusResponse = .signedOut
     @Published private(set) var isWorking = false
     @Published private(set) var isDiscoveringAccounts = false
+    @Published private(set) var accountScanningBrowsers: [BrowserLoginOption] = []
     @Published private(set) var discoveredAccounts: [BrowserAccountDiscoveryResponse] = []
     @Published private(set) var errorMessage: String? = nil
     @Published var isSheetPresented = false
@@ -286,14 +287,24 @@ final class AuthSessionModel: ObservableObject {
 
     func discoverAccounts() async {
         guard isDiscoveringAccounts == false else { return }
+        accountScanningBrowsers = BrowserLoginOption.installedOptions.filter { $0.cookieSource != nil }
         isDiscoveringAccounts = true
         errorMessage = nil
-        defer { isDiscoveringAccounts = false }
+        let startDate = Date()
+        defer {
+            isDiscoveringAccounts = false
+            accountScanningBrowsers = []
+        }
 
         do {
             let scannedAccounts = try await BackendClient.shared.discoverBrowserAccounts()
             mergeDiscoveredAccounts([status.discoveryAccount].compactMap { $0 } + scannedAccounts)
             errorMessage = nil
+            AppMutationCenter.shared.showTimedDebug(
+                .accountScan,
+                title: "Scanned accounts in",
+                elapsedMilliseconds: Int(Date().timeIntervalSince(startDate) * 1000)
+            )
         } catch {
             errorMessage = error.localizedDescription
         }

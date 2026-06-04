@@ -4,7 +4,6 @@ import SwiftUI
 private enum OnboardingStage: String, CaseIterable, Identifiable, Comparable {
     case welcome = "Welcome"
     case ytDLP = "yt-dlp"
-    case mpvKit = "MPVKit"
     case theme = "Theme"
     case sponsorBlock = "SponsorBlock"
     case controls = "Controls"
@@ -116,11 +115,6 @@ struct OnboardingView: View {
                 selection: $settings.ytDLPDependencySource,
                 customPath: $settings.ytDLPCustomPath
             )
-        case .mpvKit:
-            MPVKitOnboardingStage(
-                selection: $settings.mpvKitDependencySource,
-                customPath: $settings.mpvKitCustomPath
-            )
         case .theme:
             ThemeStage(selection: $settings.appearanceMode)
         case .sponsorBlock:
@@ -134,6 +128,7 @@ struct OnboardingView: View {
                 status: authSession.status,
                 isWorking: authSession.isWorking,
                 isDiscoveringAccounts: authSession.isDiscoveringAccounts,
+                scanningBrowsers: authSession.accountScanningBrowsers,
                 discoveredAccounts: authSession.discoveredAccounts,
                 errorMessage: authSession.errorMessage,
                 discover: {
@@ -740,6 +735,7 @@ private struct AccountStage: View {
     let status: AuthStatusResponse
     let isWorking: Bool
     let isDiscoveringAccounts: Bool
+    let scanningBrowsers: [BrowserLoginOption]
     let discoveredAccounts: [BrowserAccountDiscoveryResponse]
     let errorMessage: String?
     let discover: () async -> Void
@@ -757,12 +753,7 @@ private struct AccountStage: View {
             } else {
                 VStack(spacing: 14) {
                     if isDiscoveringAccounts {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Scanning browsers...")
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        LoadingStatusView(text: "Looking for accounts...", browsers: scanningBrowsers)
                     } else if discoveredAccounts.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("No signed-in YouTube accounts found")

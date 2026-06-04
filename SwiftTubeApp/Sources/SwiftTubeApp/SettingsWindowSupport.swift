@@ -13,7 +13,7 @@ enum SettingsWindowSupport {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.tabbingMode = .disallowed
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.minSize = minSize
         window.contentMinSize = minSize
         window.maxSize = maxSize

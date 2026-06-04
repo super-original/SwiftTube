@@ -205,7 +205,7 @@ actor YouTubeAuthManager {
         let probesDirectory = supportDirectoryURL.appendingPathComponent("CookieProbes", isDirectory: true)
         try FileManager.default.createDirectory(at: probesDirectory, withIntermediateDirectories: true)
         let probeCookieURL = probesDirectory.appendingPathComponent("\(browser.rawValue)-\(UUID().uuidString).txt")
-        try await YTDLPTool.exportCookies(from: cookieSource, to: probeCookieURL, timeout: 8)
+        try await YTDLPTool.exportCookies(from: cookieSource, to: probeCookieURL, timeout: 4)
 
         let config = AuthSessionConfig(
             browser: browser.rawValue,

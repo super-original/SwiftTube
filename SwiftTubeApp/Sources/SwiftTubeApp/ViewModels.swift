@@ -67,6 +67,7 @@ final class HomeViewModel: ObservableObject {
 
     private func fetchRecommendations(reset: Bool) async {
         isLoading = true
+        let startDate = Date()
         defer { isLoading = false }
 
         if reset {
@@ -103,6 +104,11 @@ final class HomeViewModel: ObservableObject {
             }
 
             errorMessage = nil
+            AppMutationCenter.shared.showTimedDebug(
+                .recommendations,
+                title: reset ? "Loaded recommendations in" : "Loaded more recommendations in",
+                elapsedMilliseconds: Int(Date().timeIntervalSince(startDate) * 1000)
+            )
         } catch {
             errorMessage = "Failed to load recommendations."
         }
@@ -191,6 +197,7 @@ final class WatchHistoryViewModel: ObservableObject {
     private func fetch(reset: Bool, queryOverride: String? = nil) async {
         let requestQuery = (queryOverride ?? trimmedSearchQuery).trimmingCharacters(in: .whitespacesAndNewlines)
         isLoading = true
+        let startDate = Date()
         defer { isLoading = false }
 
         if reset {
@@ -213,6 +220,11 @@ final class WatchHistoryViewModel: ObservableObject {
             continuation = response.continuation
             filteredItems = items
             errorMessage = nil
+            AppMutationCenter.shared.showTimedDebug(
+                .history,
+                title: reset ? "Loaded history in" : "Loaded more history in",
+                elapsedMilliseconds: Int(Date().timeIntervalSince(startDate) * 1000)
+            )
         } catch {
             guard requestQuery == trimmedSearchQuery else { return }
             errorMessage = error.localizedDescription
@@ -452,6 +464,7 @@ final class SearchViewModel: ObservableObject {
         errorMessage = nil
         suggestions = []
         linkPreview = nil
+        let startDate = Date()
 
         Task {
             defer { isSearching = false }
@@ -475,6 +488,11 @@ final class SearchViewModel: ObservableObject {
                     if !shouldAdvance {
                         continuation = response.continuation
                         results = mergedResults
+                        AppMutationCenter.shared.showTimedDebug(
+                            .search,
+                            title: reset ? "Loaded search in" : "Loaded more search in",
+                            elapsedMilliseconds: Int(Date().timeIntervalSince(startDate) * 1000)
+                        )
                         break
                     }
 
@@ -1561,6 +1579,7 @@ final class PlayerViewModel: ObservableObject {
 
     private func fetchPlayback() async {
         isLoading = true
+        let startDate = Date()
         errorMessage = nil
         playback = nil
         playbackLoadID = UUID()
@@ -1607,6 +1626,11 @@ final class PlayerViewModel: ObservableObject {
             startLiveChatLoadIfAvailable(for: playback)
             startTranscriptLoad(for: playback)
             loadPlaylistOptions(reportErrors: false)
+            mutationCenter.showTimedDebug(
+                .watchPage,
+                title: "Loaded watch page in",
+                elapsedMilliseconds: Int(Date().timeIntervalSince(startDate) * 1000)
+            )
         } catch {
             guard !Task.isCancelled else { return }
             playback = nil
@@ -1650,6 +1674,7 @@ final class PlayerViewModel: ObservableObject {
 
     private func fetchComments() async {
         isLoadingComments = true
+        let startDate = Date()
         defer { isLoadingComments = false }
 
         do {
@@ -1658,6 +1683,11 @@ final class PlayerViewModel: ObservableObject {
             comments = deduplicatedItems(response.comments, id: \.id)
             commentCountText = response.commentCountText ?? commentCountText
             commentsContinuation = response.continuation
+            mutationCenter.showTimedDebug(
+                .comments,
+                title: "Loaded comments in",
+                elapsedMilliseconds: Int(Date().timeIntervalSince(startDate) * 1000)
+            )
         } catch {
             guard !Task.isCancelled else { return }
         }
@@ -1677,6 +1707,7 @@ final class PlayerViewModel: ObservableObject {
     private func fetchMoreComments() async {
         guard let commentsContinuation else { return }
         isLoadingComments = true
+        let startDate = Date()
         defer { isLoadingComments = false }
 
         do {
@@ -1704,6 +1735,11 @@ final class PlayerViewModel: ObservableObject {
                 if !shouldAdvance {
                     comments = mergedComments
                     self.commentsContinuation = response.continuation
+                    mutationCenter.showTimedDebug(
+                        .comments,
+                        title: "Loaded more comments in",
+                        elapsedMilliseconds: Int(Date().timeIntervalSince(startDate) * 1000)
+                    )
                     break
                 }
 
@@ -1729,6 +1765,7 @@ final class PlayerViewModel: ObservableObject {
     private func fetchMoreRecommendations() async {
         guard let recommendationsContinuation else { return }
         isLoadingRecommendations = true
+        let startDate = Date()
         defer { isLoadingRecommendations = false }
 
         do {
@@ -1754,6 +1791,11 @@ final class PlayerViewModel: ObservableObject {
                     recommendations = mergedRecommendations
                     self.recommendationsContinuation = response.continuation
                     hydrateRecommendationIdentityIfNeeded()
+                    mutationCenter.showTimedDebug(
+                        .nextUp,
+                        title: "Loaded more next up in",
+                        elapsedMilliseconds: Int(Date().timeIntervalSince(startDate) * 1000)
+                    )
                     break
                 }
 

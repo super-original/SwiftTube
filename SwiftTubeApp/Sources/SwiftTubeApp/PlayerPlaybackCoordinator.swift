@@ -1428,6 +1428,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private func preparePlayback(_ playback: VideoPlayback) async {
         errorMessage = nil
+        let startDate = Date()
         isPreparingInitialPlayback = true
         pendingQualityOptionID = nil
         controlsVisible = true
@@ -1554,6 +1555,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             }
             loadSubtitleTracks(for: playback, engine: engine)
             startHideMonitorIfNeeded()
+            AppMutationCenter.shared.showTimedDebug(
+                .playbackStartup,
+                title: "Started playback in",
+                elapsedMilliseconds: Int(Date().timeIntervalSince(startDate) * 1000)
+            )
         } catch {
             if !Task.isCancelled {
                 PlaybackDebugLogger.log(
@@ -1576,6 +1582,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         previousSelectionID: String
     ) async {
         errorMessage = nil
+        let startDate = Date()
         sponsorSegments = playback.sponsorSegments
         PlaybackDebugLogger.log(
             "quality switch start option=\(debugDescription(for: option)) previous=\(previousSelectionID)"
@@ -1689,6 +1696,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             }
             PlaybackDebugLogger.log(
                 "quality switch success option=\(debugDescription(for: option)) duration=\(duration) currentTime=\(currentTime)"
+            )
+            AppMutationCenter.shared.showTimedDebug(
+                .qualitySwitch,
+                title: "Switched to \(option.title) in",
+                elapsedMilliseconds: Int(Date().timeIntervalSince(startDate) * 1000)
             )
         } catch {
             if !Task.isCancelled {
