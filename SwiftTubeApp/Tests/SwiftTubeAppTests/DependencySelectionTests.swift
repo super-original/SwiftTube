@@ -363,6 +363,95 @@ final class DependencySelectionTests: XCTestCase {
         XCTAssertFalse(options.contains { $0.title == "Auto" })
     }
 
+    func testQualityOptionsExposeAutoOnlyForMasterHLSManifest() async throws {
+        let manifest = stream(
+            url: "https://example.com/master.m3u8",
+            formatId: "hls-manifest",
+            headers: ["X-YouTube-Client-Name": "5"],
+            height: nil,
+            audioCodec: "mp4a.40.2",
+            videoCodec: "avc1.640028",
+            container: "m3u8",
+            hasAudio: true,
+            hasVideo: true,
+            streamKind: "manifest",
+            bitrate: nil
+        )
+        let variant = stream(
+            url: "https://example.com/1080.m3u8",
+            formatId: "hls-1080",
+            headers: ["X-YouTube-Client-Name": "5"],
+            height: 1080,
+            audioCodec: "mp4a.40.2",
+            videoCodec: "avc1.640028",
+            container: "m3u8",
+            hasAudio: true,
+            hasVideo: true,
+            streamKind: "manifest",
+            bitrate: 2_000_000
+        )
+        let testPlayback = playback(streams: [variant, manifest])
+        let options = await MainActor.run {
+            PlayerPlaybackCoordinator().debugQualityOptionsForTesting(playback: testPlayback)
+        }
+
+        XCTAssertEqual(options.first?.id, QualityOption.adaptiveID)
+        XCTAssertEqual(options.first?.title, "Auto")
+        XCTAssertTrue(options.first?.isAdaptive == true)
+        XCTAssertEqual(options.first?.playbackSelection.stream.url, manifest.url)
+    }
+
+    func testAdaptivePolicyDownshiftsOnLowBuffer() throws {
+        var policy = AdaptiveQualityPolicy()
+        let low = adaptiveRendition(id: 1, height: 360, bitrate: 800_000, selected: false)
+        let mid = adaptiveRendition(id: 2, height: 720, bitrate: 2_000_000, selected: true)
+        let high = adaptiveRendition(id: 3, height: 1080, bitrate: 4_500_000, selected: false)
+        let telemetry = adaptiveTelemetry(
+            renditions: [low, mid, high],
+            selectedID: mid.id,
+            rawInputRateBytesPerSecond: 250_000,
+            bufferAheadSeconds: 1.5
+        )
+
+        let decision = policy.evaluate(telemetry: telemetry, viewportHeight: 1080, now: 10)
+
+        XCTAssertEqual(decision?.rendition.id, low.id)
+        XCTAssertEqual(decision?.reason, .emergencyDownshift)
+    }
+
+    func testAdaptivePolicyUpshiftsAfterStableBufferAndThroughput() throws {
+        var policy = AdaptiveQualityPolicy()
+        let low = adaptiveRendition(id: 1, height: 360, bitrate: 800_000, selected: true)
+        let high = adaptiveRendition(id: 2, height: 720, bitrate: 2_000_000, selected: false)
+        let telemetry = adaptiveTelemetry(
+            renditions: [low, high],
+            selectedID: low.id,
+            rawInputRateBytesPerSecond: 500_000,
+            bufferAheadSeconds: 20
+        )
+
+        XCTAssertNil(policy.evaluate(telemetry: telemetry, viewportHeight: 720, now: 0))
+        let decision = policy.evaluate(telemetry: telemetry, viewportHeight: 720, now: 21)
+
+        XCTAssertEqual(decision?.rendition.id, high.id)
+        XCTAssertEqual(decision?.reason, .sustainedUpshift)
+    }
+
+    func testAdaptivePolicyRespectsViewportCap() throws {
+        var policy = AdaptiveQualityPolicy()
+        let low = adaptiveRendition(id: 1, height: 720, bitrate: 2_000_000, selected: true)
+        let high = adaptiveRendition(id: 2, height: 2160, bitrate: 14_000_000, selected: false)
+        let telemetry = adaptiveTelemetry(
+            renditions: [low, high],
+            selectedID: low.id,
+            rawInputRateBytesPerSecond: 5_000_000,
+            bufferAheadSeconds: 20
+        )
+
+        XCTAssertNil(policy.evaluate(telemetry: telemetry, viewportHeight: 720, now: 0))
+        XCTAssertNil(policy.evaluate(telemetry: telemetry, viewportHeight: 720, now: 21))
+    }
+
 
     func testManualQualityPrefersOriginalEnglishAudio() throws {
         let video = stream(
@@ -468,7 +557,7 @@ final class DependencySelectionTests: XCTestCase {
         let options = coordinator.debugQualityOptionsForTesting(playback: playback(streams: [iosVideo, iosAudio, hls]))
         let option = try XCTUnwrap(options.first { $0.title == "1080p" })
 
-        let selection = option.selection
+        let selection = option.playbackSelection
         XCTAssertEqual(selection.stream.url, iosVideo.url)
         XCTAssertEqual(selection.audioStream?.url, iosAudio.url)
     }
@@ -506,7 +595,8 @@ final class DependencySelectionTests: XCTestCase {
             let ytdlpElapsed = Date().timeIntervalSince(ytdlpStart)
 
             XCTAssertFalse(ytdlpPlayback.streams.isEmpty)
-            XCTAssertEqual(nativePlayback.streams.count, ytdlpPlayback.streams.count)
+            XCTAssertTrue(nativePlayback.streams.contains(where: isAdaptiveMasterManifest))
+            XCTAssertEqual(parityComparableStreams(from: nativePlayback).count, ytdlpPlayback.streams.count)
             timings["system"] = ytdlpElapsed
             streamCounts["system"] = ytdlpPlayback.streams.count
 
@@ -652,11 +742,11 @@ final class DependencySelectionTests: XCTestCase {
     }
 
     private func playableFormatIDs(from playback: VideoPlayback) -> [String] {
-        playback.streams.compactMap(\.formatId)
+        parityComparableStreams(from: playback).compactMap(\.formatId)
     }
 
     private func streamDescriptors(from playback: VideoPlayback) -> [String] {
-        playback.streams.map { stream in
+        parityComparableStreams(from: playback).map { stream in
             let formatID = stream.formatId ?? "-"
             let qualityLabel = stream.qualityLabel ?? "-"
             let width = stream.width.map(String.init) ?? "-"
@@ -683,6 +773,16 @@ final class DependencySelectionTests: XCTestCase {
                 audioDefault
             ].joined(separator: "|")
         }
+    }
+
+    private func parityComparableStreams(from playback: VideoPlayback) -> [StreamInfo] {
+        playback.streams.filter { isAdaptiveMasterManifest($0) == false }
+    }
+
+    private func isAdaptiveMasterManifest(_ stream: StreamInfo) -> Bool {
+        stream.formatId == "hls-manifest"
+            && stream.streamKind == "manifest"
+            && stream.container?.lowercased() == "m3u8"
     }
 
     private func rawYTDLPPlayableDescriptors(videoID: String, executablePath: String) throws -> [String] {
@@ -892,7 +992,8 @@ final class DependencySelectionTests: XCTestCase {
 
             let coordinator = PlayerPlaybackCoordinator()
             return coordinator.debugQualityOptionsForTesting(playback: playback).reduce(into: [String: String]()) { result, option in
-                result[option.title] = selectionKey(option.selection)
+                guard option.isAdaptive == false else { return }
+                result[option.title] = selectionKey(option.playbackSelection)
             }
         }
     }
@@ -1001,6 +1102,44 @@ final class DependencySelectionTests: XCTestCase {
             isUpcoming: false,
             liveWindowDurationSeconds: nil,
             liveChat: nil
+        )
+    }
+
+    private func adaptiveRendition(
+        id: Int64,
+        height: Int,
+        bitrate: Int,
+        selected: Bool
+    ) -> AdaptiveRendition {
+        AdaptiveRendition(
+            id: id,
+            width: nil,
+            height: height,
+            fps: nil,
+            bitrate: bitrate,
+            codec: "h264",
+            selected: selected
+        )
+    }
+
+    private func adaptiveTelemetry(
+        renditions: [AdaptiveRendition],
+        selectedID: Int64,
+        rawInputRateBytesPerSecond: Int64,
+        bufferAheadSeconds: Double,
+        pausedForCache: Bool = false,
+        underrun: Bool = false
+    ) -> AdaptivePlaybackTelemetry {
+        AdaptivePlaybackTelemetry(
+            renditions: renditions,
+            selectedRenditionID: selectedID,
+            rawInputRateBytesPerSecond: rawInputRateBytesPerSecond,
+            cacheDuration: bufferAheadSeconds,
+            cacheEnd: nil,
+            bufferAheadSeconds: bufferAheadSeconds,
+            isPausedForCache: pausedForCache,
+            cacheBufferingState: nil,
+            isUnderrun: underrun
         )
     }
 }

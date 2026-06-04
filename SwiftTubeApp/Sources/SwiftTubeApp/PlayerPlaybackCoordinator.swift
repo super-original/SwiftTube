@@ -7,23 +7,42 @@ struct ManualPlaybackSelection: Hashable, Sendable {
 }
 
 struct QualityOption: Identifiable, Hashable, Sendable {
+    static let adaptiveID = "quality-auto-adaptive"
+
+    enum Selection: Hashable, Sendable {
+        case adaptiveManifest(ManualPlaybackSelection)
+        case manual(ManualPlaybackSelection)
+    }
+
     let id: String
     let title: String
     let detail: String?
-    let selection: ManualPlaybackSelection
+    let selection: Selection
+
+    var playbackSelection: ManualPlaybackSelection {
+        switch selection {
+        case .adaptiveManifest(let selection), .manual(let selection):
+            return selection
+        }
+    }
+
+    var isAdaptive: Bool {
+        if case .adaptiveManifest = selection { return true }
+        return false
+    }
 }
 
 private extension QualityOption {
     var streamHeight: Int {
-        selection.stream.height ?? 0
+        playbackSelection.stream.height ?? 0
     }
 
     var streamFPS: Int {
-        selection.stream.fps ?? 0
+        playbackSelection.stream.fps ?? 0
     }
 
     var streamBitrate: Int {
-        selection.stream.bitrate ?? 0
+        playbackSelection.stream.bitrate ?? 0
     }
 }
 
@@ -64,6 +83,12 @@ enum ActionFeedback: Equatable {
 private struct PlaybackRestoreState: Sendable {
     let currentTime: Double
     let wasPlaying: Bool
+}
+
+private struct PlaybackPreparationCandidate: Sendable {
+    let selection: ManualPlaybackSelection
+    let mode: MPVPlaybackMode
+    let qualityOptionID: String?
 }
 
 private struct ManualQualityCandidate: Sendable {
@@ -303,6 +328,26 @@ private func manualQualityCandidate(
         ),
         bitrate: stream.bitrate ?? 0
     )
+}
+
+private func isAdaptiveManifestStream(_ stream: StreamInfo) -> Bool {
+    stream.streamKind == "manifest"
+        && stream.hasVideo
+        && stream.hasAudio
+        && stream.formatId == "hls-manifest"
+        && stream.container?.lowercased() == "m3u8"
+}
+
+private func adaptiveManifestSelection(for playback: VideoPlayback) -> ManualPlaybackSelection? {
+    let manifest = playback.streams
+        .filter(isAdaptiveManifestStream)
+        .sorted { lhs, rhs in
+            liveManifestStartupSortKey(for: rhs).lexicographicallyPrecedes(liveManifestStartupSortKey(for: lhs))
+        }
+        .first
+
+    guard let manifest else { return nil }
+    return ManualPlaybackSelection(stream: manifest, audioStream: nil)
 }
 
 private func preferredStartupMPVAudioStream(for playback: VideoPlayback) -> StreamInfo? {
@@ -556,6 +601,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var manualSkipSponsorSegment: SponsorBlockSegment? = nil
     @Published private(set) var liveSeekableRange: ClosedRange<Double>? = nil
     @Published private(set) var bufferedRanges: [ClosedRange<Double>] = []
+    @Published private(set) var adaptiveTelemetry: AdaptivePlaybackTelemetry? = nil
+    @Published private(set) var adaptiveCurrentQualityTitle: String? = nil
     /// Non-nil while the cursor hovers over the scrubber track (0…1 fraction of track width).
     @Published var scrubHoverFraction: Double? = nil
     @Published var volume: Double = 0.9 {
@@ -584,6 +631,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var spacebarHoldTask: Task<Void, Never>? = nil
     private var playbackSpeedTransitionTask: Task<Void, Never>? = nil
     private var pausedResizeRefreshTask: Task<Void, Never>? = nil
+    private var adaptiveQualityPolicy = AdaptiveQualityPolicy()
+    private var lastAdaptiveEvaluationAt: TimeInterval = 0
     private var lastInteractionAt = Date()
     private var lastPointerMovementAt = Date.distantPast
     private var temporaryPlaybackSpeedOverride: Double? = nil
@@ -602,10 +651,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     var playbackBadgeText: String {
+        if isAdaptiveAutoSelected {
+            return adaptiveQualityText
+        }
         return activeQualityOption?.title ?? "Quality"
     }
 
     var qualityControlText: String {
+        if qualityControlSelectionID == QualityOption.adaptiveID {
+            return adaptiveQualityText
+        }
         return displayedQualityOption?.title ?? "Quality"
     }
 
@@ -619,6 +674,17 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     var qualityControlSelectionID: String {
         pendingQualityOptionID ?? selectedQualityOptionID
+    }
+
+    private var isAdaptiveAutoSelected: Bool {
+        selectedQualityOptionID == QualityOption.adaptiveID
+    }
+
+    private var adaptiveQualityText: String {
+        if let adaptiveCurrentQualityTitle {
+            return "Auto · \(adaptiveCurrentQualityTitle)"
+        }
+        return "Auto"
     }
 
     var fullscreenSymbolName: String {
@@ -915,6 +981,10 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         manualSkipSponsorSegment = nil
         liveSeekableRange = nil
         bufferedRanges = []
+        adaptiveTelemetry = nil
+        adaptiveCurrentQualityTitle = nil
+        adaptiveQualityPolicy.reset()
+        lastAdaptiveEvaluationAt = 0
         scrubHoverFraction = nil
         wasPlayingBeforeScrub = false
         lastInteractionAt = Date()
@@ -1111,6 +1181,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func toggleFullscreen() {
         noteInteraction()
+        suppressAdaptiveQualityDecisions()
         if layoutState.isTheaterMode {
             withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
                 layoutState.isTheaterMode = false
@@ -1151,6 +1222,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func handlePlayerSurfaceLayoutChange() {
         guard let mpvEngine else { return }
+        suppressAdaptiveQualityDecisions()
         guard !isPlaying, !isScrubbing, !isPreparingInitialPlayback, !isLivePlayback else { return }
 
         pausedResizeRefreshTask?.cancel()
@@ -1223,6 +1295,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     func seekRelative(_ seconds: Double) {
         guard mpvEngine != nil, hasSeekableTimeline else { return }
         noteInteraction()
+        suppressAdaptiveQualityDecisions()
         let amount = Int(seconds)
         showFeedback(amount >= 0 ? .seekForward(amount) : .seekBackward(-amount))
         let target = clampToScrubberBounds(currentTime + seconds)
@@ -1238,6 +1311,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     func seek(to seconds: Double) {
         guard mpvEngine != nil, hasSeekableTimeline else { return }
         noteInteraction()
+        suppressAdaptiveQualityDecisions()
         let target = clampToScrubberBounds(seconds)
         scrubPosition = target
         currentTime = target
@@ -1318,7 +1392,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func preferredStartupQualityOption(for playback: VideoPlayback) -> QualityOption? {
-        let options = qualityOptions.isEmpty ? buildQualityOptions(for: playback) : qualityOptions
+        let options = manualQualityOptions(from: qualityOptions.isEmpty ? buildQualityOptions(for: playback) : qualityOptions)
         guard let preferredHeight = AppSettings.shared.defaultQuality.preferredHeight else {
             return options.first
         }
@@ -1329,10 +1403,17 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     private func manualQualityOptionID(for selection: ManualPlaybackSelection) -> String? {
         qualityOptions.first(where: { option in
-            let candidateSelection = option.selection
+            guard case .manual(let candidateSelection) = option.selection else { return false }
             return candidateSelection.stream.url == selection.stream.url
                 && candidateSelection.audioStream?.url == selection.audioStream?.url
         })?.id
+    }
+
+    private func manualQualityOptions(from options: [QualityOption]) -> [QualityOption] {
+        options.filter { option in
+            if case .manual = option.selection { return true }
+            return false
+        }
     }
 
     private func scheduleMPVStop(_ engine: MPVPlaybackEngine?, pauseFirst: Bool = false) {
@@ -1359,18 +1440,38 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             sponsorSegments = playback.sponsorSegments
             qualityOptions = buildQualityOptions(for: playback)
             selectedQualityOptionID = ""
+            adaptiveTelemetry = nil
+            adaptiveCurrentQualityTitle = nil
+            adaptiveQualityPolicy.reset()
+            lastAdaptiveEvaluationAt = 0
             mpvStateTask?.cancel()
             scheduleMPVStop(mpvEngine, pauseFirst: true)
             mpvEngine = nil
 
             let preferredStartupOption = preferredStartupQualityOption(for: playback)
-            let startupSelections: [ManualPlaybackSelection]
-            if let selection = preferredStartupOption?.selection {
-                startupSelections = [selection]
+            let startupCandidates: [PlaybackPreparationCandidate]
+            if let preferredStartupOption {
+                startupCandidates = [
+                    PlaybackPreparationCandidate(
+                        selection: preferredStartupOption.playbackSelection,
+                        mode: .direct,
+                        qualityOptionID: preferredStartupOption.id
+                    )
+                ]
+            } else if let adaptiveOption = qualityOptions.first(where: { $0.isAdaptive }) {
+                startupCandidates = [
+                    PlaybackPreparationCandidate(
+                        selection: adaptiveOption.playbackSelection,
+                        mode: .adaptiveManifest,
+                        qualityOptionID: adaptiveOption.id
+                    )
+                ]
             } else {
-                startupSelections = automaticStartupMPVSelections(for: playback)
+                startupCandidates = automaticStartupMPVSelections(for: playback).map {
+                    PlaybackPreparationCandidate(selection: $0, mode: .direct, qualityOptionID: nil)
+                }
             }
-            guard startupSelections.isEmpty == false else {
+            guard startupCandidates.isEmpty == false else {
                 PlaybackDebugLogger.log(
                     "prepare playback missing startup source id=\(playback.id) streams=\(playback.streams.count)"
                 )
@@ -1382,16 +1483,16 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 throw URLError(.badURL)
             }
 
-            let startupLimit = min(startupSelections.count, playback.isLive ? 4 : 5)
-            let candidateSelections = Array(startupSelections.prefix(startupLimit))
+            let startupLimit = min(startupCandidates.count, playback.isLive ? 4 : 5)
+            let candidateSelections = Array(startupCandidates.prefix(startupLimit))
             var preparedEngine: MPVPlaybackEngine?
-            var preparedSelection: ManualPlaybackSelection?
+            var preparedCandidate: PlaybackPreparationCandidate?
             var lastPreparationError: Error?
 
-            for (index, selection) in candidateSelections.enumerated() {
-                let request = try mpvRequest(for: selection)
+            for (index, candidate) in candidateSelections.enumerated() {
+                let request = try mpvRequest(for: candidate.selection, mode: candidate.mode)
                 PlaybackDebugLogger.log(
-                    "prepare playback attempt \(index + 1)/\(candidateSelections.count) id=\(playback.id) video=\(debugDescription(for: selection.stream)) audio=\(debugDescription(for: selection.audioStream))"
+                    "prepare playback attempt \(index + 1)/\(candidateSelections.count) id=\(playback.id) mode=\(candidate.mode) video=\(debugDescription(for: candidate.selection.stream)) audio=\(debugDescription(for: candidate.selection.audioStream))"
                 )
 
                 let engine = MPVPlaybackEngine(request: request)
@@ -1409,7 +1510,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                     let startTime = initialStartTime
                     try await engine.prepare(startTime: startTime, autoPlay: false)
                     preparedEngine = engine
-                    preparedSelection = selection
+                    preparedCandidate = candidate
                     break
                 } catch {
                     lastPreparationError = error
@@ -1437,7 +1538,14 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             initialStartTime = 0
             startPollingMPVState(using: engine)
             refreshQualityOptions(for: playback)
-            if let preparedSelection, let startupOptionID = manualQualityOptionID(for: preparedSelection) {
+            if let qualityOptionID = preparedCandidate?.qualityOptionID {
+                selectedQualityOptionID = qualityOptionID
+                if qualityOptionID == QualityOption.adaptiveID {
+                    adaptiveQualityPolicy.reset()
+                    lastAdaptiveEvaluationAt = 0
+                }
+            } else if let preparedSelection = preparedCandidate?.selection,
+                      let startupOptionID = manualQualityOptionID(for: preparedSelection) {
                 selectedQualityOptionID = startupOptionID
             } else if let preferredStartupOption {
                 selectedQualityOptionID = preferredStartupOption.id
@@ -1474,8 +1582,8 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         )
 
         do {
-            let selection = option.selection
-            let request = try mpvRequest(for: selection)
+            let selection = option.playbackSelection
+            let request = try mpvRequest(for: selection, mode: option.isAdaptive ? .adaptiveManifest : .direct)
 
             func prepareFreshEngine(startTime: Double, wasPlaying: Bool) async throws -> MPVPlaybackEngine {
                 let engine = MPVPlaybackEngine(request: request)
@@ -1572,6 +1680,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 reapplySubtitlesAfterSwitch(for: playback, engine: engine)
             }
             selectedQualityOptionID = option.id
+            if option.isAdaptive {
+                adaptiveQualityPolicy.reset()
+                lastAdaptiveEvaluationAt = 0
+            } else {
+                adaptiveTelemetry = nil
+                adaptiveCurrentQualityTitle = nil
+            }
             PlaybackDebugLogger.log(
                 "quality switch success option=\(debugDescription(for: option)) duration=\(duration) currentTime=\(currentTime)"
             )
@@ -1788,6 +1903,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private func seekToScrubPosition() {
         let shouldResume = wasPlayingBeforeScrub
         didReachPlaybackEnd = false
+        suppressAdaptiveQualityDecisions()
         Task { [weak self] in
             guard let self, let mpvEngine else { return }
             let target = clampToScrubberBounds(scrubPosition)
@@ -1959,6 +2075,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             duration = sanitizeSeconds(snapshot.duration)
         }
         isPlaying = snapshot.isPlaying
+        adaptiveTelemetry = snapshot.adaptiveTelemetry
+        if isAdaptiveAutoSelected, let telemetry = snapshot.adaptiveTelemetry {
+            adaptiveCurrentQualityTitle = telemetry.selectedRendition?.title ?? adaptiveCurrentQualityTitle
+            maybeApplyAdaptiveQualityDecision(using: telemetry, engine: engine)
+        } else if selectedQualityOptionID != QualityOption.adaptiveID {
+            adaptiveCurrentQualityTitle = nil
+        }
         if engine.videoAspect > 0 { videoAspect = engine.videoAspect }
         if didReachPlaybackEnd, currentTime + 0.25 < scrubberUpperBound {
             didReachPlaybackEnd = false
@@ -1967,7 +2090,58 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         updateSponsorBlockState(using: engine, previousTime: previousTime)
     }
 
-    private func mpvRequest(for selection: ManualPlaybackSelection) throws -> MPVPlaybackRequest {
+    private func maybeApplyAdaptiveQualityDecision(
+        using telemetry: AdaptivePlaybackTelemetry,
+        engine: MPVPlaybackEngine
+    ) {
+        let now = Date.timeIntervalSinceReferenceDate
+        guard now - lastAdaptiveEvaluationAt >= 1 else { return }
+        lastAdaptiveEvaluationAt = now
+
+        let viewportHeight = adaptiveViewportHeight()
+        guard let decision = adaptiveQualityPolicy.evaluate(
+            telemetry: telemetry,
+            viewportHeight: viewportHeight,
+            now: now
+        ) else {
+            return
+        }
+
+        guard decision.rendition.id != telemetry.selectedRenditionID else { return }
+
+        do {
+            try engine.setAdaptiveRendition(id: decision.rendition.id)
+            adaptiveCurrentQualityTitle = decision.rendition.title
+            PlaybackDebugLogger.log(
+                "adaptive quality switch reason=\(decision.reason.rawValue) target=\(decision.rendition.title) " +
+                "id=\(decision.rendition.id) buffer=\(telemetry.bufferAheadSeconds) " +
+                "rate=\(telemetry.rawInputRateBytesPerSecond.map(String.init) ?? "nil")"
+            )
+        } catch {
+            PlaybackDebugLogger.log(
+                "adaptive quality switch failed target=\(decision.rendition.title) id=\(decision.rendition.id) error=\(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func adaptiveViewportHeight() -> Int? {
+        guard let contentHeight = window?.contentView?.bounds.height,
+              contentHeight.isFinite,
+              contentHeight > 0 else {
+            return nil
+        }
+        return Int(contentHeight.rounded())
+    }
+
+    private func suppressAdaptiveQualityDecisions() {
+        adaptiveQualityPolicy.suppressDecisions(for: 5)
+        lastAdaptiveEvaluationAt = 0
+    }
+
+    private func mpvRequest(
+        for selection: ManualPlaybackSelection,
+        mode: MPVPlaybackMode = .direct
+    ) throws -> MPVPlaybackRequest {
         guard let videoURL = URL(string: selection.stream.url) else {
             throw URLError(.badURL)
         }
@@ -1984,11 +2158,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
         return MPVPlaybackRequest(
             video: MediaStreamRequest(url: videoURL, headers: selection.stream.httpHeaders),
-            audio: audioRequest
+            audio: audioRequest,
+            mode: mode
         )
     }
 
     private func buildQualityOptions(for playback: VideoPlayback) -> [QualityOption] {
+        let adaptiveOption = buildAdaptiveQualityOption(for: playback)
         var groupedCandidates: [String: ManualQualityCandidate] = [:]
 
         for stream in playback.streams {
@@ -2012,13 +2188,13 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             }
         }
 
-        return groupedCandidates
+        let manualOptions = groupedCandidates
             .map { title, candidate in
                 QualityOption(
                     id: "stream-\(candidate.selection.stream.url)",
                     title: title,
                     detail: bitrateText(Double(candidate.bitrate)),
-                    selection: candidate.selection
+                    selection: .manual(candidate.selection)
                 )
             }
             .sorted { lhs, rhs in
@@ -2030,6 +2206,21 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                 let rhsBitrate = rhs.streamBitrate
                 return (lhsHeight, lhsFPS, lhsBitrate) > (rhsHeight, rhsFPS, rhsBitrate)
             }
+
+        if let adaptiveOption {
+            return [adaptiveOption] + manualOptions
+        }
+        return manualOptions
+    }
+
+    private func buildAdaptiveQualityOption(for playback: VideoPlayback) -> QualityOption? {
+        guard let selection = adaptiveManifestSelection(for: playback) else { return nil }
+        return QualityOption(
+            id: QualityOption.adaptiveID,
+            title: "Auto",
+            detail: nil,
+            selection: .adaptiveManifest(selection)
+        )
     }
 
     #if DEBUG
@@ -2071,8 +2262,9 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     }
 
     private func debugDescription(for option: QualityOption) -> String {
-        let selection = option.selection
-        return "option[id=\(option.id),title=\(option.title),video=\(debugDescription(for: selection.stream)),audio=\(debugDescription(for: selection.audioStream))]"
+        let mode = option.isAdaptive ? "adaptive" : "manual"
+        let selection = option.playbackSelection
+        return "option[id=\(option.id),title=\(option.title),mode=\(mode),video=\(debugDescription(for: selection.stream)),audio=\(debugDescription(for: selection.audioStream))]"
     }
 
     private func debugDescription(for stream: StreamInfo?) -> String {

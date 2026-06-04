@@ -1074,6 +1074,8 @@ actor SwiftTubeBackend {
         var androidStreams = parseStreams(from: androidPlayerData, defaultHeaders: api.streamRequestHeaders(for: .android))
         var iosStreams = parseStreams(from: iosPlayerData, defaultHeaders: api.streamRequestHeaders(for: .ios))
         let webSafariStreams = parseStreams(from: webSafariPlayerData, defaultHeaders: api.streamRequestHeaders(for: .webSafari))
+        let adaptiveManifestStreams = mergeStreams(webSafariStreams, iosStreams)
+            .filter { $0.formatId == "hls-manifest" }
         var hlsManifestSources = webSafariStreams
         if liveBroadcastDetails.isEmpty == false {
             hlsManifestSources += iosStreams
@@ -1191,6 +1193,9 @@ actor SwiftTubeBackend {
             && !(isLive && nativePlaybackBundle.bestStream != nil)
         let resolvedStreams = (useYTDLPStreams ? preferredYTDLPPlayback?.streams : nil)
             ?? nativePlaybackStreams
+        let playbackStreams = useYTDLPStreams
+            ? resolvedStreams
+            : mergeYouTubeFormatStreams(resolvedStreams, adaptiveManifestStreams)
 
         let playbackBundle: PlaybackBundle = {
             if let preferredYTDLPPlayback, useYTDLPStreams {
@@ -1251,7 +1256,7 @@ actor SwiftTubeBackend {
             durationText: duration,
             description: metadata["description"] ?? nil,
             commentCountText: metadata["commentCountText"] ?? nil,
-            streams: resolvedStreams,
+            streams: playbackStreams,
             recommendations: relatedItems,
             comments: [],
             playbackStrategy: playbackBundle.playbackStrategy,

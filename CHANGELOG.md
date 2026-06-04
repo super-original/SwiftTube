@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.14
+
+- Added real adaptive Auto quality for HLS master-manifest playback, using MPV track switching instead of direct URL replacement.
+- Added buffer, throughput, and selected-rendition telemetry for adaptive playback decisions.
+- Kept Highest as the default quality while showing Auto only when a manifest-backed adaptive session is available.
+
 ## 0.15.13
 
 - Removed the fake Auto entry from the player quality selector so playback starts on and displays the selected concrete quality.

@@ -9,6 +9,15 @@ struct MPVPlaybackSnapshot {
     let isBuffering: Bool
     let liveSeekableRange: ClosedRange<Double>?
     let bufferedRanges: [ClosedRange<Double>]
+    let adaptiveTelemetry: AdaptivePlaybackTelemetry?
+}
+
+private struct MPVDemuxerCacheDetails {
+    let seekableRanges: [ClosedRange<Double>]
+    let rawInputRateBytesPerSecond: Int64?
+    let cacheDuration: Double?
+    let cacheEnd: Double?
+    let isUnderrun: Bool
 }
 
 @MainActor
@@ -33,6 +42,7 @@ final class MPVPlaybackEngine: NSObject {
     private(set) var videoAspect: Double = 16.0 / 9.0
     private(set) var liveSeekableRange: ClosedRange<Double>? = nil
     private(set) var bufferedRanges: [ClosedRange<Double>] = []
+    private(set) var adaptiveTelemetry: AdaptivePlaybackTelemetry? = nil
 
     init(request: MPVPlaybackRequest) {
         self.request = request
@@ -135,8 +145,19 @@ final class MPVPlaybackEngine: NSObject {
             isPlaying: isPlaying,
             isBuffering: isBuffering,
             liveSeekableRange: liveSeekableRange,
-            bufferedRanges: bufferedRanges
+            bufferedRanges: bufferedRanges,
+            adaptiveTelemetry: adaptiveTelemetry
         )
+    }
+
+    func setAdaptiveRendition(id: Int64) throws {
+        guard let mpv else {
+            throw NSError(domain: "SwiftTube.MPV", code: -2, userInfo: [NSLocalizedDescriptionKey: "mpv is not initialized."])
+        }
+        var value = id
+        PlaybackDebugLogger.log("mpv set adaptive vid=\(id)")
+        try check(mpvLibrary.setProperty(mpv, MPVProperty.videoTrackID, MPV_FORMAT_INT64, &value))
+        updateCachedState()
     }
 
     func replaceFile(with newRequest: MPVPlaybackRequest, seekTo time: Double) async throws {
@@ -279,6 +300,11 @@ private extension MPVPlaybackEngine {
         try setOption("ytdl", value: "no")
         try setOption("sub-auto", value: "no")
         try setOption("audio-file-auto", value: "no")
+        if request.mode == .adaptiveManifest {
+            try setOption("hls-bitrate", value: "max")
+            try setOption("cache", value: "yes")
+            try setOption("cache-pause", value: "yes")
+        }
         var layerReference = Int64(bitPattern: UInt64(UInt(bitPattern: Unmanaged.passUnretained(layer).toOpaque())))
         try check(mpvLibrary.setOption(handle, "wid", MPV_FORMAT_INT64, &layerReference))
         PlaybackDebugLogger.log(
@@ -507,11 +533,12 @@ private extension MPVPlaybackEngine {
         duration = max(doubleProperty(MPVProperty.duration, from: mpv), 0)
         isBuffering = flagProperty(MPVProperty.pausedForCache, from: mpv)
         isPlaying = flagProperty(MPVProperty.pause, from: mpv) == false
-        let seekableRanges = seekableRangesProperty(MPVProperty.demuxerCacheState, from: mpv)
-        bufferedRanges = seekableRanges
-        liveSeekableRange = Self.resolveSeekableRange(from: seekableRanges, currentTime: currentTime)
+        let cacheDetails = demuxerCacheDetailsProperty(MPVProperty.demuxerCacheState, from: mpv)
+        bufferedRanges = cacheDetails.seekableRanges
+        liveSeekableRange = Self.resolveSeekableRange(from: cacheDetails.seekableRanges, currentTime: currentTime)
         let aspect = doubleProperty("video-params/aspect", from: mpv)
         if aspect > 0 { videoAspect = aspect }
+        adaptiveTelemetry = adaptiveTelemetry(from: mpv, cacheDetails: cacheDetails)
     }
 
     func doubleProperty(_ name: String, from handle: OpaquePointer) -> Double {
@@ -529,14 +556,72 @@ private extension MPVPlaybackEngine {
     }
 
     func seekableRangesProperty(_ name: String, from handle: OpaquePointer) -> [ClosedRange<Double>] {
+        demuxerCacheDetailsProperty(name, from: handle).seekableRanges
+    }
+
+    func demuxerCacheDetailsProperty(_ name: String, from handle: OpaquePointer) -> MPVDemuxerCacheDetails {
+        var value = mpv_node()
+        let result = mpvLibrary.getProperty(handle, name, MPV_FORMAT_NODE, &value)
+        guard result >= 0 else {
+            return MPVDemuxerCacheDetails(
+                seekableRanges: [],
+                rawInputRateBytesPerSecond: nil,
+                cacheDuration: nil,
+                cacheEnd: nil,
+                isUnderrun: false
+            )
+        }
+        defer { mpvLibrary.freeNodeContents(&value) }
+
+        let seekableRanges = Self.seekableRanges(from: value)
+        let rawInputRate = Self.intValue(forKey: "raw-input-rate", in: value)
+        let cacheDuration = Self.doubleValue(forKey: "cache-duration", in: value)
+        let cacheEnd = Self.doubleValue(forKey: "cache-end", in: value)
+        let isUnderrun = Self.flagValue(forKey: "underrun", in: value) ?? false
+
+        return MPVDemuxerCacheDetails(
+            seekableRanges: seekableRanges,
+            rawInputRateBytesPerSecond: rawInputRate,
+            cacheDuration: cacheDuration,
+            cacheEnd: cacheEnd,
+            isUnderrun: isUnderrun
+        )
+    }
+
+    func adaptiveTelemetry(
+        from handle: OpaquePointer,
+        cacheDetails: MPVDemuxerCacheDetails
+    ) -> AdaptivePlaybackTelemetry? {
+        guard request.mode == .adaptiveManifest else { return nil }
+
+        let renditions = adaptiveRenditionsProperty(MPVProperty.trackList, from: handle)
+        guard renditions.isEmpty == false else { return nil }
+
+        let selectedID = renditions.first(where: { $0.selected })?.id
+            ?? Self.intProperty(MPVProperty.videoTrackID, from: handle, library: mpvLibrary)
+        let bufferAheadFromEnd = cacheDetails.cacheEnd.map { max($0 - currentTime, 0) } ?? 0
+        let bufferAhead = max(cacheDetails.cacheDuration ?? 0, bufferAheadFromEnd)
+
+        return AdaptivePlaybackTelemetry(
+            renditions: renditions,
+            selectedRenditionID: selectedID,
+            rawInputRateBytesPerSecond: cacheDetails.rawInputRateBytesPerSecond,
+            cacheDuration: cacheDetails.cacheDuration,
+            cacheEnd: cacheDetails.cacheEnd,
+            bufferAheadSeconds: bufferAhead,
+            isPausedForCache: isBuffering,
+            cacheBufferingState: doubleProperty(MPVProperty.cacheBufferingState, from: handle),
+            isUnderrun: cacheDetails.isUnderrun
+        )
+    }
+
+    func adaptiveRenditionsProperty(_ name: String, from handle: OpaquePointer) -> [AdaptiveRendition] {
         var value = mpv_node()
         let result = mpvLibrary.getProperty(handle, name, MPV_FORMAT_NODE, &value)
         guard result >= 0 else { return [] }
         defer { mpvLibrary.freeNodeContents(&value) }
-
-        guard let rangesNode = Self.mapValue(forKey: "seekable-ranges", in: value),
-              rangesNode.format == MPV_FORMAT_NODE_ARRAY,
-              let list = rangesNode.u.list,
+        guard value.format == MPV_FORMAT_NODE_ARRAY,
+              let list = value.u.list,
               let values = list.pointee.values else {
             return []
         }
@@ -544,15 +629,42 @@ private extension MPVPlaybackEngine {
         let count = Int(list.pointee.num)
         guard count > 0 else { return [] }
 
-        var ranges: [ClosedRange<Double>] = []
-        ranges.reserveCapacity(count)
+        var renditions: [AdaptiveRendition] = []
+        renditions.reserveCapacity(count)
 
         for index in 0..<count {
-            guard let range = Self.seekableRange(from: values[index]) else { continue }
-            ranges.append(range)
+            let node = values[index]
+            guard Self.stringValue(forKey: "type", in: node) == "video",
+                  Self.flagValue(forKey: "image", in: node) != true,
+                  Self.flagValue(forKey: "albumart", in: node) != true,
+                  let id = Self.intValue(forKey: "id", in: node) else {
+                continue
+            }
+
+            let bitrate = Self.intValue(forKey: "hls-bitrate", in: node)
+                .map(Int.init)
+                ?? Self.intValue(forKey: "demux-bitrate", in: node).map(Int.init)
+            let height = Self.intValue(forKey: "demux-h", in: node).map(Int.init)
+            let width = Self.intValue(forKey: "demux-w", in: node).map(Int.init)
+            let fps = Self.doubleValue(forKey: "demux-fps", in: node)
+            guard (bitrate ?? 0) > 0 || (height ?? 0) > 0 else { continue }
+
+            renditions.append(
+                AdaptiveRendition(
+                    id: id,
+                    width: width,
+                    height: height,
+                    fps: fps,
+                    bitrate: bitrate,
+                    codec: Self.stringValue(forKey: "codec", in: node),
+                    selected: Self.flagValue(forKey: "selected", in: node) ?? false
+                )
+            )
         }
 
-        return ranges
+        return renditions.sorted {
+            ($0.effectiveHeight, $0.effectiveBitrate, $0.id) < ($1.effectiveHeight, $1.effectiveBitrate, $1.id)
+        }
     }
 
     nonisolated static func intProperty(_ name: String, from handle: OpaquePointer, library: MPVLibrary) -> Int64? {
@@ -595,9 +707,78 @@ private extension MPVPlaybackEngine {
             return node.u.double_.isFinite ? node.u.double_ : nil
         case MPV_FORMAT_INT64:
             return Double(node.u.int64)
+        case MPV_FORMAT_FLAG:
+            return node.u.flag != 0 ? 1 : 0
         default:
             return nil
         }
+    }
+
+    nonisolated static func intValue(from node: mpv_node) -> Int64? {
+        switch node.format {
+        case MPV_FORMAT_INT64:
+            return node.u.int64
+        case MPV_FORMAT_DOUBLE:
+            guard node.u.double_.isFinite else { return nil }
+            return Int64(node.u.double_)
+        default:
+            return nil
+        }
+    }
+
+    nonisolated static func stringValue(from node: mpv_node) -> String? {
+        guard node.format == MPV_FORMAT_STRING,
+              let string = node.u.string else {
+            return nil
+        }
+        return String(cString: string)
+    }
+
+    nonisolated static func flagValue(from node: mpv_node) -> Bool? {
+        guard node.format == MPV_FORMAT_FLAG else { return nil }
+        return node.u.flag != 0
+    }
+
+    nonisolated static func intValue(forKey key: String, in node: mpv_node) -> Int64? {
+        guard let value = mapValue(forKey: key, in: node) else { return nil }
+        return intValue(from: value)
+    }
+
+    nonisolated static func doubleValue(forKey key: String, in node: mpv_node) -> Double? {
+        guard let value = mapValue(forKey: key, in: node) else { return nil }
+        return numericValue(from: value)
+    }
+
+    nonisolated static func stringValue(forKey key: String, in node: mpv_node) -> String? {
+        guard let value = mapValue(forKey: key, in: node) else { return nil }
+        return stringValue(from: value)
+    }
+
+    nonisolated static func flagValue(forKey key: String, in node: mpv_node) -> Bool? {
+        guard let value = mapValue(forKey: key, in: node) else { return nil }
+        return flagValue(from: value)
+    }
+
+    nonisolated static func seekableRanges(from node: mpv_node) -> [ClosedRange<Double>] {
+        guard let rangesNode = mapValue(forKey: "seekable-ranges", in: node),
+              rangesNode.format == MPV_FORMAT_NODE_ARRAY,
+              let list = rangesNode.u.list,
+              let values = list.pointee.values else {
+            return []
+        }
+
+        let count = Int(list.pointee.num)
+        guard count > 0 else { return [] }
+
+        var ranges: [ClosedRange<Double>] = []
+        ranges.reserveCapacity(count)
+
+        for index in 0..<count {
+            guard let range = seekableRange(from: values[index]) else { continue }
+            ranges.append(range)
+        }
+
+        return ranges
     }
 
     nonisolated static func seekableRange(from node: mpv_node) -> ClosedRange<Double>? {

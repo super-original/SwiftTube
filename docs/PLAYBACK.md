@@ -20,6 +20,8 @@ Current behavior:
 
 - startup stream selection prefers the best compatible stream for the selected quality policy
 - manual quality switching uses in-place `replaceFile` instead of creating a whole new player session when possible
+- Auto quality is available only for HLS master manifests and switches MPV video tracks inside the same playback session
+- adaptive Auto decisions use MPV cache/throughput telemetry and avoid direct URL replacement
 - storyboard scrub previews are layered above the render surface during dragging
 - debug logging is disabled by default and can be re-enabled only through the `SWIFTTUBE_PLAYBACK_DEBUG_LOG=1` environment variable
 
