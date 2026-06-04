@@ -1517,7 +1517,7 @@ private extension PlayerScreen {
                 }
             } else {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array(recommendations.enumerated()), id: \.element.id) { _, relatedVideo in
+                    ForEach(Array(recommendations.enumerated()), id: \.element.id) { index, relatedVideo in
                         RecommendationRow(
                             video: relatedVideo,
                             onOpenChannel: {
@@ -1550,9 +1550,8 @@ private extension PlayerScreen {
                         .onAppear {
                             viewModel.loadMoreRecommendationsIfNeeded(currentVideo: relatedVideo)
                         }
-                        .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
+                        .staggeredFadeIn(id: relatedVideo.id, index: index, columns: 1, batchSize: 18)
                     }
-                    .animation(.easeOut(duration: 0.16), value: recommendations)
 
                     if viewModel.isLoadingRecommendations {
                         LoadingMoreIndicator(text: "Loading more videos...")

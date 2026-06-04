@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.17
+
+- Slowed and softened the three-dot loading animation, with tighter inline browser icons that move subtly without glow or darkening.
+- Reworked recommendation, search, history, and next-up video reveals so new batches fade in top-to-bottom without animated grid insertion or card motion.
+
 ## 0.15.16
 
 - Replaced the blue spinner with a minimal white three-dot loading animation and made browser scan icons sit inline without capsule backgrounds.

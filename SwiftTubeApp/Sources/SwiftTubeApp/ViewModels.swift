@@ -1,5 +1,5 @@
 import Foundation
-import SwiftUI
+import Combine
 
 private let paginationDuplicateHopLimit = 3
 
@@ -95,9 +95,7 @@ final class HomeViewModel: ObservableObject {
                     && remainingDuplicatePages > 0
                 if !shouldAdvance {
                     continuation = response.continuation
-                    withAnimation(.easeOut(duration: 0.20)) {
-                        videos = mergedVideos
-                    }
+                    videos = mergedVideos
                     notice = latestNote
                     break
                 }
@@ -215,14 +213,12 @@ final class WatchHistoryViewModel: ObservableObject {
                 continuation: reset ? nil : continuation
             )
             guard requestQuery == trimmedSearchQuery else { return }
-            withAnimation(.easeOut(duration: 0.18)) {
-                if reset {
-                    items = response.items
-                } else {
-                    items = appendUniqueItems(existing: items, incoming: response.items, id: \.id).items
-                }
-                filteredItems = items
+            if reset {
+                items = response.items
+            } else {
+                items = appendUniqueItems(existing: items, incoming: response.items, id: \.id).items
             }
+            filteredItems = items
             continuation = response.continuation
             errorMessage = nil
             AppMutationCenter.shared.showTimedDebug(
@@ -492,9 +488,7 @@ final class SearchViewModel: ObservableObject {
                         && remainingDuplicatePages > 0
                     if !shouldAdvance {
                         continuation = response.continuation
-                        withAnimation(.easeOut(duration: 0.18)) {
-                            results = mergedResults
-                        }
+                        results = mergedResults
                         AppMutationCenter.shared.showTimedDebug(
                             .search,
                             title: reset ? "Loaded search in" : "Loaded more search in",

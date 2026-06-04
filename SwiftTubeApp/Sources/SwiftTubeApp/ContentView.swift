@@ -441,7 +441,7 @@ private extension ContentView {
             }
         } else {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                ForEach(viewModel.videos, id: \.id) { video in
+                ForEach(Array(viewModel.videos.enumerated()), id: \.element.id) { index, video in
                     VideoCard(
                         video: video,
                         onOpenChannel: {
@@ -474,11 +474,9 @@ private extension ContentView {
                     .onAppear {
                         viewModel.loadMoreIfNeeded(currentVideo: video)
                     }
-                    .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
+                    .staggeredFadeIn(id: video.id, index: index, columns: columns.count)
                 }
             }
-            .animation(.easeOut(duration: 0.18), value: viewModel.videos)
-            .transition(.opacity)
 
             if viewModel.isLoading {
                 LoadingMoreIndicator(text: "Loading more videos...")
@@ -541,7 +539,7 @@ private extension ContentView {
             }
         } else {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                ForEach(searchViewModel.results, id: \.id) { video in
+                ForEach(Array(searchViewModel.results.enumerated()), id: \.element.id) { index, video in
                     VideoCard(
                         video: video,
                         onOpenChannel: {
@@ -574,10 +572,9 @@ private extension ContentView {
                     .onAppear {
                         searchViewModel.loadMoreIfNeeded(currentVideo: video)
                     }
-                    .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
+                    .staggeredFadeIn(id: video.id, index: index, columns: columns.count)
                 }
             }
-            .animation(.easeOut(duration: 0.18), value: searchViewModel.results)
 
             if searchViewModel.isSearching {
                 LoadingMoreIndicator(text: "Loading more results...")
@@ -803,7 +800,7 @@ private extension ContentView {
                 }
             } else {
                 LazyVStack(spacing: 4) {
-                    ForEach(historyViewModel.filteredItems, id: \.id) { video in
+                    ForEach(Array(historyViewModel.filteredItems.enumerated()), id: \.element.id) { index, video in
                         HistoryVideoRow(
                             video: video,
                             isDeleting: mutationCenter.isPending(MutationQueueKey.watchHistory(videoID: video.id)),
@@ -835,10 +832,9 @@ private extension ContentView {
                         .onAppear {
                             historyViewModel.loadMoreIfNeeded(currentVideo: video)
                         }
-                        .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
+                        .staggeredFadeIn(id: video.id, index: index, columns: 1, batchSize: 18)
                     }
                 }
-                .animation(.easeOut(duration: 0.16), value: historyViewModel.filteredItems)
 
                 if historyViewModel.isLoading {
                     LoadingMoreIndicator(text: "Loading more history...")

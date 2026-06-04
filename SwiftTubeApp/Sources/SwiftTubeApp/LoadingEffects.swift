@@ -40,19 +40,23 @@ struct SwiftTubeSpinner: View {
 
     var body: some View {
         TimelineView(.animation) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate
-            HStack(spacing: max(size * 0.16, 4)) {
+            let time = timeline.date.timeIntervalSinceReferenceDate / 1.72
+            HStack(spacing: max(size * 0.13, 3)) {
                 ForEach(0..<3, id: \.self) { index in
-                    let localPhase = phase * 3.2 - Double(index) * 0.32
-                    let lift = sin(localPhase * .pi)
+                    let lift = smoothWave(time - Double(index) * 0.15)
                     Circle()
-                        .fill(Color.white.opacity(0.56 + max(lift, 0) * 0.36))
-                        .frame(width: size * 0.22, height: size * 0.22)
-                        .offset(y: -max(lift, 0) * size * 0.24)
+                        .fill(Color.white.opacity(0.80 + lift * 0.14))
+                        .frame(width: size * 0.20, height: size * 0.20)
+                        .offset(y: -lift * size * 0.13)
                 }
             }
             .frame(width: size, height: size)
         }
+    }
+
+    private func smoothWave(_ rawPhase: Double) -> Double {
+        let phase = rawPhase - floor(rawPhase)
+        return (1 - cos(phase * 2 * .pi)) / 2
     }
 }
 
@@ -68,7 +72,7 @@ struct LoadingStatusView: View {
             ShimmerText(text: text)
 
             if browsers.isEmpty == false {
-                HStack(spacing: 4) {
+                HStack(spacing: -1) {
                     ForEach(Array(browsers.enumerated()), id: \.element.id) { index, browser in
                         BrowserLoadingIcon(browser: browser, index: index, size: iconSize)
                     }
@@ -93,6 +97,72 @@ struct LoadingMoreIndicator: View {
     }
 }
 
+struct StaggeredFadeIn: ViewModifier {
+    let id: String
+    let index: Int
+    let columns: Int
+    var batchSize: Int = 30
+    var rowDelay: Double = 0.095
+    var columnDelay: Double = 0.012
+    var duration: Double = 0.54
+
+    @State private var visibleID: String?
+    @State private var isVisible = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isVisible ? 1 : 0)
+            .task(id: id) {
+                guard visibleID != id else {
+                    isVisible = true
+                    return
+                }
+
+                visibleID = id
+                isVisible = false
+
+                let localIndex = max(index, 0) % max(batchSize, 1)
+                let columnCount = max(columns, 1)
+                let row = localIndex / columnCount
+                let column = localIndex % columnCount
+                let delay = min(Double(row) * rowDelay + Double(column) * columnDelay, 0.82)
+
+                if delay > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+                guard !Task.isCancelled else { return }
+
+                await MainActor.run {
+                    withAnimation(.smooth(duration: duration)) {
+                        isVisible = true
+                    }
+                }
+            }
+    }
+}
+
+extension View {
+    func staggeredFadeIn(
+        id: String,
+        index: Int,
+        columns: Int = 1,
+        batchSize: Int = 30,
+        rowDelay: Double = 0.095,
+        columnDelay: Double = 0.012,
+        duration: Double = 0.54
+    ) -> some View {
+        modifier(StaggeredFadeIn(
+            id: id,
+            index: index,
+            columns: columns,
+            batchSize: batchSize,
+            rowDelay: rowDelay,
+            columnDelay: columnDelay,
+            duration: duration
+        ))
+    }
+}
+
 private struct BrowserLoadingIcon: View {
     let browser: BrowserLoginOption
     let index: Int
@@ -100,20 +170,22 @@ private struct BrowserLoadingIcon: View {
 
     var body: some View {
         TimelineView(.animation) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate * 2.2 + Double(index) * 0.42
-            let lift = max(sin(phase * .pi), 0)
+            let phase = timeline.date.timeIntervalSinceReferenceDate / 1.85
+            let lift = smoothWave(phase)
 
             Image(nsImage: icon)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: size, height: size)
-                .brightness(lift * 0.10)
-                .opacity(0.74 + lift * 0.26)
-                .scaleEffect(0.94 + lift * 0.06)
-                .offset(y: -lift * 3)
+                .offset(y: -lift * 0.7)
                 .help(browser.displayName)
         }
         .frame(width: size, height: size)
+    }
+
+    private func smoothWave(_ rawPhase: Double) -> Double {
+        let phase = rawPhase - floor(rawPhase)
+        return (1 - cos(phase * 2 * .pi)) / 2
     }
 
     private var icon: NSImage {
