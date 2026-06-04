@@ -36,18 +36,20 @@ struct ShimmerText: View {
 }
 
 struct SwiftTubeSpinner: View {
+    @Environment(\.displayScale) private var displayScale
+
     var size: CGFloat = 26
 
     var body: some View {
         TimelineView(.animation) { timeline in
-            let time = timeline.date.timeIntervalSinceReferenceDate / 1.34
+            let time = timeline.date.timeIntervalSinceReferenceDate / 1.18
             HStack(spacing: max(size * 0.13, 3)) {
                 ForEach(0..<3, id: \.self) { index in
                     let lift = smoothWave(time - Double(index) * 0.17)
                     Circle()
-                        .fill(Color.white.opacity(0.88))
+                        .fill(Color.white)
                         .frame(width: size * 0.20, height: size * 0.20)
-                        .offset(y: -lift * size * 0.23)
+                        .offset(y: snappedOffset(-lift * size * 0.34))
                 }
             }
             .frame(width: size, height: size)
@@ -57,6 +59,11 @@ struct SwiftTubeSpinner: View {
     private func smoothWave(_ rawPhase: Double) -> Double {
         let phase = rawPhase - floor(rawPhase)
         return (1 - cos(phase * 2 * .pi)) / 2
+    }
+
+    private func snappedOffset(_ offset: Double) -> CGFloat {
+        let scale = max(displayScale, 1)
+        return CGFloat((offset * scale).rounded() / scale)
     }
 }
 
@@ -164,21 +171,23 @@ extension View {
 }
 
 private struct BrowserLoadingIcon: View {
+    @Environment(\.displayScale) private var displayScale
+
     let browser: BrowserLoginOption
     let index: Int
     let size: CGFloat
 
     var body: some View {
         TimelineView(.animation) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate / 1.42
+            let phase = timeline.date.timeIntervalSinceReferenceDate / 1.20
             let lift = smoothWave(phase)
 
             Image(nsImage: icon)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: size, height: size)
-                .scaleEffect(1 + lift * 0.018)
-                .offset(y: -lift * 2.0)
+                .scaleEffect(1 + lift * 0.035)
+                .offset(y: snappedOffset(-lift * 5.0))
                 .help(browser.displayName)
         }
         .frame(width: size, height: size)
@@ -187,6 +196,11 @@ private struct BrowserLoadingIcon: View {
     private func smoothWave(_ rawPhase: Double) -> Double {
         let phase = rawPhase - floor(rawPhase)
         return (1 - cos(phase * 2 * .pi)) / 2
+    }
+
+    private func snappedOffset(_ offset: Double) -> CGFloat {
+        let scale = max(displayScale, 1)
+        return CGFloat((offset * scale).rounded() / scale)
     }
 
     private var icon: NSImage {

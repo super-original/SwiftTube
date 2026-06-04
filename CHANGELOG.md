@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.19
+
+- Made the loading dots solid and pixel-snapped to remove flicker while increasing dot and browser-icon travel.
+
 ## 0.15.18
 
 - Retuned the loading dots and inline browser icons with steadier opacity, quicker motion, and more visible vertical travel.
