@@ -40,14 +40,14 @@ struct SwiftTubeSpinner: View {
 
     var body: some View {
         TimelineView(.animation) { timeline in
-            let time = timeline.date.timeIntervalSinceReferenceDate / 1.72
+            let time = timeline.date.timeIntervalSinceReferenceDate / 1.34
             HStack(spacing: max(size * 0.13, 3)) {
                 ForEach(0..<3, id: \.self) { index in
-                    let lift = smoothWave(time - Double(index) * 0.15)
+                    let lift = smoothWave(time - Double(index) * 0.17)
                     Circle()
-                        .fill(Color.white.opacity(0.80 + lift * 0.14))
+                        .fill(Color.white.opacity(0.88))
                         .frame(width: size * 0.20, height: size * 0.20)
-                        .offset(y: -lift * size * 0.13)
+                        .offset(y: -lift * size * 0.23)
                 }
             }
             .frame(width: size, height: size)
@@ -170,14 +170,15 @@ private struct BrowserLoadingIcon: View {
 
     var body: some View {
         TimelineView(.animation) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate / 1.85
+            let phase = timeline.date.timeIntervalSinceReferenceDate / 1.42
             let lift = smoothWave(phase)
 
             Image(nsImage: icon)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: size, height: size)
-                .offset(y: -lift * 0.7)
+                .scaleEffect(1 + lift * 0.018)
+                .offset(y: -lift * 2.0)
                 .help(browser.displayName)
         }
         .frame(width: size, height: size)

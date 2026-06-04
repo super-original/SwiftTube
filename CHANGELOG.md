@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.18
+
+- Retuned the loading dots and inline browser icons with steadier opacity, quicker motion, and more visible vertical travel.
+
 ## 0.15.17
 
 - Slowed and softened the three-dot loading animation, with tighter inline browser icons that move subtly without glow or darkening.
