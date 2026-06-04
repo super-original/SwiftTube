@@ -23,7 +23,6 @@ final class MPVPlaybackEngine: NSObject {
     private var didLoadFile = false
     private var isStopping = false
     private var loadWaitTask: Task<Void, Error>?
-    private var audioReadyTask: Task<Void, Never>?
     private var eventPumpTask: Task<Void, Never>?
     var onPlaybackEnded: (() -> Void)?
 
@@ -51,7 +50,7 @@ final class MPVPlaybackEngine: NSObject {
         )
         let handle = try initializeIfNeeded(layer: layer)
         didLoadFile = false
-        try applyAuxiliaryAudioOption(for: request.audio)
+        try clearAuxiliaryAudioOption()
         try command(["loadfile", request.video.url.absoluteString, "replace", "-1"])
         let loadWaitTask = makeFileLoadedTask(for: handle)
         self.loadWaitTask = loadWaitTask
@@ -62,6 +61,7 @@ final class MPVPlaybackEngine: NSObject {
         )
         self.loadWaitTask = nil
         didLoadFile = true
+        try await attachAuxiliaryAudioIfNeeded(request.audio, handle: handle)
         startEventPump(using: handle)
 
         if startTime > 0 {
@@ -100,9 +100,11 @@ final class MPVPlaybackEngine: NSObject {
     }
 
     func seek(to seconds: Double) async {
-        currentTime = max(seconds, 0)
+        let targetTime = max(seconds, 0)
+        currentTime = targetTime
         do {
-            try command(["seek", String(currentTime), "absolute", "exact"])
+            try command(["seek", String(targetTime), "absolute", "exact"])
+            await waitForSeekPosition(targetTime, timeout: 1.5)
             updateCachedState()
             PlaybackDebugLogger.log(
                 "mpv seek applied currentTime=\(currentTime) duration=\(duration) liveRange=\(debugDescription(for: liveSeekableRange))"
@@ -154,7 +156,7 @@ final class MPVPlaybackEngine: NSObject {
 
         didLoadFile = false
         try applyNetworkOptions(for: newRequest.video)
-        try applyAuxiliaryAudioOption(for: newRequest.audio)
+        try clearAuxiliaryAudioOption()
         try command(["loadfile", newRequest.video.url.absoluteString, "replace"])
 
         let loadWaitTask = makeFileLoadedTask(for: mpv, isReplace: true)
@@ -166,6 +168,7 @@ final class MPVPlaybackEngine: NSObject {
         )
         self.loadWaitTask = nil
         didLoadFile = true
+        try await attachAuxiliaryAudioIfNeeded(newRequest.audio, handle: mpv)
 
         startEventPump(using: mpv)
 
@@ -304,33 +307,83 @@ private extension MPVPlaybackEngine {
         try setOption("http-header-fields", value: mpvCustomHeaderFields(from: headers, reservedKeys: reservedKeys))
     }
 
-    func applyAuxiliaryAudioOption(for audio: MediaStreamRequest?) throws {
-        try setOption("audio-files", value: audio?.url.absoluteString ?? "")
+    func clearAuxiliaryAudioOption() throws {
+        try setOption("audio-files", value: "")
+    }
+
+    func attachAuxiliaryAudioIfNeeded(_ audio: MediaStreamRequest?, handle: OpaquePointer) async throws {
+        guard let audio else { return }
+
+        try applyNetworkOptions(for: audio)
+        PlaybackDebugLogger.log("mpv audio-add start url=\(audio.url.absoluteString)")
+        try command(["audio-add", audio.url.absoluteString, "select"])
+        try await waitForAuxiliaryAudioReady(handle: handle, timeout: 5)
+    }
+
+    func waitForAuxiliaryAudioReady(handle: OpaquePointer, timeout: TimeInterval) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            try Task.checkCancellation()
+
+            let audioTrackID = Self.intProperty(MPVProperty.audioTrackID, from: handle, library: mpvLibrary) ?? 0
+            if audioTrackID > 0 {
+                let codec = Self.stringProperty(MPVProperty.audioCodecName, from: handle, library: mpvLibrary) ?? "nil"
+                let channels = Self.intProperty(MPVProperty.audioChannelCount, from: handle, library: mpvLibrary).map(String.init) ?? "nil"
+                PlaybackDebugLogger.log("mpv audio-add ready aid=\(audioTrackID) codec=\(codec) channels=\(channels)")
+                return
+            }
+
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        PlaybackDebugLogger.log("mpv audio-add timed out waiting for aid")
+        throw NSError(
+            domain: "SwiftTube.MPV",
+            code: -13,
+            userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for mpv to attach external audio."]
+        )
+    }
+
+    func waitForSeekPosition(_ targetTime: Double, timeout: TimeInterval) async {
+        guard let mpv else { return }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if Task.isCancelled { return }
+
+            let observedTime = max(doubleProperty(MPVProperty.timePosition, from: mpv), 0)
+            if abs(observedTime - targetTime) <= 0.75 {
+                currentTime = observedTime
+                return
+            }
+
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        currentTime = max(doubleProperty(MPVProperty.timePosition, from: mpv), 0)
+        PlaybackDebugLogger.log("mpv seek wait timed out target=\(targetTime) current=\(currentTime)")
     }
 
     func destroyPlayer() async {
         guard let mpv else { return }
 
         let loadWaitTask = self.loadWaitTask
-        let audioReadyTask = self.audioReadyTask
         let eventPumpTask = self.eventPumpTask
         self.loadWaitTask = nil
-        self.audioReadyTask = nil
         self.eventPumpTask = nil
 
         loadWaitTask?.cancel()
-        audioReadyTask?.cancel()
         eventPumpTask?.cancel()
         mpvLibrary.wakeup(mpv)
 
-        if loadWaitTask != nil || audioReadyTask != nil || eventPumpTask != nil {
+        if loadWaitTask != nil || eventPumpTask != nil {
             PlaybackDebugLogger.log(
-                "mpv stop draining waiters load=\(loadWaitTask != nil) audio=\(audioReadyTask != nil) eventPump=\(eventPumpTask != nil)"
+                "mpv stop draining waiters load=\(loadWaitTask != nil) eventPump=\(eventPumpTask != nil)"
             )
         }
 
         _ = try? await loadWaitTask?.value
-        _ = await audioReadyTask?.result
         _ = await eventPumpTask?.result
 
         PlaybackDebugLogger.log("mpv terminate")
@@ -444,58 +497,6 @@ private extension MPVPlaybackEngine {
                     continue
                 }
             }
-        }
-    }
-
-    func makeAudioReadyTask(for audio: MediaStreamRequest, handle: OpaquePointer) -> Task<Void, Never> {
-        let handleBits = UInt(bitPattern: handle)
-        let mpvLibrary = mpvLibrary
-        return Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            guard Task.isCancelled == false else {
-                PlaybackDebugLogger.log("mpv audio-add cancelled before command")
-                return
-            }
-
-            do {
-                PlaybackDebugLogger.log("mpv audio-add start url=\(audio.url.absoluteString)")
-                try await MainActor.run {
-                    try self.command(["audio-add", audio.url.absoluteString, "select"])
-                }
-            } catch {
-                PlaybackDebugLogger.log("mpv audio-add command failed error=\(error.localizedDescription)")
-                return
-            }
-
-            let handle = OpaquePointer(bitPattern: handleBits)!
-            let deadline = Date().addingTimeInterval(5)
-
-            while Date() < deadline {
-                if Task.isCancelled {
-                    PlaybackDebugLogger.log("mpv audio-add cancelled")
-                    return
-                }
-                let audioTrackID = Self.intProperty(MPVProperty.audioTrackID, from: handle, library: mpvLibrary) ?? 0
-                if audioTrackID > 0 {
-                    let codec = Self.stringProperty(MPVProperty.audioCodecName, from: handle, library: mpvLibrary) ?? "nil"
-                    let channels = Self.intProperty(MPVProperty.audioChannelCount, from: handle, library: mpvLibrary).map(String.init) ?? "nil"
-                    PlaybackDebugLogger.log("mpv audio-add ready aid=\(audioTrackID) codec=\(codec) channels=\(channels)")
-                    return
-                }
-
-                if let event = mpvLibrary.waitEvent(handle, 0.1),
-                   event.pointee.event_id == MPV_EVENT_LOG_MESSAGE,
-                   let logMessage = event.pointee.data?.assumingMemoryBound(to: mpv_event_log_message.self) {
-                    let prefix = String(cString: logMessage.pointee.prefix)
-                    let level = String(cString: logMessage.pointee.level)
-                    let text = String(cString: logMessage.pointee.text).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if Self.shouldLogMPVMessage(prefix: prefix, level: level) {
-                        PlaybackDebugLogger.log("mpv log [\(prefix)] [\(level)] \(text)")
-                    }
-                }
-            }
-
-            PlaybackDebugLogger.log("mpv audio-add timed out waiting for aid")
         }
     }
 
