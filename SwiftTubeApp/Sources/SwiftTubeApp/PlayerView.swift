@@ -2176,6 +2176,11 @@ private struct PlayerStageSurface: View {
                 Rectangle()
                     .fill(Color.black.opacity(0.94))
 
+                PictureInPictureSourceView(pictureInPicture: coordinator.pictureInPicture)
+                    .frame(width: 1, height: 1)
+                    .opacity(0.01)
+                    .allowsHitTesting(false)
+
                 if let engine = coordinator.mpvEngine {
                     MPVMetalRenderView(engine: engine, onLayoutChange: coordinator.handlePlayerSurfaceLayoutChange)
                         .id(engine.id)
@@ -2763,6 +2768,7 @@ private struct PlayerControlBar: View {
                         subtitlesButton
                         qualityMenu
                         settingsMenu
+                        pictureInPictureButton
                         theaterToggle
                         fullscreenButton
                     }
@@ -2776,6 +2782,7 @@ private struct PlayerControlBar: View {
                         subtitlesButton
                         qualityMenu
                         settingsMenu
+                        pictureInPictureButton
                         theaterToggle
                         fullscreenButton
                     }
@@ -3332,6 +3339,24 @@ private struct PlayerControlBar: View {
         .controlSize(.regular)
         .accessibilityLabel("Theater Mode")
         .accessibilityValue(coordinator.isTheaterMode ? "On" : "Off")
+    }
+
+    var pictureInPictureButton: some View {
+        Button {
+            coordinator.togglePictureInPicture()
+        } label: {
+            circularButtonLabel(
+                symbol: coordinator.pictureInPictureSymbolName,
+                fontSize: 14,
+                foregroundStyle: coordinator.canTogglePictureInPicture ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
+            )
+        }
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.circle)
+        .controlSize(.regular)
+        .disabled(!coordinator.canTogglePictureInPicture)
+        .accessibilityLabel(coordinator.pictureInPicture.isActive ? "Exit Picture in Picture" : "Picture in Picture")
+        .accessibilityValue(coordinator.pictureInPicture.isActive ? "On" : "Off")
     }
 
     var fullscreenButton: some View {

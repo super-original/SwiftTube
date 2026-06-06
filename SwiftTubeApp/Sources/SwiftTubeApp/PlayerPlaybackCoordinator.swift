@@ -603,6 +603,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     @Published private(set) var bufferedRanges: [ClosedRange<Double>] = []
     @Published private(set) var adaptiveTelemetry: AdaptivePlaybackTelemetry? = nil
     @Published private(set) var adaptiveCurrentQualityTitle: String? = nil
+    @Published var pictureInPicture = PlayerPictureInPictureCoordinator()
     /// Non-nil while the cursor hovers over the scrubber track (0…1 fraction of track width).
     @Published var scrubHoverFraction: Double? = nil
     @Published var volume: Double = 0.9 {
@@ -639,6 +640,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     private var isSpacebarPressed = false
     private var didActivateSpacebarHoldSpeed = false
     private var initialStartTime: Double = 0
+    private var activePlaybackRequest: MPVPlaybackRequest? = nil
     private var suppressedSponsorSegmentID: String? = nil
     var onPlaybackEnded: (() -> Void)?
     var onShortcutAction: ((PlayerKeyAction) -> Void)?
@@ -648,6 +650,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     init(layoutState: PlayerLayoutState = PlayerLayoutState()) {
         self.layoutState = layoutState
         super.init()
+        pictureInPicture.onSetPlaying = { [weak self] shouldPlay in
+            self?.setPlayback(playing: shouldPlay)
+        }
+        pictureInPicture.onSeek = { [weak self] time in
+            self?.seek(to: time)
+        }
     }
 
     var playbackBadgeText: String {
@@ -733,6 +741,17 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     var shouldShowPlaybackErrorOverlay: Bool {
         errorMessage != nil && mpvEngine == nil
+    }
+
+    var canTogglePictureInPicture: Bool {
+        pictureInPicture.isSupported
+            && activePlaybackRequest != nil
+            && mpvEngine != nil
+            && !isPreparingInitialPlayback
+    }
+
+    var pictureInPictureSymbolName: String {
+        pictureInPicture.symbolName
     }
 
     var volumeIconName: String {
@@ -993,10 +1012,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         isSpacebarPressed = false
         didActivateSpacebarHoldSpeed = false
         initialStartTime = 0
+        activePlaybackRequest = nil
         suppressedSponsorSegmentID = nil
         sponsorSkipTask?.cancel()
         sponsorSkipTask = nil
         pausedResizeRefreshTask = nil
+        pictureInPicture.reset()
         scheduleMPVStop(mpvEngine, pauseFirst: true)
         mpvEngine = nil
     }
@@ -1062,6 +1083,40 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             isPlaying = true
             showFeedback(.play)
         }
+    }
+
+    func setPlayback(playing shouldPlay: Bool) {
+        guard isPlaying != shouldPlay else { return }
+        if shouldPlay, shouldRestartFromEnd {
+            restartPlayback()
+            return
+        }
+        guard let mpvEngine else { return }
+        noteInteraction()
+        if shouldPlay {
+            mpvEngine.play()
+            isPlaying = true
+            showFeedback(.play)
+        } else {
+            mpvEngine.pause()
+            isPlaying = false
+            showFeedback(.pause)
+        }
+    }
+
+    func togglePictureInPicture() {
+        noteInteraction()
+        if pictureInPicture.isActive {
+            pictureInPicture.stop()
+            return
+        }
+        guard let activePlaybackRequest else { return }
+        pictureInPicture.start(
+            request: activePlaybackRequest,
+            currentTime: currentTime,
+            isPlaying: isPlaying,
+            playbackRate: effectivePlaybackSpeed
+        )
     }
 
     func toggleMute() {
@@ -1488,6 +1543,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             let candidateSelections = Array(startupCandidates.prefix(startupLimit))
             var preparedEngine: MPVPlaybackEngine?
             var preparedCandidate: PlaybackPreparationCandidate?
+            var preparedRequest: MPVPlaybackRequest?
             var lastPreparationError: Error?
 
             for (index, candidate) in candidateSelections.enumerated() {
@@ -1512,6 +1568,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
                     try await engine.prepare(startTime: startTime, autoPlay: false)
                     preparedEngine = engine
                     preparedCandidate = candidate
+                    preparedRequest = request
                     break
                 } catch {
                     lastPreparationError = error
@@ -1530,6 +1587,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             engine.setVolume(volume)
             engine.setRate(effectivePlaybackSpeed)
             engine.play()
+            activePlaybackRequest = preparedRequest
 
             let startTime = initialStartTime
             currentTime = startTime
@@ -1686,6 +1744,7 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             if let engine = mpvEngine {
                 reapplySubtitlesAfterSwitch(for: playback, engine: engine)
             }
+            activePlaybackRequest = request
             selectedQualityOptionID = option.id
             if option.isAdaptive {
                 adaptiveQualityPolicy.reset()
@@ -2098,6 +2157,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         if didReachPlaybackEnd, currentTime + 0.25 < scrubberUpperBound {
             didReachPlaybackEnd = false
         }
+        pictureInPicture.sync(
+            request: activePlaybackRequest,
+            currentTime: currentTime,
+            isPlaying: isPlaying,
+            playbackRate: effectivePlaybackSpeed
+        )
         maybeClearSuppressedSponsorSegment()
         updateSponsorBlockState(using: engine, previousTime: previousTime)
     }

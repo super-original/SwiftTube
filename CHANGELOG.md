@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.25
+
+- Added native macOS Picture in Picture from the player controls, backed by AVKit while keeping MPV as the main playback engine.
+
 ## 0.15.24
 
 - Added a native Swift browser-cookie importer for account discovery and sign-in, using direct SQLite/Safari cookie parsing before falling back to yt-dlp.
