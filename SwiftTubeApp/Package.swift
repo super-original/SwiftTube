@@ -23,8 +23,6 @@ let package = Package(
                 .copy("Resources")
             ],
             linkerSettings: [
-                .linkedFramework("AVFoundation"),
-                .linkedFramework("AVKit"),
                 .linkedFramework("Security"),
                 .linkedLibrary("sqlite3")
             ]

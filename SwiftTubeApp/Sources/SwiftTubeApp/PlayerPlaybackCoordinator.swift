@@ -650,12 +650,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
     init(layoutState: PlayerLayoutState = PlayerLayoutState()) {
         self.layoutState = layoutState
         super.init()
-        pictureInPicture.onSetPlaying = { [weak self] shouldPlay in
-            self?.setPlayback(playing: shouldPlay)
-        }
-        pictureInPicture.onSeek = { [weak self] time in
-            self?.seek(to: time)
-        }
     }
 
     var playbackBadgeText: String {
@@ -745,7 +739,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     var canTogglePictureInPicture: Bool {
         pictureInPicture.isSupported
-            && activePlaybackRequest != nil
             && mpvEngine != nil
             && !isPreparingInitialPlayback
     }
@@ -1110,12 +1103,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             pictureInPicture.stop()
             return
         }
-        guard let activePlaybackRequest else { return }
+        guard let mpvEngine else { return }
         pictureInPicture.start(
-            request: activePlaybackRequest,
-            currentTime: currentTime,
-            isPlaying: isPlaying,
-            playbackRate: effectivePlaybackSpeed
+            playbackCoordinator: self,
+            engine: mpvEngine,
+            title: currentPlayback?.title
         )
     }
 
@@ -2157,12 +2149,6 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
         if didReachPlaybackEnd, currentTime + 0.25 < scrubberUpperBound {
             didReachPlaybackEnd = false
         }
-        pictureInPicture.sync(
-            request: activePlaybackRequest,
-            currentTime: currentTime,
-            isPlaying: isPlaying,
-            playbackRate: effectivePlaybackSpeed
-        )
         maybeClearSuppressedSponsorSegment()
         updateSponsorBlockState(using: engine, previousTime: previousTime)
     }

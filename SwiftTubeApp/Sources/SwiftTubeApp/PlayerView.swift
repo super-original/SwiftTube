@@ -2176,13 +2176,12 @@ private struct PlayerStageSurface: View {
                 Rectangle()
                     .fill(Color.black.opacity(0.94))
 
-                PictureInPictureSourceView(pictureInPicture: coordinator.pictureInPicture)
-                    .frame(width: 1, height: 1)
-                    .opacity(0.01)
-                    .allowsHitTesting(false)
-
                 if let engine = coordinator.mpvEngine {
-                    MPVMetalRenderView(engine: engine, onLayoutChange: coordinator.handlePlayerSurfaceLayoutChange)
+                    MPVMetalRenderView(
+                        engine: engine,
+                        isDetached: coordinator.pictureInPicture.isActive,
+                        onLayoutChange: coordinator.handlePlayerSurfaceLayoutChange
+                    )
                         .id(engine.id)
                 }
 
@@ -2727,7 +2726,7 @@ private struct PlayerTopStatusOverlay: View {
     }
 }
 
-private struct PlayerControlBar: View {
+struct PlayerControlBar: View {
     private enum SettingsPopoverDestination: String {
         case root
         case subtitles

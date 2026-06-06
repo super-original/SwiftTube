@@ -69,10 +69,12 @@ final class MPVRenderContainerView: NSView {
 final class MPVSurfaceHostView: NSView {
     let renderView: MPVRenderContainerView
 
-    init(renderView: MPVRenderContainerView) {
+    init(renderView: MPVRenderContainerView, attachImmediately: Bool = true) {
         self.renderView = renderView
         super.init(frame: .zero)
-        addSubview(renderView)
+        if attachImmediately {
+            attachRenderViewIfNeeded()
+        }
     }
 
     @available(*, unavailable)
@@ -88,6 +90,15 @@ final class MPVSurfaceHostView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
+    }
+
+    func attachRenderViewIfNeeded() {
+        guard renderView.superview !== self else { return }
+        renderView.removeFromSuperview()
+        addSubview(renderView)
+        if bounds.width > 1, bounds.height > 1 {
+            renderView.frame = CGRect(origin: .zero, size: bounds.size)
+        }
     }
 }
 
@@ -152,16 +163,34 @@ final class MPVRenderViewController: NSViewController {
 
 struct MPVMetalRenderView: NSViewRepresentable {
     let engine: MPVPlaybackEngine
+    let isDetached: Bool
     let onLayoutChange: () -> Void
+
+    init(
+        engine: MPVPlaybackEngine,
+        isDetached: Bool = false,
+        onLayoutChange: @escaping () -> Void = {}
+    ) {
+        self.engine = engine
+        self.isDetached = isDetached
+        self.onLayoutChange = onLayoutChange
+    }
 
     func makeNSView(context: Context) -> MPVSurfaceHostView {
         engine.renderController.configure(onLayoutChange: onLayoutChange)
         let renderView = engine.renderController.view as! MPVRenderContainerView
-        return MPVSurfaceHostView(renderView: renderView)
+        return MPVSurfaceHostView(renderView: renderView, attachImmediately: !isDetached)
     }
 
     func updateNSView(_ nsView: MPVSurfaceHostView, context: Context) {
         nsView.renderView.onLayoutChange = onLayoutChange
+        if isDetached {
+            if nsView.renderView.superview === nsView {
+                nsView.renderView.removeFromSuperview()
+            }
+        } else {
+            nsView.attachRenderViewIfNeeded()
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: MPVSurfaceHostView, context: Context) -> CGSize? {
