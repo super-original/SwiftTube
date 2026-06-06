@@ -40,7 +40,7 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
             engine: engine
         )
         let contentView = PlayerPictureInPicturePanelContentView()
-        let hostingView = NSHostingView(rootView: rootView)
+        let hostingView = PlayerPictureInPictureHostingView(rootView: rootView)
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(hostingView)
         NSLayoutConstraint.activate([
@@ -284,6 +284,13 @@ private final class PlayerPictureInPicturePanelContentView: NSView {
     }
 }
 
+@MainActor
+private final class PlayerPictureInPictureHostingView<Content: View>: NSHostingView<Content> {
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+}
+
 private struct PlayerPictureInPictureContent: View {
     @ObservedObject var playbackCoordinator: PlayerPlaybackCoordinator
     @ObservedObject var pictureInPicture: PlayerPictureInPictureCoordinator
@@ -333,44 +340,61 @@ private struct PlayerPictureInPictureContent: View {
     }
 
     private var pipChrome: some View {
-        ZStack {
-            VStack(spacing: 0) {
-                LinearGradient(
-                    colors: [Color.black.opacity(0.45), .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 84)
+        GeometryReader { geo in
+            let scale = controlScale(for: geo.size)
+            let chromeWidth = max(1, geo.size.width - 28)
 
-                Spacer(minLength: 0)
+            ZStack {
+                VStack(spacing: 0) {
+                    LinearGradient(
+                        colors: [Color.black.opacity(0.45), .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 84 * scale)
 
-                LinearGradient(
-                    colors: [.clear, Color.black.opacity(0.72)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 150)
-            }
-            .allowsHitTesting(false)
+                    Spacer(minLength: 0)
 
-            VStack(spacing: 0) {
-                HStack {
-                    Spacer()
-                    collapseButton
+                    LinearGradient(
+                        colors: [.clear, Color.black.opacity(0.72)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 150 * scale)
                 }
-                .padding(.top, 12)
-                .padding(.horizontal, 12)
+                .allowsHitTesting(false)
 
-                Spacer()
+                VStack(spacing: 0) {
+                    HStack {
+                        Spacer()
+                        collapseButton
+                            .scaleEffect(scale, anchor: .topTrailing)
+                            .frame(width: 30 * scale, height: 30 * scale)
+                    }
+                    .padding(.top, 12 * scale)
+                    .padding(.horizontal, 12 * scale)
 
-                PlayerControlBar(coordinator: playbackCoordinator)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 14)
+                    Spacer()
+
+                    PlayerControlBar(coordinator: playbackCoordinator)
+                        .frame(width: chromeWidth / scale)
+                        .scaleEffect(scale, anchor: .bottom)
+                        .frame(width: chromeWidth, height: 96 * scale, alignment: .bottom)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 14 * scale)
+                }
             }
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .opacity(playbackCoordinator.controlsVisible ? 1 : 0)
         .allowsHitTesting(playbackCoordinator.controlsVisible)
         .animation(.linear(duration: 0.1), value: playbackCoordinator.controlsVisible)
+    }
+
+    private func controlScale(for size: CGSize) -> CGFloat {
+        let widthScale = (size.width - 28) / 720
+        let heightScale = size.height / 340
+        return min(1, max(0.55, min(widthScale, heightScale)))
     }
 
     private var collapseButton: some View {

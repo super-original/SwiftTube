@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.27
+
+- Fixed custom PiP sizing so the floating video frame stays authoritative and the overlay controls scale down inside it.
+
 ## 0.15.26
 
 - Replaced AVKit Picture in Picture with an MPV-backed floating PiP window that keeps the current stream, reuses the player controls, supports edge resizing, corner snapping, Option-drop free placement, and edge-tab collapse/restore.
