@@ -118,6 +118,11 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
         applyFrame(frame, to: panel, animate: true)
     }
 
+    func raiseForInteraction() {
+        panel?.orderFrontRegardless()
+        panel?.makeKey()
+    }
+
     fileprivate func beginInteractiveMove() {
         isInteractivelyMoving = true
         snapTask?.cancel()
@@ -363,11 +368,12 @@ private struct PlayerPictureInPictureContent: View {
                 let videoSize = aspectFitSize(container: geo.size, aspect: playbackCoordinator.videoAspect)
 
                 ZStack {
-                    Color.black
-
                     ZStack {
+                        Color.black
+
                         MPVMetalRenderView(
                             engine: engine,
+                            cornerRadius: 22,
                             onLayoutChange: playbackCoordinator.handlePlayerSurfaceLayoutChange
                         )
                         .id(engine.id)
@@ -392,6 +398,7 @@ private struct PlayerPictureInPictureContent: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
+        .environment(\.controlActiveState, .key)
     }
 
     private var pipChrome: some View {
@@ -456,6 +463,7 @@ private struct PlayerPictureInPictureContent: View {
 
     private func handleHover(_ hovering: Bool) {
         if hovering {
+            pictureInPicture.raiseForInteraction()
             hoverExitTask?.cancel()
             hoverExitTask = nil
             playbackCoordinator.setHovering(true)
@@ -477,28 +485,84 @@ private struct PlayerPictureInPictureContent: View {
     }
 
     private var collapsedButton: some View {
-        Button {
+        let shape = PlayerPictureInPictureCollapsedTabShape(edge: pictureInPicture.collapsedEdge)
+
+        return Button {
             pictureInPicture.expand()
         } label: {
             ZStack {
-                Capsule()
+                shape
                     .fill(.clear)
 
                 Image(systemName: expandSymbolName)
                     .font(.system(size: 22, weight: .bold))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .contentShape(Capsule())
+            .glassEffect(.regular.interactive(), in: shape)
+            .overlay {
+                shape.stroke(Color.white.opacity(0.14), lineWidth: 1)
+            }
+            .contentShape(shape)
         }
-        .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.capsule)
-        .controlSize(.large)
+        .buttonStyle(.plain)
         .foregroundStyle(.white)
         .accessibilityLabel("Show Picture in Picture")
     }
 
     private var expandSymbolName: String {
         pictureInPicture.collapsedEdge == .left ? "chevron.right" : "chevron.left"
+    }
+}
+
+private struct PlayerPictureInPictureCollapsedTabShape: Shape {
+    let edge: PlayerPictureInPictureCoordinator.CollapsedEdge
+
+    func path(in rect: CGRect) -> Path {
+        let radius = min(rect.width, rect.height) * 0.42
+        let corners: RectCornerSet = edge == .left
+            ? [.topRight, .bottomRight]
+            : [.topLeft, .bottomLeft]
+        return Path(roundedRect: rect, corners: corners, radius: radius)
+    }
+}
+
+private struct RectCornerSet: OptionSet {
+    let rawValue: Int
+
+    static let topLeft = RectCornerSet(rawValue: 1 << 0)
+    static let topRight = RectCornerSet(rawValue: 1 << 1)
+    static let bottomRight = RectCornerSet(rawValue: 1 << 2)
+    static let bottomLeft = RectCornerSet(rawValue: 1 << 3)
+}
+
+private extension Path {
+    init(roundedRect rect: CGRect, corners: RectCornerSet, radius: CGFloat) {
+        var path = Path()
+        let radius = min(radius, min(rect.width, rect.height) / 2)
+        let minX = rect.minX
+        let maxX = rect.maxX
+        let minY = rect.minY
+        let maxY = rect.maxY
+
+        path.move(to: CGPoint(x: minX + (corners.contains(.topLeft) ? radius : 0), y: minY))
+        path.addLine(to: CGPoint(x: maxX - (corners.contains(.topRight) ? radius : 0), y: minY))
+        if corners.contains(.topRight) {
+            path.addQuadCurve(to: CGPoint(x: maxX, y: minY + radius), control: CGPoint(x: maxX, y: minY))
+        }
+        path.addLine(to: CGPoint(x: maxX, y: maxY - (corners.contains(.bottomRight) ? radius : 0)))
+        if corners.contains(.bottomRight) {
+            path.addQuadCurve(to: CGPoint(x: maxX - radius, y: maxY), control: CGPoint(x: maxX, y: maxY))
+        }
+        path.addLine(to: CGPoint(x: minX + (corners.contains(.bottomLeft) ? radius : 0), y: maxY))
+        if corners.contains(.bottomLeft) {
+            path.addQuadCurve(to: CGPoint(x: minX, y: maxY - radius), control: CGPoint(x: minX, y: maxY))
+        }
+        path.addLine(to: CGPoint(x: minX, y: minY + (corners.contains(.topLeft) ? radius : 0)))
+        if corners.contains(.topLeft) {
+            path.addQuadCurve(to: CGPoint(x: minX + radius, y: minY), control: CGPoint(x: minX, y: minY))
+        }
+        path.closeSubpath()
+        self = path
     }
 }
 

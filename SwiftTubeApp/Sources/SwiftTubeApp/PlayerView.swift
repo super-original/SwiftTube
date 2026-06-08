@@ -2182,7 +2182,7 @@ private struct PlayerStageSurface: View {
                         isDetached: coordinator.pictureInPicture.isActive,
                         onLayoutChange: coordinator.handlePlayerSurfaceLayoutChange
                     )
-                        .id(engine.id)
+                        .id("\(engine.id.uuidString)-pip-\(coordinator.pictureInPicture.isActive)")
                 }
 
                 if !coordinator.isScrubbing,
@@ -3213,14 +3213,15 @@ struct PlayerControlBar: View {
                 .disabled(coordinator.selectedPlaybackSpeed <= 0.2501)
                 .accessibilityLabel("Decrease Playback Speed")
 
-                Slider(
+                PlayerPlaybackSpeedSlider(
                     value: Binding(
                         get: { coordinator.selectedPlaybackSpeed },
                         set: { coordinator.selectPlaybackSpeed($0) }
                     ),
-                    in: 0.25...3.0,
+                    range: 0.25...3.0,
                     step: 0.05
                 )
+                .frame(height: 24)
                 .accessibilityLabel("Playback Speed")
 
                 Button {
@@ -3244,13 +3245,24 @@ struct PlayerControlBar: View {
                         coordinator.selectPlaybackSpeed(speed)
                     } label: {
                         Text(speed == 1.0 ? "1.0" : AppSettings.playbackSpeedLabel(speed).replacingOccurrences(of: "x", with: ""))
-                            .font(.callout.weight(.semibold))
+                            .font(.caption.weight(.semibold))
                             .monospacedDigit()
-                            .frame(maxWidth: .infinity, minHeight: 34)
+                            .frame(maxWidth: .infinity, minHeight: 26)
                     }
-                    .buttonStyle(.glass(.regular.interactive()))
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.regular)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
+                    .background {
+                        Capsule()
+                            .fill(
+                                abs(coordinator.selectedPlaybackSpeed - speed) < 0.001
+                                    ? Color.accentColor.opacity(0.22)
+                                    : Color.white.opacity(0.08)
+                            )
+                    }
+                    .overlay {
+                        Capsule()
+                            .stroke(Color.white.opacity(abs(coordinator.selectedPlaybackSpeed - speed) < 0.001 ? 0.24 : 0.11), lineWidth: 1)
+                    }
                     .accessibilityLabel("Set Playback Speed \(AppSettings.playbackSpeedLabel(speed))")
                 }
             }
@@ -3549,6 +3561,55 @@ struct PlayerControlBar: View {
         let rowHeight: CGFloat = 34
         let verticalPadding: CGFloat = 12
         return min(max(headerHeight + (CGFloat(itemCount) * rowHeight) + verticalPadding, 108), 360)
+    }
+}
+
+private struct PlayerPlaybackSpeedSlider: NSViewRepresentable {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(value: $value, range: range, step: step)
+    }
+
+    func makeNSView(context: Context) -> NSSlider {
+        let slider = NSSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound, target: context.coordinator, action: #selector(Coordinator.sliderChanged(_:)))
+        slider.isContinuous = true
+        slider.numberOfTickMarks = 0
+        slider.allowsTickMarkValuesOnly = false
+        slider.controlSize = .regular
+        return slider
+    }
+
+    func updateNSView(_ nsView: NSSlider, context: Context) {
+        context.coordinator.value = $value
+        context.coordinator.range = range
+        context.coordinator.step = step
+        nsView.minValue = range.lowerBound
+        nsView.maxValue = range.upperBound
+        if abs(nsView.doubleValue - value) > 0.001 {
+            nsView.doubleValue = value
+        }
+    }
+
+    final class Coordinator: NSObject {
+        var value: Binding<Double>
+        var range: ClosedRange<Double>
+        var step: Double
+
+        init(value: Binding<Double>, range: ClosedRange<Double>, step: Double) {
+            self.value = value
+            self.range = range
+            self.step = step
+        }
+
+        @MainActor @objc func sliderChanged(_ sender: NSSlider) {
+            let bounded = min(max(sender.doubleValue, range.lowerBound), range.upperBound)
+            let snapped = (bounded / step).rounded() * step
+            value.wrappedValue = snapped
+            sender.doubleValue = snapped
+        }
     }
 }
 

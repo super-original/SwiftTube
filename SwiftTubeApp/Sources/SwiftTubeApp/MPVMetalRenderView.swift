@@ -68,13 +68,20 @@ final class MPVRenderContainerView: NSView {
 @MainActor
 final class MPVSurfaceHostView: NSView {
     let renderView: MPVRenderContainerView
+    var cornerRadius: CGFloat = 0 {
+        didSet { applyClipping() }
+    }
 
-    init(renderView: MPVRenderContainerView, attachImmediately: Bool = true) {
+    init(renderView: MPVRenderContainerView, attachImmediately: Bool = true, cornerRadius: CGFloat = 0) {
         self.renderView = renderView
+        self.cornerRadius = cornerRadius
         super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
         if attachImmediately {
             attachRenderViewIfNeeded()
         }
+        applyClipping()
     }
 
     @available(*, unavailable)
@@ -88,6 +95,15 @@ final class MPVSurfaceHostView: NSView {
     override func layout() {
         super.layout()
         syncRenderViewFrame()
+        applyClipping()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        syncRenderViewFrame()
+        Task { @MainActor [weak self] in
+            self?.syncRenderViewFrame()
+        }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -106,6 +122,14 @@ final class MPVSurfaceHostView: NSView {
         if bounds.width > 1, bounds.height > 1 {
             renderView.frame = CGRect(origin: .zero, size: bounds.size)
         }
+    }
+
+    private func applyClipping() {
+        wantsLayer = true
+        layer?.cornerRadius = cornerRadius
+        layer?.masksToBounds = cornerRadius > 0
+        renderView.metalLayer.cornerRadius = cornerRadius
+        renderView.metalLayer.masksToBounds = cornerRadius > 0
     }
 }
 
@@ -171,32 +195,39 @@ final class MPVRenderViewController: NSViewController {
 struct MPVMetalRenderView: NSViewRepresentable {
     let engine: MPVPlaybackEngine
     let isDetached: Bool
+    let cornerRadius: CGFloat
     let onLayoutChange: () -> Void
 
     init(
         engine: MPVPlaybackEngine,
         isDetached: Bool = false,
+        cornerRadius: CGFloat = 0,
         onLayoutChange: @escaping () -> Void = {}
     ) {
         self.engine = engine
         self.isDetached = isDetached
+        self.cornerRadius = cornerRadius
         self.onLayoutChange = onLayoutChange
     }
 
     func makeNSView(context: Context) -> MPVSurfaceHostView {
         engine.renderController.configure(onLayoutChange: onLayoutChange)
         let renderView = engine.renderController.view as! MPVRenderContainerView
-        return MPVSurfaceHostView(renderView: renderView, attachImmediately: !isDetached)
+        return MPVSurfaceHostView(renderView: renderView, attachImmediately: !isDetached, cornerRadius: cornerRadius)
     }
 
     func updateNSView(_ nsView: MPVSurfaceHostView, context: Context) {
         nsView.renderView.onLayoutChange = onLayoutChange
+        nsView.cornerRadius = cornerRadius
         if isDetached {
             if nsView.renderView.superview === nsView {
                 nsView.renderView.removeFromSuperview()
             }
         } else {
             nsView.attachRenderViewIfNeeded()
+            Task { @MainActor in
+                nsView.attachRenderViewIfNeeded()
+            }
         }
     }
 

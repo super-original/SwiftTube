@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.29
+
+- Fixed PiP Metal-surface rounding, active hover appearance, collapsed edge-tab shape, and main-player sizing after exiting PiP.
+- Removed playback-speed slider tick marks and slimmed the common speed preset buttons.
+
 ## 0.15.28
 
 - Improved custom PiP sizing, reattachment, dragging, momentum snapping, offscreen collapse, collapsed glass tab, fullscreen-space visibility, and click-to-play behavior.
