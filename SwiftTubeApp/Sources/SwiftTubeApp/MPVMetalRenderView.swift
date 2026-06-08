@@ -82,10 +82,12 @@ final class MPVSurfaceHostView: NSView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        // Directly propagate to the render view — no autoresizing ambiguity.
-        if newSize.width > 1, newSize.height > 1 {
-            renderView.frame = CGRect(origin: .zero, size: newSize)
-        }
+        syncRenderViewFrame()
+    }
+
+    override func layout() {
+        super.layout()
+        syncRenderViewFrame()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -93,9 +95,14 @@ final class MPVSurfaceHostView: NSView {
     }
 
     func attachRenderViewIfNeeded() {
-        guard renderView.superview !== self else { return }
-        renderView.removeFromSuperview()
-        addSubview(renderView)
+        if renderView.superview !== self {
+            renderView.removeFromSuperview()
+            addSubview(renderView)
+        }
+        syncRenderViewFrame()
+    }
+
+    private func syncRenderViewFrame() {
         if bounds.width > 1, bounds.height > 1 {
             renderView.frame = CGRect(origin: .zero, size: bounds.size)
         }

@@ -18,6 +18,7 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
     private var expandedFrame: NSRect?
     private var snapTask: Task<Void, Never>?
     private var isApplyingProgrammaticFrame = false
+    private var isInteractivelyMoving = false
 
     var symbolName: String {
         isActive ? "pip.exit" : "pip.enter"
@@ -94,12 +95,16 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
 
     func collapse() {
         guard let panel, !isCollapsed else { return }
+        collapse(to: nearestHorizontalEdge(for: panel.frame, on: panel.screen), from: panel.frame)
+    }
+
+    func collapse(to edge: CollapsedEdge, from sourceFrame: NSRect) {
+        guard let panel, !isCollapsed else { return }
         snapTask?.cancel()
-        expandedFrame = panel.frame
-        let edge = nearestHorizontalEdge(for: panel.frame, on: panel.screen)
+        expandedFrame = clampedExpandedFrame(sourceFrame, screen: panel.screen)
         collapsedEdge = edge
         isCollapsed = true
-        applyFrame(collapsedFrame(from: panel.frame, edge: edge, screen: panel.screen), to: panel, animate: true)
+        applyFrame(collapsedFrame(from: sourceFrame, edge: edge, screen: panel.screen), to: panel, animate: true)
     }
 
     func expand() {
@@ -113,17 +118,31 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
         applyFrame(frame, to: panel, animate: true)
     }
 
-    fileprivate func completeMove(optionHeld: Bool) {
+    fileprivate func beginInteractiveMove() {
+        isInteractivelyMoving = true
+        snapTask?.cancel()
+    }
+
+    fileprivate func completeMove(optionHeld: Bool, velocity: CGVector) {
         guard isActive, !isCollapsed, let panel else { return }
+        isInteractivelyMoving = false
         expandedFrame = panel.frame
         guard !optionHeld else { return }
-        snapToNearestCorner(panel: panel)
+        if let edge = collapseEdgeIfNeeded(panel: panel, velocity: velocity) {
+            collapse(to: edge, from: panel.frame)
+            return
+        }
+        snapToNearestCorner(panel: panel, velocity: velocity)
     }
 }
 
 extension PlayerPictureInPictureCoordinator: NSWindowDelegate {
     func windowDidMove(_ notification: Notification) {
-        guard !isApplyingProgrammaticFrame, isActive, !isCollapsed, let panel = notification.object as? NSPanel else { return }
+        guard !isApplyingProgrammaticFrame,
+              !isInteractivelyMoving,
+              isActive,
+              !isCollapsed,
+              let panel = notification.object as? NSPanel else { return }
         expandedFrame = panel.frame
         scheduleSnap(panel: panel)
     }
@@ -156,18 +175,20 @@ private extension PlayerPictureInPictureCoordinator {
     func makePanel(title: String) -> PlayerPictureInPicturePanel {
         let panel = PlayerPictureInPicturePanel(
             contentRect: .zero,
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            styleMask: [.borderless, .resizable, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         panel.title = title
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false
         panel.isReleasedWhenClosed = false
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.backgroundColor = .black
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.screenSaverWindow)))
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
         panel.minSize = NSSize(width: 360, height: 202)
@@ -225,26 +246,50 @@ private extension PlayerPictureInPictureCoordinator {
                   self.isActive,
                   !self.isCollapsed else { return }
             guard !NSEvent.modifierFlags.contains(.option) else { return }
-            self.snapToNearestCorner(panel: panel)
+            self.snapToNearestCorner(panel: panel, velocity: .zero)
         }
     }
 
-    func snapToNearestCorner(panel: NSPanel) {
+    func snapToNearestCorner(panel: NSPanel, velocity: CGVector) {
         let visibleFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? panel.frame
         let size = panel.frame.size
+        let currentCenter = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
+        let projectedCenter = projectedPoint(from: currentCenter, velocity: velocity)
         let candidates = [
             NSPoint(x: visibleFrame.minX + padding, y: visibleFrame.minY + padding),
             NSPoint(x: visibleFrame.maxX - size.width - padding, y: visibleFrame.minY + padding),
             NSPoint(x: visibleFrame.minX + padding, y: visibleFrame.maxY - size.height - padding),
             NSPoint(x: visibleFrame.maxX - size.width - padding, y: visibleFrame.maxY - size.height - padding)
         ]
-        let current = panel.frame.origin
         let nearest = candidates.min { lhs, rhs in
-            squaredDistance(lhs, current) < squaredDistance(rhs, current)
-        } ?? current
+            let lhsCenter = NSPoint(x: lhs.x + size.width / 2, y: lhs.y + size.height / 2)
+            let rhsCenter = NSPoint(x: rhs.x + size.width / 2, y: rhs.y + size.height / 2)
+            return squaredDistance(lhsCenter, projectedCenter) < squaredDistance(rhsCenter, projectedCenter)
+        } ?? panel.frame.origin
         let snappedFrame = NSRect(origin: nearest, size: size)
         expandedFrame = snappedFrame
         applyFrame(snappedFrame, to: panel, animate: true)
+    }
+
+    func collapseEdgeIfNeeded(panel: NSPanel, velocity: CGVector) -> CollapsedEdge? {
+        let visibleFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? panel.frame
+        let frame = panel.frame
+        let leftOverlap = max(0, visibleFrame.minX - frame.minX)
+        let rightOverlap = max(0, frame.maxX - visibleFrame.maxX)
+        let leftIntent = leftOverlap >= min(84, frame.width * 0.22) || (leftOverlap >= 18 && velocity.dx < -420)
+        let rightIntent = rightOverlap >= min(84, frame.width * 0.22) || (rightOverlap >= 18 && velocity.dx > 420)
+
+        if leftIntent && leftOverlap >= rightOverlap { return .left }
+        if rightIntent { return .right }
+        return nil
+    }
+
+    func projectedPoint(from point: NSPoint, velocity: CGVector) -> NSPoint {
+        let projectionTime: CGFloat = 0.32
+        let maxProjection: CGFloat = 520
+        let projectedX = max(-maxProjection, min(maxProjection, velocity.dx * projectionTime))
+        let projectedY = max(-maxProjection, min(maxProjection, velocity.dy * projectionTime))
+        return NSPoint(x: point.x + projectedX, y: point.y + projectedY)
     }
 
     func squaredDistance(_ lhs: NSPoint, _ rhs: NSPoint) -> CGFloat {
@@ -255,8 +300,19 @@ private extension PlayerPictureInPictureCoordinator {
 
     func applyFrame(_ frame: NSRect, to panel: NSPanel, animate: Bool) {
         isApplyingProgrammaticFrame = true
-        panel.setFrame(frame, display: true, animate: animate)
+        if animate {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.24
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().setFrame(frame, display: true)
+            }
+        } else {
+            panel.setFrame(frame, display: true)
+        }
         Task { @MainActor [weak self] in
+            if animate {
+                try? await Task.sleep(nanoseconds: 260_000_000)
+            }
             self?.isApplyingProgrammaticFrame = false
         }
     }
@@ -271,13 +327,13 @@ private final class PlayerPictureInPicturePanel: NSPanel {
 
     override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
-        pipCoordinator?.completeMove(optionHeld: event.modifierFlags.contains(.option))
+        pipCoordinator?.completeMove(optionHeld: event.modifierFlags.contains(.option), velocity: .zero)
     }
 }
 
 @MainActor
 private final class PlayerPictureInPicturePanelContentView: NSView {
-    override var mouseDownCanMoveWindow: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
@@ -299,40 +355,39 @@ private struct PlayerPictureInPictureContent: View {
     @State private var hoverExitTask: Task<Void, Never>? = nil
 
     var body: some View {
-        ZStack {
-            Color.black
-
+        GeometryReader { geo in
             if pictureInPicture.isCollapsed {
                 collapsedButton
+                    .frame(width: geo.size.width, height: geo.size.height)
             } else {
-                MPVMetalRenderView(
-                    engine: engine,
-                    onLayoutChange: playbackCoordinator.handlePlayerSurfaceLayoutChange
-                )
-                .id(engine.id)
+                let videoSize = aspectFitSize(container: geo.size, aspect: playbackCoordinator.videoAspect)
 
-                PlayerPictureInPictureHoverTrackingView { hovering in
-                    if hovering {
-                        hoverExitTask?.cancel()
-                        hoverExitTask = nil
-                        playbackCoordinator.setHovering(true)
-                    } else {
-                        hoverExitTask?.cancel()
-                        hoverExitTask = Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 80_000_000)
-                            guard !Task.isCancelled else { return }
-                            playbackCoordinator.setHovering(false)
-                        }
+                ZStack {
+                    Color.black
+
+                    ZStack {
+                        MPVMetalRenderView(
+                            engine: engine,
+                            onLayoutChange: playbackCoordinator.handlePlayerSurfaceLayoutChange
+                        )
+                        .id(engine.id)
+
+                        PlayerPictureInPictureInteractionView(
+                            onHover: handleHover,
+                            onMove: handlePointerMove,
+                            onClick: playbackCoordinator.togglePlayback,
+                            onDragBegan: pictureInPicture.beginInteractiveMove,
+                            onDragEnded: { optionHeld, velocity in
+                                pictureInPicture.completeMove(optionHeld: optionHeld, velocity: velocity)
+                            }
+                        )
+
+                        pipChrome
                     }
-                } onMove: {
-                    if playbackCoordinator.controlsVisible == false {
-                        playbackCoordinator.setHovering(true)
-                    }
-                    playbackCoordinator.handlePointerMovement()
+                    .frame(width: videoSize.width, height: videoSize.height)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                pipChrome
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -365,15 +420,6 @@ private struct PlayerPictureInPictureContent: View {
                 .allowsHitTesting(false)
 
                 VStack(spacing: 0) {
-                    HStack {
-                        Spacer()
-                        collapseButton
-                            .scaleEffect(scale, anchor: .topTrailing)
-                            .frame(width: 30 * scale, height: 30 * scale)
-                    }
-                    .padding(.top, 12 * scale)
-                    .padding(.horizontal, 12 * scale)
-
                     Spacer()
 
                     PlayerControlBar(coordinator: playbackCoordinator)
@@ -397,36 +443,58 @@ private struct PlayerPictureInPictureContent: View {
         return min(1, max(0.55, min(widthScale, heightScale)))
     }
 
-    private var collapseButton: some View {
-        Button {
-            pictureInPicture.collapse()
-        } label: {
-            Image(systemName: collapseSymbolName)
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 30, height: 30)
+    private func aspectFitSize(container: CGSize, aspect: Double) -> CGSize {
+        guard container.width > 1, container.height > 1 else { return container }
+        let safeAspect = max(aspect, 1)
+        let containerAspect = container.width / container.height
+
+        if containerAspect > safeAspect {
+            return CGSize(width: container.height * safeAspect, height: container.height)
         }
-        .buttonStyle(.glass(.regular.interactive()))
-        .buttonBorderShape(.circle)
-        .controlSize(.regular)
-        .accessibilityLabel("Collapse Picture in Picture")
+        return CGSize(width: container.width, height: container.width / safeAspect)
+    }
+
+    private func handleHover(_ hovering: Bool) {
+        if hovering {
+            hoverExitTask?.cancel()
+            hoverExitTask = nil
+            playbackCoordinator.setHovering(true)
+        } else {
+            hoverExitTask?.cancel()
+            hoverExitTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                guard !Task.isCancelled else { return }
+                playbackCoordinator.setHovering(false)
+            }
+        }
+    }
+
+    private func handlePointerMove() {
+        if playbackCoordinator.controlsVisible == false {
+            playbackCoordinator.setHovering(true)
+        }
+        playbackCoordinator.handlePointerMovement()
     }
 
     private var collapsedButton: some View {
         Button {
             pictureInPicture.expand()
         } label: {
-            Image(systemName: expandSymbolName)
-                .font(.system(size: 18, weight: .bold))
-                .frame(width: 42, height: 84)
-                .contentShape(Rectangle())
+            ZStack {
+                Capsule()
+                    .fill(.clear)
+
+                Image(systemName: expandSymbolName)
+                    .font(.system(size: 22, weight: .bold))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glass(.regular.interactive()))
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
         .foregroundStyle(.white)
         .accessibilityLabel("Show Picture in Picture")
-    }
-
-    private var collapseSymbolName: String {
-        pictureInPicture.collapsedEdge == .left ? "chevron.left" : "chevron.right"
     }
 
     private var expandSymbolName: String {
@@ -434,32 +502,52 @@ private struct PlayerPictureInPictureContent: View {
     }
 }
 
-private struct PlayerPictureInPictureHoverTrackingView: NSViewRepresentable {
+private struct PlayerPictureInPictureInteractionView: NSViewRepresentable {
     let onHover: (Bool) -> Void
     let onMove: () -> Void
+    let onClick: () -> Void
+    let onDragBegan: () -> Void
+    let onDragEnded: (Bool, CGVector) -> Void
 
-    func makeNSView(context: Context) -> PlayerPictureInPictureHoverView {
-        let view = PlayerPictureInPictureHoverView()
+    func makeNSView(context: Context) -> PlayerPictureInPictureInteractionNSView {
+        let view = PlayerPictureInPictureInteractionNSView()
         view.onHover = onHover
         view.onMove = onMove
+        view.onClick = onClick
+        view.onDragBegan = onDragBegan
+        view.onDragEnded = onDragEnded
         return view
     }
 
-    func updateNSView(_ nsView: PlayerPictureInPictureHoverView, context: Context) {
+    func updateNSView(_ nsView: PlayerPictureInPictureInteractionNSView, context: Context) {
         nsView.onHover = onHover
         nsView.onMove = onMove
+        nsView.onClick = onClick
+        nsView.onDragBegan = onDragBegan
+        nsView.onDragEnded = onDragEnded
     }
 }
 
 @MainActor
-private final class PlayerPictureInPictureHoverView: NSView {
+private final class PlayerPictureInPictureInteractionNSView: NSView {
     var onHover: ((Bool) -> Void)?
     var onMove: (() -> Void)?
+    var onClick: (() -> Void)?
+    var onDragBegan: (() -> Void)?
+    var onDragEnded: ((Bool, CGVector) -> Void)?
 
     private var trackingArea: NSTrackingArea?
+    private var mouseDownLocation: NSPoint?
+    private var windowStartOrigin: NSPoint?
+    private var lastMouseLocation: NSPoint?
+    private var lastMouseTime: TimeInterval?
+    private var velocity: CGVector = .zero
+    private var didDrag = false
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        nil
+        let resizeMargin: CGFloat = 8
+        guard bounds.insetBy(dx: resizeMargin, dy: resizeMargin).contains(point) else { return nil }
+        return super.hitTest(point)
     }
 
     override func updateTrackingAreas() {
@@ -488,5 +576,70 @@ private final class PlayerPictureInPictureHoverView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         onMove?()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        mouseDownLocation = NSEvent.mouseLocation
+        windowStartOrigin = window?.frame.origin
+        lastMouseLocation = mouseDownLocation
+        lastMouseTime = event.timestamp
+        velocity = .zero
+        didDrag = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let mouseDownLocation, let windowStartOrigin, let window else { return }
+        let currentLocation = NSEvent.mouseLocation
+        let delta = CGVector(
+            dx: currentLocation.x - mouseDownLocation.x,
+            dy: currentLocation.y - mouseDownLocation.y
+        )
+
+        if !didDrag, hypot(delta.dx, delta.dy) > 4 {
+            didDrag = true
+            onDragBegan?()
+        }
+
+        if didDrag {
+            window.setFrameOrigin(NSPoint(
+                x: windowStartOrigin.x + delta.dx,
+                y: windowStartOrigin.y + delta.dy
+            ))
+            updateVelocity(currentLocation: currentLocation, timestamp: event.timestamp)
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if didDrag {
+            updateVelocity(currentLocation: NSEvent.mouseLocation, timestamp: event.timestamp)
+            onDragEnded?(event.modifierFlags.contains(.option), velocity)
+        } else {
+            onClick?()
+        }
+
+        mouseDownLocation = nil
+        windowStartOrigin = nil
+        lastMouseLocation = nil
+        lastMouseTime = nil
+        velocity = .zero
+        didDrag = false
+    }
+
+    private func updateVelocity(currentLocation: NSPoint, timestamp: TimeInterval) {
+        defer {
+            lastMouseLocation = currentLocation
+            lastMouseTime = timestamp
+        }
+
+        guard let lastMouseLocation, let lastMouseTime else { return }
+        let elapsed = max(0.001, timestamp - lastMouseTime)
+        let instant = CGVector(
+            dx: (currentLocation.x - lastMouseLocation.x) / elapsed,
+            dy: (currentLocation.y - lastMouseLocation.y) / elapsed
+        )
+        velocity = CGVector(
+            dx: (velocity.dx * 0.45) + (instant.dx * 0.55),
+            dy: (velocity.dy * 0.45) + (instant.dy * 0.55)
+        )
     }
 }

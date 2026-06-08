@@ -3036,7 +3036,7 @@ struct PlayerControlBar: View {
         case .subtitles:
             return CGSize(width: fixedWidth, height: listPopoverHeight(itemCount: coordinator.subtitleOptions.count + 1))
         case .playbackSpeed:
-            return CGSize(width: fixedWidth, height: listPopoverHeight(itemCount: coordinator.playbackSpeedOptions.count))
+            return CGSize(width: 300, height: 228)
         case .quality:
             return CGSize(width: fixedWidth, height: listPopoverHeight(itemCount: coordinator.qualityOptions.count))
         }
@@ -3190,16 +3190,72 @@ struct PlayerControlBar: View {
     }
 
     var playbackSpeedPopoverContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 14) {
             settingsSubmenuHeader(title: "Playback Speed")
 
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(coordinator.playbackSpeedOptions) { option in
-                    playbackSpeedMenuOptionButton(for: option)
+            Text(AppSettings.playbackSpeedLabel(coordinator.selectedPlaybackSpeed))
+                .font(.system(size: 30, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .frame(maxWidth: .infinity)
+                .padding(.top, 4)
+
+            HStack(spacing: 14) {
+                Button {
+                    coordinator.adjustPlaybackSpeed(by: -0.05)
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 15, weight: .bold))
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.glass(.regular.interactive()))
+                .buttonBorderShape(.circle)
+                .controlSize(.regular)
+                .disabled(coordinator.selectedPlaybackSpeed <= 0.2501)
+                .accessibilityLabel("Decrease Playback Speed")
+
+                Slider(
+                    value: Binding(
+                        get: { coordinator.selectedPlaybackSpeed },
+                        set: { coordinator.selectPlaybackSpeed($0) }
+                    ),
+                    in: 0.25...3.0,
+                    step: 0.05
+                )
+                .accessibilityLabel("Playback Speed")
+
+                Button {
+                    coordinator.adjustPlaybackSpeed(by: 0.05)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .bold))
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.glass(.regular.interactive()))
+                .buttonBorderShape(.circle)
+                .controlSize(.regular)
+                .disabled(coordinator.selectedPlaybackSpeed >= 2.999)
+                .accessibilityLabel("Increase Playback Speed")
+            }
+            .padding(.horizontal, 14)
+
+            HStack(spacing: 8) {
+                ForEach([1.0, 1.25, 1.5, 2.0, 3.0], id: \.self) { speed in
+                    Button {
+                        coordinator.selectPlaybackSpeed(speed)
+                    } label: {
+                        Text(speed == 1.0 ? "1.0" : AppSettings.playbackSpeedLabel(speed).replacingOccurrences(of: "x", with: ""))
+                            .font(.callout.weight(.semibold))
+                            .monospacedDigit()
+                            .frame(maxWidth: .infinity, minHeight: 34)
+                    }
+                    .buttonStyle(.glass(.regular.interactive()))
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.regular)
+                    .accessibilityLabel("Set Playback Speed \(AppSettings.playbackSpeedLabel(speed))")
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }

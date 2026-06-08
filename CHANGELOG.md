@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.28
+
+- Improved custom PiP sizing, reattachment, dragging, momentum snapping, offscreen collapse, collapsed glass tab, fullscreen-space visibility, and click-to-play behavior.
+- Reworked the playback speed submenu into a slider with 0.05-step snapping, plus/minus controls, and common speed presets.
+
 ## 0.15.27
 
 - Fixed custom PiP sizing so the floating video frame stays authoritative and the overlay controls scale down inside it.

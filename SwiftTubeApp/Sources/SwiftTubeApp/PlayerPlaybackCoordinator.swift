@@ -1263,8 +1263,12 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
 
     func selectPlaybackSpeed(_ speed: Double) {
         noteInteraction()
-        selectedPlaybackSpeed = speed
+        selectedPlaybackSpeed = snappedPlaybackSpeed(speed)
         applyPlaybackSpeed()
+    }
+
+    func adjustPlaybackSpeed(by delta: Double) {
+        selectPlaybackSpeed(selectedPlaybackSpeed + delta)
     }
 
     func handlePlayerSurfaceLayoutChange() {
@@ -1942,6 +1946,11 @@ final class PlayerPlaybackCoordinator: NSObject, ObservableObject {
             mpvEngine.setRate(resolvedSpeed)
             playbackSpeedTransitionTask = nil
         }
+    }
+
+    private func snappedPlaybackSpeed(_ speed: Double) -> Double {
+        let bounded = min(max(speed, 0.25), 3.0)
+        return (bounded / 0.05).rounded() * 0.05
     }
 
     private func currentRestoreState() -> PlaybackRestoreState {
