@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI
 
 private let paginationDuplicateHopLimit = 3
 
@@ -1446,6 +1447,22 @@ final class PlaylistFeedViewModel: ObservableObject {
         )
 
         return true
+    }
+
+    @available(macOS 27.0, *)
+    func reorderItems(
+        using difference: ReorderDifference<String, ReorderableSingleCollectionIdentifier>
+    ) {
+        guard let draggedID = difference.sources.first else { return }
+        switch difference.destination.position {
+        case .before(let destinationID):
+            guard let destinationIndex = items.firstIndex(where: { $0.playlistIdentity == destinationID }) else {
+                return
+            }
+            _ = reorderItem(withID: draggedID, toInsertionIndex: destinationIndex)
+        case .end:
+            _ = reorderItem(withID: draggedID, toInsertionIndex: items.count)
+        }
     }
 
     private func move(_ video: VideoItem, in items: [VideoItem], toTop: Bool) -> [VideoItem] {

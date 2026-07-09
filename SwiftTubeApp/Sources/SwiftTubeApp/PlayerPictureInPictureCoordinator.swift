@@ -59,11 +59,13 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
 
         let frame = defaultExpandedFrame(aspect: aspect)
         expandedFrame = frame
+        self.panel = panel
+        isPreparing = true
         isActive = true
         isCollapsed = false
         applyFrame(frame, to: panel, animate: false)
-        panel.makeKeyAndOrderFront(nil)
-        self.panel = panel
+        panel.orderFrontRegardless()
+        refreshTransferredSurface(engine: engine, playbackCoordinator: playbackCoordinator)
     }
 
     func stop() {
@@ -104,12 +106,14 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
         expandedFrame = clampedExpandedFrame(sourceFrame, screen: panel.screen)
         collapsedEdge = edge
         isCollapsed = true
+        panel.minSize = tabSize
         applyFrame(collapsedFrame(from: sourceFrame, edge: edge, screen: panel.screen), to: panel, animate: true)
     }
 
     func expand() {
         guard let panel, isCollapsed else { return }
         isCollapsed = false
+        panel.minSize = NSSize(width: 360, height: 202)
         let frame = clampedExpandedFrame(
             expandedFrame ?? defaultExpandedFrame(aspect: Double(panel.contentAspectRatio.width)),
             screen: panel.screen
@@ -120,7 +124,6 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
 
     func raiseForInteraction() {
         panel?.orderFrontRegardless()
-        panel?.makeKey()
     }
 
     fileprivate func beginInteractiveMove() {
@@ -129,8 +132,12 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
     }
 
     fileprivate func completeMove(optionHeld: Bool, velocity: CGVector) {
-        guard isActive, !isCollapsed, let panel else { return }
+        guard isActive, let panel else { return }
         isInteractivelyMoving = false
+        if isCollapsed {
+            completeCollapsedMove(panel: panel)
+            return
+        }
         expandedFrame = panel.frame
         guard !optionHeld else { return }
         if let edge = collapseEdgeIfNeeded(panel: panel, velocity: velocity) {
@@ -175,7 +182,59 @@ extension PlayerPictureInPictureCoordinator: NSWindowDelegate {
 private extension PlayerPictureInPictureCoordinator {
     var padding: CGFloat { 18 }
     var defaultWidth: CGFloat { 520 }
-    var tabSize: CGSize { CGSize(width: 42, height: 84) }
+    var tabSize: CGSize { CGSize(width: 32, height: 72) }
+
+    func refreshTransferredSurface(
+        engine: MPVPlaybackEngine,
+        playbackCoordinator: PlayerPlaybackCoordinator
+    ) {
+        Task { @MainActor [weak self, weak engine, weak playbackCoordinator] in
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 45_000_000)
+            guard let self, self.isActive, let engine else { return }
+            if let renderView = engine.renderController.view as? MPVRenderContainerView {
+                renderView.needsLayout = true
+                renderView.layoutSubtreeIfNeeded()
+                renderView.applyMetalLayerBounds(size: renderView.bounds.size)
+                renderView.needsDisplay = true
+            }
+            if !engine.snapshot().isPlaying, let playbackCoordinator {
+                try? engine.refreshPausedFrame(at: playbackCoordinator.currentTime)
+            }
+            self.isPreparing = false
+        }
+    }
+
+    func completeCollapsedMove(panel: NSPanel) {
+        let visibleFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? panel.frame
+        let pulledInward: Bool
+        switch collapsedEdge {
+        case .left:
+            pulledInward = panel.frame.minX - visibleFrame.minX > 18
+        case .right:
+            pulledInward = visibleFrame.maxX - panel.frame.maxX > 18
+        }
+
+        if pulledInward {
+            let expandedSize = expandedFrame?.size ?? defaultExpandedFrame(aspect: Double(panel.contentAspectRatio.width)).size
+            let originX = collapsedEdge == .left
+                ? panel.frame.maxX + 8
+                : panel.frame.minX - expandedSize.width - 8
+            let pulledFrame = NSRect(
+                x: originX,
+                y: panel.frame.midY - expandedSize.height / 2,
+                width: expandedSize.width,
+                height: expandedSize.height
+            )
+            expandedFrame = clampedExpandedFrame(pulledFrame, screen: panel.screen)
+            expand()
+            return
+        }
+
+        let edge = nearestHorizontalEdge(for: panel.frame, on: panel.screen)
+        collapsedEdge = edge
+        applyFrame(collapsedFrame(from: panel.frame, edge: edge, screen: panel.screen), to: panel, animate: true)
+    }
 
     func makePanel(title: String) -> PlayerPictureInPicturePanel {
         let panel = PlayerPictureInPicturePanel(
@@ -487,24 +546,32 @@ private struct PlayerPictureInPictureContent: View {
     private var collapsedButton: some View {
         let shape = PlayerPictureInPictureCollapsedTabShape(edge: pictureInPicture.collapsedEdge)
 
-        return Button {
-            pictureInPicture.expand()
-        } label: {
-            ZStack {
-                shape
-                    .fill(.clear)
+        return ZStack {
+            shape
+                .fill(.clear)
 
-                Image(systemName: expandSymbolName)
-                    .font(.system(size: 22, weight: .bold))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .glassEffect(.regular.interactive(), in: shape)
-            .overlay {
-                shape.stroke(Color.white.opacity(0.14), lineWidth: 1)
-            }
-            .contentShape(shape)
+            Image(systemName: expandSymbolName)
+                .font(.system(size: 17, weight: .bold))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            PlayerPictureInPictureInteractionView(
+                onHover: { hovering in
+                    if hovering { pictureInPicture.raiseForInteraction() }
+                },
+                onMove: {},
+                onClick: pictureInPicture.expand,
+                onDragBegan: pictureInPicture.beginInteractiveMove,
+                onDragEnded: { optionHeld, velocity in
+                    pictureInPicture.completeMove(optionHeld: optionHeld, velocity: velocity)
+                },
+                excludesResizeEdges: false
+            )
         }
-        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: shape)
+        .overlay {
+            shape.stroke(Color.white.opacity(0.14), lineWidth: 1)
+        }
+        .contentShape(shape)
         .foregroundStyle(.white)
         .accessibilityLabel("Show Picture in Picture")
     }
@@ -572,6 +639,7 @@ private struct PlayerPictureInPictureInteractionView: NSViewRepresentable {
     let onClick: () -> Void
     let onDragBegan: () -> Void
     let onDragEnded: (Bool, CGVector) -> Void
+    var excludesResizeEdges = true
 
     func makeNSView(context: Context) -> PlayerPictureInPictureInteractionNSView {
         let view = PlayerPictureInPictureInteractionNSView()
@@ -580,6 +648,7 @@ private struct PlayerPictureInPictureInteractionView: NSViewRepresentable {
         view.onClick = onClick
         view.onDragBegan = onDragBegan
         view.onDragEnded = onDragEnded
+        view.excludesResizeEdges = excludesResizeEdges
         return view
     }
 
@@ -589,6 +658,7 @@ private struct PlayerPictureInPictureInteractionView: NSViewRepresentable {
         nsView.onClick = onClick
         nsView.onDragBegan = onDragBegan
         nsView.onDragEnded = onDragEnded
+        nsView.excludesResizeEdges = excludesResizeEdges
     }
 }
 
@@ -599,6 +669,7 @@ private final class PlayerPictureInPictureInteractionNSView: NSView {
     var onClick: (() -> Void)?
     var onDragBegan: (() -> Void)?
     var onDragEnded: ((Bool, CGVector) -> Void)?
+    var excludesResizeEdges = true
 
     private var trackingArea: NSTrackingArea?
     private var mouseDownLocation: NSPoint?
@@ -609,8 +680,10 @@ private final class PlayerPictureInPictureInteractionNSView: NSView {
     private var didDrag = false
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        let resizeMargin: CGFloat = 8
-        guard bounds.insetBy(dx: resizeMargin, dy: resizeMargin).contains(point) else { return nil }
+        if excludesResizeEdges {
+            let resizeMargin: CGFloat = 8
+            guard bounds.insetBy(dx: resizeMargin, dy: resizeMargin).contains(point) else { return nil }
+        }
         return super.hitTest(point)
     }
 

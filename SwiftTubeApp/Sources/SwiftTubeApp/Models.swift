@@ -778,6 +778,21 @@ struct PlaylistSummary: Codable, Hashable, Identifiable, Sendable {
         return URL(string: urlString)
     }
 
+    var artworkAspectRatio: Double {
+        guard let thumbnail = thumbnails.last,
+              let width = thumbnail.width,
+              let height = thumbnail.height,
+              height > 0 else {
+            return 16.0 / 9.0
+        }
+        let ratio = Double(width) / Double(height)
+        return (0.78...1.28).contains(ratio) ? 1 : 16.0 / 9.0
+    }
+
+    var hasSquareArtwork: Bool {
+        artworkAspectRatio == 1
+    }
+
     var referenceKind: PlaylistReference.Kind {
         switch playlistId {
         case "WL":

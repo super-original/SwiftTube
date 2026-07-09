@@ -8,6 +8,15 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.32
+
+- Added square-aware and widescreen-aware playlist artwork with a shared cached loader, tighter metadata spacing, and an integrated square-card treatment.
+- Made playlist video rows match the history layout and adopted macOS 27 reorder containers, retaining the previous drop-zone implementation as a macOS 26 fallback.
+- Removed excess bottom space from playlist and player-settings popovers.
+- Rebuilt playback-speed presets as slim glass buttons, normalized preset labels, and added a fixed two-decimal readout with rolling numeric transitions.
+- Prevented custom PiP hover from stealing key focus, narrowed its collapsed edge tab, made the full tab clickable and draggable, and made an inward pull expand it.
+- Added a delayed MPV surface-layout refresh during PiP transfer to prevent intermittent black video frames.
+
 ## 0.15.31
 
 - Reorganized settings by merging the sparse Appearance category into General and removing redundant page subtitles.

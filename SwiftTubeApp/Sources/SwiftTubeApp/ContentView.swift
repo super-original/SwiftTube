@@ -2559,7 +2559,10 @@ private struct PlaylistFeedScreen: View {
             VStack(alignment: .leading, spacing: 18) {
                 ZStack(alignment: .bottomTrailing) {
                     PlaylistFeedArtwork(playlist: summaryPlaylist)
-                        .frame(width: 312, height: 312)
+                        .frame(
+                            width: 312,
+                            height: 312 / CGFloat(summaryPlaylist.artworkAspectRatio)
+                        )
 
                     if let count = viewModel.feed?.itemCountText {
                         Text(count)
@@ -2649,59 +2652,85 @@ private struct PlaylistFeedScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                LazyVStack(spacing: 4) {
-                    ForEach(Array(viewModel.items.enumerated()), id: \.element.playlistIdentity) { index, video in
-                        PlaylistReorderDropZone {
-                            viewModel.reorderItem(withID: $0, toInsertionIndex: index)
-                        }
-
-                        PlaylistFeedDraggableRow(
-                            video: video,
-                            isCurrent: isCurrent(video),
-                            isMutating: viewModel.mutationIDs.contains(video.playlistSetVideoId ?? ""),
-                            onPlay: { playPlaylist(startingWith: video) },
-                            onOpenChannel: {
-                                guard let channel = video.channelReference else { return }
-                                navigation.showChannel(channel)
-                            }
-                        )
-                        .contextMenu {
-                            VideoContextMenuContent(
-                                video: video,
-                                userPlaylists: movableLibraryPlaylists(excluding: viewModel.playlist.playlistId),
-                                onPlay: { playPlaylist(startingWith: video) },
-                                onPlayFromHere: { playPlaylist(startingWith: video) },
-                                onAddToWatchLater: viewModel.playlist.kind == .watchLater ? nil : queueAddToWatchLater(videoID: video.id),
-                                onSaveToPlaylist: { playlistID in
-                                    queueSaveToPlaylist(videoID: video.id, playlistID: playlistID)
-                                },
-                                onMoveToPlaylist: video.playlistCanRemove ? { playlistID in
-                                    movePlaylistVideo(video, to: playlistID)
-                                } : nil,
-                                onMoveToWatchLater: viewModel.playlist.kind == .watchLater || !video.playlistCanRemove ? nil : {
-                                    viewModel.moveItemToWatchLater(video)
-                                },
-                                onRemoveFromCurrentPlaylist: video.playlistCanRemove ? { viewModel.removeItem(video) } : nil,
-                                onMoveToTop: video.playlistCanMoveToTop ? { viewModel.moveItemToTop(video) } : nil,
-                                onMoveToBottom: video.playlistCanMoveToBottom ? { viewModel.moveItemToBottom(video) } : nil,
-                                onRemoveFromWatchHistory: nil
-                            )
-                        }
-                        .onAppear {
-                            viewModel.loadMoreIfNeeded(currentVideo: video)
-                        }
-                    }
-
-                    PlaylistReorderDropZone {
-                        viewModel.reorderItem(withID: $0, toInsertionIndex: viewModel.items.count)
-                    }
-
-                    if viewModel.isLoading {
-                        LoadingMoreIndicator(text: "Loading more videos...")
-                            .padding(.top, 8)
-                    }
+                if #available(macOS 27.0, *) {
+                    modernPlaylistList
+                } else {
+                    legacyPlaylistList
                 }
             }
+        }
+    }
+
+    @available(macOS 27.0, *)
+    private var modernPlaylistList: some View {
+        LazyVStack(spacing: 4) {
+            ForEach(viewModel.items, id: \.playlistIdentity) { video in
+                playlistRow(video, usesSystemReordering: true)
+            }
+            .reorderable()
+
+            loadingMoreRows
+        }
+        .reorderContainer(for: VideoItem.self, itemID: \.playlistIdentity) { difference in
+            viewModel.reorderItems(using: difference)
+        }
+    }
+
+    private var legacyPlaylistList: some View {
+        LazyVStack(spacing: 4) {
+            ForEach(Array(viewModel.items.enumerated()), id: \.element.playlistIdentity) { index, video in
+                PlaylistReorderDropZone {
+                    viewModel.reorderItem(withID: $0, toInsertionIndex: index)
+                }
+                playlistRow(video, usesSystemReordering: false)
+            }
+            PlaylistReorderDropZone {
+                viewModel.reorderItem(withID: $0, toInsertionIndex: viewModel.items.count)
+            }
+            loadingMoreRows
+        }
+    }
+
+    @ViewBuilder
+    private var loadingMoreRows: some View {
+        if viewModel.isLoading {
+            LoadingMoreIndicator(text: "Loading more videos...")
+                .padding(.top, 8)
+        }
+    }
+
+    private func playlistRow(_ video: VideoItem, usesSystemReordering: Bool) -> some View {
+        PlaylistFeedDraggableRow(
+            video: video,
+            usesSystemReordering: usesSystemReordering,
+            isCurrent: isCurrent(video),
+            isMutating: viewModel.mutationIDs.contains(video.playlistSetVideoId ?? ""),
+            onPlay: { playPlaylist(startingWith: video) },
+            onOpenChannel: {
+                guard let channel = video.channelReference else { return }
+                navigation.showChannel(channel)
+            }
+        )
+        .contextMenu {
+            VideoContextMenuContent(
+                video: video,
+                userPlaylists: movableLibraryPlaylists(excluding: viewModel.playlist.playlistId),
+                onPlay: { playPlaylist(startingWith: video) },
+                onPlayFromHere: { playPlaylist(startingWith: video) },
+                onAddToWatchLater: viewModel.playlist.kind == .watchLater ? nil : queueAddToWatchLater(videoID: video.id),
+                onSaveToPlaylist: { playlistID in queueSaveToPlaylist(videoID: video.id, playlistID: playlistID) },
+                onMoveToPlaylist: video.playlistCanRemove ? { playlistID in movePlaylistVideo(video, to: playlistID) } : nil,
+                onMoveToWatchLater: viewModel.playlist.kind == .watchLater || !video.playlistCanRemove ? nil : {
+                    viewModel.moveItemToWatchLater(video)
+                },
+                onRemoveFromCurrentPlaylist: video.playlistCanRemove ? { viewModel.removeItem(video) } : nil,
+                onMoveToTop: video.playlistCanMoveToTop ? { viewModel.moveItemToTop(video) } : nil,
+                onMoveToBottom: video.playlistCanMoveToBottom ? { viewModel.moveItemToBottom(video) } : nil,
+                onRemoveFromWatchHistory: nil
+            )
+        }
+        .onAppear {
+            viewModel.loadMoreIfNeeded(currentVideo: video)
         }
     }
 
@@ -2804,132 +2833,143 @@ private struct PlaylistFeedScreen: View {
 }
 
 private struct PlaylistCard: View {
+    @ObservedObject private var settings = AppSettings.shared
     let playlist: PlaylistSummary
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ZStack(alignment: .bottomLeading) {
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(Color.gray.opacity(0.16))
-                    .overlay {
-                        ZStack {
-                            if playlist.referenceKind == .userPlaylist {
-                                CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: 640, contentMode: .fill) {
-                                    RoundedRectangle(cornerRadius: 18)
-                                        .fill(Color.gray.opacity(0.22))
-                                        .overlay(
-                                            Image(systemName: "music.note.list")
-                                                .font(.system(size: 26))
-                                                .foregroundStyle(.secondary)
-                                        )
-                                }
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .clipped()
-                            } else {
-                                LinearGradient(
-                                    colors: playlist.referenceKind == .watchLater
-                                        ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
-                                        : [BrandAssets.youtubeLightRed, BrandAssets.youtubeDarkRed],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                                .overlay {
-                                    VStack(spacing: 10) {
-                                        Image(systemName: playlist.referenceKind == .watchLater ? "clock.fill" : "hand.thumbsup.fill")
-                                            .font(.system(size: 34, weight: .bold))
-                                        Text(playlist.title)
-                                            .font(.headline.weight(.bold))
-                                            .multilineTextAlignment(.center)
-                                            .padding(.horizontal, 18)
-                                    }
-                                    .foregroundStyle(.white)
-                                }
-                            }
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 18))
-                    }
-                    .aspectRatio(16 / 9, contentMode: .fit)
+        let cornerRadius = settings.thumbnailCornerStyle.radius(default: 18)
 
-                if let count = playlist.itemCountText, !count.isEmpty {
-                    Text(count)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .padding(12)
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .bottomLeading) {
+                PlaylistArtworkImage(
+                    playlist: playlist,
+                    cornerRadius: cornerRadius,
+                    maxPixelSize: 640
+                )
+                .aspectRatio(CGFloat(playlist.artworkAspectRatio), contentMode: .fit)
+
+                if playlist.hasSquareArtwork {
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.78)],
+                        startPoint: .center,
+                        endPoint: .bottom
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+
+                    playlistDetails(foreground: .white, secondary: .white.opacity(0.72))
+                        .padding(14)
                 }
+
+                countBadge
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .padding(10)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(playlist.title)
-                    .font(.headline)
-                    .lineLimit(2)
-
-                let metadata = [playlist.privacy, playlist.updatedText]
-                    .compactMap { $0 }
-                    .joined(separator: " • ")
-
-                if !metadata.isEmpty {
-                    Text(metadata)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
+            if !playlist.hasSquareArtwork {
+                playlistDetails(foreground: .primary, secondary: .secondary)
+                    .padding(.horizontal, 4)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    @ViewBuilder
+    private var countBadge: some View {
+        if let count = playlist.itemCountText, !count.isEmpty {
+            Text(count)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(.ultraThinMaterial, in: Capsule())
+        }
+    }
+
+    private func playlistDetails(foreground: Color, secondary: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(playlist.title)
+                .font(.headline)
+                .foregroundStyle(foreground)
+                .lineLimit(2)
+
+            let metadata = [playlist.privacy, playlist.updatedText]
+                .compactMap { $0 }
+                .joined(separator: " • ")
+            if !metadata.isEmpty {
+                Text(metadata)
+                    .font(.subheadline)
+                    .foregroundStyle(secondary)
+                    .lineLimit(2)
+            }
+        }
+    }
 }
 
 private struct PlaylistFeedArtwork: View {
+    @ObservedObject private var settings = AppSettings.shared
     let playlist: PlaylistSummary
+
+    var body: some View {
+        PlaylistArtworkImage(
+            playlist: playlist,
+            cornerRadius: settings.thumbnailCornerStyle.radius(default: 28),
+            maxPixelSize: 720
+        )
+    }
+}
+
+private struct PlaylistArtworkImage: View {
+    let playlist: PlaylistSummary
+    let cornerRadius: CGFloat
+    let maxPixelSize: Int
 
     var body: some View {
         Group {
             if playlist.referenceKind == .userPlaylist {
-                CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: 720, contentMode: .fill) {
-                    RoundedRectangle(cornerRadius: 28)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 0.24, green: 0.40, blue: 0.54),
-                                    Color(red: 0.06, green: 0.13, blue: 0.20)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .overlay(
-                            Image(systemName: "music.note.list")
-                                .font(.system(size: 42, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.86))
-                        )
+                CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: maxPixelSize, contentMode: .fill) {
+                    placeholder
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
             } else {
-                RoundedRectangle(cornerRadius: 28)
-                    .fill(
-                        LinearGradient(
-                            colors: playlist.referenceKind == .watchLater
-                                ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
-                                : [BrandAssets.youtubeLightRed, BrandAssets.youtubeDarkRed],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay {
-                        VStack(spacing: 14) {
-                            Image(systemName: playlist.referenceKind == .watchLater ? "clock.fill" : "hand.thumbsup.fill")
-                                .font(.system(size: 50, weight: .bold))
-                            Text(playlist.title)
-                                .font(.system(size: 28, weight: .bold))
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 28)
-                        }
-                        .foregroundStyle(.white)
+                LinearGradient(
+                    colors: playlist.referenceKind == .watchLater
+                        ? [Color(red: 0.20, green: 0.44, blue: 0.94), Color(red: 0.08, green: 0.16, blue: 0.36)]
+                        : [BrandAssets.youtubeLightRed, BrandAssets.youtubeDarkRed],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .overlay {
+                    VStack(spacing: 12) {
+                        Image(systemName: playlist.referenceKind == .watchLater ? "clock.fill" : "hand.thumbsup.fill")
+                            .font(.system(size: 42, weight: .bold))
+                        Text(playlist.title)
+                            .font(.title3.weight(.bold))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 20)
                     }
+                    .foregroundStyle(.white)
+                }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 28))
+        .background(Color.gray.opacity(0.16))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private var placeholder: some View {
+        LinearGradient(
+            colors: [Color(red: 0.24, green: 0.40, blue: 0.54), Color(red: 0.06, green: 0.13, blue: 0.20)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .overlay(
+            Image(systemName: "music.note.list")
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.86))
+        )
     }
 }
 
@@ -3038,6 +3078,7 @@ private struct PlaylistVideoRow: View {
 private struct PlaylistFeedDraggableRow: View {
     @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
+    let usesSystemReordering: Bool
     let isCurrent: Bool
     let isMutating: Bool
     let onPlay: () -> Void
@@ -3051,14 +3092,13 @@ private struct PlaylistFeedDraggableRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
-            PlaylistRowHandle(
-                isHovered: isHovered,
-                canReorder: canReorder,
-                fallbackText: video.playlistIndexText,
-                isCurrent: isCurrent,
-                fullHeight: 128
-            )
-            .draggable(video.playlistIdentity)
+            Group {
+                if usesSystemReordering {
+                    rowHandle
+                } else {
+                    rowHandle.draggable(video.playlistIdentity)
+                }
+            }
 
             PlaylistVideoRow(
                 video: video,
@@ -3093,8 +3133,20 @@ private struct PlaylistFeedDraggableRow: View {
         .contentShape(RoundedRectangle(cornerRadius: 22))
         .onTapGesture(perform: onPlay)
         .onHover { hovering in
-            isHovered = hovering
+            withAnimation(settings.hoverAnimationsEnabled ? .easeOut(duration: 0.14) : nil) {
+                isHovered = hovering
+            }
         }
+    }
+
+    private var rowHandle: some View {
+        PlaylistRowHandle(
+            isHovered: isHovered,
+            canReorder: canReorder,
+            fallbackText: video.playlistIndexText,
+            isCurrent: isCurrent,
+            fullHeight: 128
+        )
     }
 }
 

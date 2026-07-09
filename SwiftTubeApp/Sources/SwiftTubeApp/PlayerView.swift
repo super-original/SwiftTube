@@ -865,8 +865,14 @@ private extension PlayerScreen {
     }
 
     var playlistPopoverSize: CGSize {
-        let rowCount = CGFloat(max(viewModel.playlistOptions.count, 1))
-        return CGSize(width: 280, height: min(max((rowCount * 48) + 16, 84), 300))
+        guard !viewModel.playlistOptions.isEmpty else {
+            return CGSize(width: 280, height: 58)
+        }
+        let rowsHeight = viewModel.playlistOptions.reduce(CGFloat.zero) { height, option in
+            height + ((option.privacy?.isEmpty == false) ? 54 : 38)
+        }
+        let spacing = CGFloat(max(viewModel.playlistOptions.count - 1, 0)) * 6
+        return CGSize(width: 280, height: min(rowsHeight + spacing + 16, 300))
     }
 
     var playlistPopoverContent: some View {
@@ -3036,7 +3042,7 @@ struct PlayerControlBar: View {
         case .subtitles:
             return CGSize(width: fixedWidth, height: listPopoverHeight(itemCount: coordinator.subtitleOptions.count + 1))
         case .playbackSpeed:
-            return CGSize(width: 300, height: 228)
+            return CGSize(width: 300, height: 202)
         case .quality:
             return CGSize(width: fixedWidth, height: listPopoverHeight(itemCount: coordinator.qualityOptions.count))
         }
@@ -3193,11 +3199,13 @@ struct PlayerControlBar: View {
         VStack(alignment: .leading, spacing: 14) {
             settingsSubmenuHeader(title: "Playback Speed")
 
-            Text(AppSettings.playbackSpeedLabel(coordinator.selectedPlaybackSpeed))
+            Text(String(format: "%.2fx", coordinator.selectedPlaybackSpeed))
                 .font(.system(size: 30, weight: .semibold, design: .rounded))
                 .monospacedDigit()
+                .contentTransition(.numericText(value: coordinator.selectedPlaybackSpeed))
                 .frame(maxWidth: .infinity)
                 .padding(.top, 4)
+                .animation(.snappy(duration: 0.22, extraBounce: 0), value: coordinator.selectedPlaybackSpeed)
 
             HStack(spacing: 14) {
                 Button {
@@ -3244,30 +3252,20 @@ struct PlayerControlBar: View {
                     Button {
                         coordinator.selectPlaybackSpeed(speed)
                     } label: {
-                        Text(speed == 1.0 ? "1.0" : AppSettings.playbackSpeedLabel(speed).replacingOccurrences(of: "x", with: ""))
+                        Text(AppSettings.playbackSpeedLabel(speed))
                             .font(.caption.weight(.semibold))
                             .monospacedDigit()
                             .frame(maxWidth: .infinity, minHeight: 26)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.primary)
-                    .background {
-                        Capsule()
-                            .fill(
-                                abs(coordinator.selectedPlaybackSpeed - speed) < 0.001
-                                    ? Color.accentColor.opacity(0.22)
-                                    : Color.white.opacity(0.08)
-                            )
-                    }
-                    .overlay {
-                        Capsule()
-                            .stroke(Color.white.opacity(abs(coordinator.selectedPlaybackSpeed - speed) < 0.001 ? 0.24 : 0.11), lineWidth: 1)
-                    }
+                    .buttonStyle(.glass(.regular.interactive()))
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.mini)
+                    .tint(abs(coordinator.selectedPlaybackSpeed - speed) < 0.001 ? Color.accentColor : nil)
                     .accessibilityLabel("Set Playback Speed \(AppSettings.playbackSpeedLabel(speed))")
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.bottom, 10)
+            .padding(.bottom, 2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -3559,7 +3557,7 @@ struct PlayerControlBar: View {
     private func listPopoverHeight(itemCount: Int) -> CGFloat {
         let headerHeight: CGFloat = 42
         let rowHeight: CGFloat = 34
-        let verticalPadding: CGFloat = 12
+        let verticalPadding: CGFloat = 4
         return min(max(headerHeight + (CGFloat(itemCount) * rowHeight) + verticalPadding, 108), 360)
     }
 }
