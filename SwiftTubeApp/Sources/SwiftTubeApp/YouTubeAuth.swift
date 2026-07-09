@@ -194,6 +194,31 @@ actor YouTubeAuthManager {
         material?.cookieFileURL
     }
 
+    func probeMaterial(
+        for browser: BrowserLoginOption,
+        profilePath: String?
+    ) throws -> AuthMaterial {
+        let probesDirectory = supportDirectoryURL.appendingPathComponent("CookieProbes", isDirectory: true)
+        try FileManager.default.createDirectory(at: probesDirectory, withIntermediateDirectories: true)
+        let probeURL = probesDirectory.appendingPathComponent("\(browser.rawValue)-\(UUID().uuidString).txt")
+        try exportBrowserCookies(for: browser, profilePath: profilePath, to: probeURL)
+        let probeConfig = AuthSessionConfig(
+            browser: browser.rawValue,
+            browserLabel: browser.displayName,
+            profilePath: profilePath,
+            avatarURL: nil,
+            displayName: nil,
+            email: nil,
+            handle: nil
+        )
+        return try Self.loadMaterial(config: probeConfig, cookieFileURL: probeURL)
+    }
+
+    func activateProbeMaterial(_ probeMaterial: AuthMaterial) {
+        config = probeMaterial.config
+        material = probeMaterial
+    }
+
     private func exportBrowserCookies(
         for browser: BrowserLoginOption,
         profilePath: String?,

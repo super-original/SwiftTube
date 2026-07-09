@@ -49,7 +49,7 @@ mkdir -p "$ICON_BUILD_DIR"
     --enable-on-demand-resources NO \
     --development-region en \
     --target-device mac \
-    --minimum-deployment-target 26.0 \
+    --minimum-deployment-target 27.0 \
     --platform macosx \
     --standalone-icon-behavior all
 
@@ -81,7 +81,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key>
     <string>$BUILD_NUMBER</string>
     <key>LSMinimumSystemVersion</key>
-    <string>26.0</string>
+    <string>27.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>

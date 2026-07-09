@@ -168,6 +168,7 @@ private extension InlinePlaybackManager {
             startPolling(engine: engine, payload: payload)
         } catch {
             guard !Task.isCancelled else { return }
+            PlaybackDebugLogger.log("inline preview failed video=\(video.id) error=\(error.localizedDescription)")
             if activeVideoID == video.id {
                 activeVideoID = nil
             }
@@ -339,11 +340,17 @@ struct InlineVideoThumbnail: View {
             .onContinuousHover(coordinateSpace: .local) { phase in
                 switch phase {
                 case .active(let location):
+                    if !isPointerInside {
+                        isPointerInside = true
+                        manager.scheduleHover(for: video)
+                    }
                     let lowerHoverHeight = max(CGFloat(32), proxy.size.height * 0.30)
                     isPointerInLowerRegion = location.y >= proxy.size.height - lowerHoverHeight
                     pointerFraction = max(0, min(1, location.x / max(proxy.size.width, 1)))
                 case .ended:
+                    isPointerInside = false
                     isPointerInLowerRegion = false
+                    manager.endHover(for: video.id)
                 }
             }
         }

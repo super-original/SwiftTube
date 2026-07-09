@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "SwiftTubeApp",
     platforms: [
-        .macOS(.v26)
+        .macOS("27.0")
     ],
     products: [
         .executable(name: "SwiftTubeApp", targets: ["SwiftTubeApp"])

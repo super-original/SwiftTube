@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 enum BrandAssets {
-    private static let logoResource = ("SwiftTube Logo", "svg", "Brand")
-    private static let youtubeMarkResource = ("YouTube Mark", "svg", "Brand")
+    private static let logoResource = ("SwiftTube Logo", "svg", "Resources/Brand")
+    private static let youtubeMarkResource = ("YouTube Mark", "svg", "Resources/Brand")
 
     static let youtubeRed = Color(red: 1, green: 0, blue: 51 / 255)
     static let youtubeLightRed = Color(red: 1, green: 78 / 255, blue: 69 / 255)

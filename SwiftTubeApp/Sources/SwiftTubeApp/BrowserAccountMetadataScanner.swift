@@ -52,33 +52,57 @@ enum BrowserAccountMetadataScanner {
             return [genericAccount(browser: browser, profilePath: profilePath(from: browser.cookieSource), profileName: nil)]
         }
 
-        return infoCache.compactMap { profileName, metadata in
+        return infoCache.flatMap { profileName, metadata -> [BrowserAccountDiscoveryResponse] in
             let profileURL = root.appendingPathComponent(profileName, isDirectory: true)
-            guard hasCookieStore(in: profileURL) else { return nil }
+            guard hasCookieStore(in: profileURL) else { return [] }
 
-            let accounts = metadata["account_info"] as? [[String: Any]] ?? []
-            let primary = accounts.first
-            let email = nonEmpty(primary?["email"] as? String)
-                ?? nonEmpty(metadata["user_name"] as? String)
-            let fullName = nonEmpty(primary?["full_name"] as? String)
-                ?? nonEmpty(metadata["gaia_name"] as? String)
-                ?? nonEmpty(metadata["name"] as? String)
-            let avatarURL = nonEmpty(primary?["picture_url"] as? String)
             let source = BrowserAccountSource(
                 browser: browser.rawValue,
                 browserLabel: browser.displayName,
                 bundleIdentifier: browser.primaryBundleIdentifier,
                 profilePath: profileURL.path
             )
-            let displayName = fullName ?? email ?? "\(browser.displayName) — \(profileName)"
-            let key = (email ?? "\(browser.rawValue)|\(profileURL.path)").lowercased()
-            return BrowserAccountDiscoveryResponse(
-                id: key,
-                displayName: displayName,
-                identifier: email,
-                avatarUrl: avatarURL,
-                sources: [source]
-            )
+
+            let preferences = jsonDictionary(at: profileURL.appendingPathComponent("Preferences"))
+            let preferenceAccounts = preferences?["account_info"] as? [[String: Any]] ?? []
+            let stateAccounts = metadata["account_info"] as? [[String: Any]] ?? []
+            let accounts = preferenceAccounts.isEmpty ? stateAccounts : preferenceAccounts
+
+            if accounts.isEmpty == false {
+                return accounts.compactMap { account in
+                    let email = nonEmpty(account["email"] as? String)
+                    let accountID = nonEmpty(account["gaia"] as? String)
+                        ?? nonEmpty(account["account_id"] as? String)
+                    guard email != nil || accountID != nil else { return nil }
+                    let fullName = nonEmpty(account["full_name"] as? String)
+                        ?? nonEmpty(account["given_name"] as? String)
+                        ?? email
+                    let avatarURL = validRemoteURL(account["picture_url"] as? String)
+                        ?? validRemoteURL(account["last_downloaded_image_url_with_size"] as? String)
+                    return BrowserAccountDiscoveryResponse(
+                        id: (email ?? accountID ?? "\(browser.rawValue)|\(profileURL.path)").lowercased(),
+                        displayName: fullName ?? "Google Account",
+                        identifier: email,
+                        avatarUrl: avatarURL,
+                        sources: [source]
+                    )
+                }
+            }
+
+            let profileMetadata = preferences?["profile"] as? [String: Any]
+            let email = nonEmpty(metadata["user_name"] as? String)
+            let fullName = nonEmpty(metadata["gaia_name"] as? String)
+                ?? nonEmpty(profileMetadata?["name"] as? String)
+                ?? nonEmpty(metadata["name"] as? String)
+            return [
+                BrowserAccountDiscoveryResponse(
+                    id: (email ?? "\(browser.rawValue)|\(profileURL.path)").lowercased(),
+                    displayName: fullName ?? "\(browser.displayName) — \(profileName)",
+                    identifier: email,
+                    avatarUrl: nil,
+                    sources: [source]
+                )
+            ]
         }
     }
 
@@ -182,6 +206,20 @@ enum BrowserAccountMetadataScanner {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func jsonDictionary(at url: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private static func validRemoteURL(_ value: String?) -> String? {
+        guard let value = nonEmpty(value),
+              let url = URL(string: value),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+            return nil
+        }
+        return value
     }
 
     private static func preferredName(_ lhs: String, _ rhs: String) -> String {

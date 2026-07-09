@@ -8,6 +8,14 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.33
+
+- Raised SwiftTube’s minimum deployment target to macOS 27 and removed macOS 26 as a supported runtime.
+- Fixed Chromium account discovery to enumerate every real Google account stored in each browser profile instead of showing only the browser or profile name.
+- Added short native account probes for Safari and Firefox-family profiles without invoking Chromium Safe Storage.
+- Repaired hover previews by using continuous pointer tracking and current Android/iOS native player clients.
+- Fixed the packaged toolbar logo resource lookup.
+
 ## 0.15.32
 
 - Added square-aware and widescreen-aware playlist artwork with a shared cached loader, tighter metadata spacing, and an integrated square-card treatment.
