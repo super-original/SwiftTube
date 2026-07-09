@@ -1,23 +1,5 @@
 import Foundation
 
-enum YTDLPDependencySource: String, CaseIterable, Identifiable {
-    case nativeSwift = "nativeSwift"
-    case system = "system"
-    case provisioned = "provisioned"
-    case custom = "custom"
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .nativeSwift: return "Native Swift"
-        case .system: return "System yt-dlp"
-        case .provisioned: return "Installed yt-dlp"
-        case .custom: return "Custom path"
-        }
-    }
-}
-
 enum MPVKitDependencySource: String, CaseIterable, Identifiable {
     case system = "system"
     case provisioned = "provisioned"
@@ -40,14 +22,10 @@ struct DependencyCandidate: Hashable, Sendable {
 }
 
 struct DependencyDetectionSnapshot: Sendable {
-    let systemYTDLP: DependencyCandidate?
-    let provisionedYTDLP: DependencyCandidate?
     let systemMPVKit: DependencyCandidate?
     let provisionedMPVKit: DependencyCandidate?
 
     static let empty = DependencyDetectionSnapshot(
-        systemYTDLP: nil,
-        provisionedYTDLP: nil,
         systemMPVKit: nil,
         provisionedMPVKit: nil
     )
@@ -74,70 +52,12 @@ enum SwiftTubeDependencyManager {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> DependencyDetectionSnapshot {
         DependencyDetectionSnapshot(
-            systemYTDLP: detectSystemYTDLP(fileManager: fileManager, environment: environment),
-            provisionedYTDLP: detectProvisionedYTDLP(fileManager: fileManager, environment: environment),
             systemMPVKit: detectSystemMPVKit(fileManager: fileManager, environment: environment),
             provisionedMPVKit: DependencyCandidate(
                 path: "embedded",
                 label: "MPVKit \(requiredMPVKitVersion)"
             )
         )
-    }
-
-    static func resolvedYTDLPExecutable(
-        source: YTDLPDependencySource,
-        customPath: String?,
-        fileManager: FileManager = .default,
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) throws -> URL? {
-        switch source {
-        case .nativeSwift:
-            return nil
-        case .custom:
-            guard let customPath = customPath?.nilIfBlank else {
-                throw BackendClientError(message: "Choose a yt-dlp executable.")
-            }
-            guard fileManager.isExecutableFile(atPath: customPath) else {
-                throw BackendClientError(message: "The selected yt-dlp path is not executable.")
-            }
-            return URL(fileURLWithPath: customPath)
-        case .system:
-            if let candidate = detectSystemYTDLP(fileManager: fileManager, environment: environment) {
-                return URL(fileURLWithPath: candidate.path)
-            }
-            throw BackendClientError(message: "No system yt-dlp executable was found.")
-        case .provisioned:
-            if let candidate = detectProvisionedYTDLP(fileManager: fileManager, environment: environment) {
-                return URL(fileURLWithPath: candidate.path)
-            }
-            throw BackendClientError(message: "SwiftTube has not installed yt-dlp yet.")
-        }
-    }
-
-    static func resolvedYTDLPExecutableForCookieImport(
-        preferredSource: YTDLPDependencySource,
-        customPath: String?,
-        fileManager: FileManager = .default,
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) throws -> URL {
-        if preferredSource != .nativeSwift,
-           let selected = try? resolvedYTDLPExecutable(
-                source: preferredSource,
-                customPath: customPath,
-                fileManager: fileManager,
-                environment: environment
-           ) {
-            return selected
-        }
-
-        if let provisioned = detectProvisionedYTDLP(fileManager: fileManager, environment: environment) {
-            return URL(fileURLWithPath: provisioned.path)
-        }
-        if let system = detectSystemYTDLP(fileManager: fileManager, environment: environment) {
-            return URL(fileURLWithPath: system.path)
-        }
-
-        throw BackendClientError(message: "yt-dlp is required for browser sign-in, but it wasn’t found on this Mac.")
     }
 
     static func resolvedMPVLibraryPath(
@@ -165,33 +85,6 @@ enum SwiftTubeDependencyManager {
         }
     }
 
-    static func detectSystemYTDLP(
-        fileManager: FileManager = .default,
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> DependencyCandidate? {
-        let candidates = [
-            environment["SWIFTTUBE_YT_DLP_PATH"],
-            "/opt/homebrew/bin/yt-dlp",
-            "/usr/local/bin/yt-dlp",
-            "/usr/bin/yt-dlp",
-            which("yt-dlp")
-        ].compactMap(\.self)
-
-        return firstExecutableCandidate(candidates, label: "yt-dlp", fileManager: fileManager)
-    }
-
-    static func detectProvisionedYTDLP(
-        fileManager: FileManager = .default,
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> DependencyCandidate? {
-        let support = swiftTubeSupportDirectory(environment: environment, fileManager: fileManager)
-        let candidates = [
-            support.appendingPathComponent("Tools/yt-dlp").path,
-            support.appendingPathComponent("venv/bin/yt-dlp").path
-        ]
-        return firstExecutableCandidate(candidates, label: "yt-dlp", fileManager: fileManager)
-    }
-
     static func detectSystemMPVKit(
         fileManager: FileManager = .default,
         environment: [String: String] = ProcessInfo.processInfo.environment
@@ -212,35 +105,6 @@ enum SwiftTubeDependencyManager {
             return DependencyCandidate(path: candidate, label: mpvDisplayName(for: candidate))
         }
         return nil
-    }
-
-    static func provisionedYTDLPURL(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        fileManager: FileManager = .default
-    ) -> URL {
-        swiftTubeSupportDirectory(environment: environment, fileManager: fileManager)
-            .appendingPathComponent("Tools", isDirectory: true)
-            .appendingPathComponent("yt-dlp")
-    }
-
-    static func installYTDLP() async throws -> URL {
-        let destination = provisionedYTDLPURL()
-        try FileManager.default.createDirectory(
-            at: destination.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-
-        let downloadURL = URL(string: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos")!
-        let (temporaryURL, response) = try await URLSession.shared.download(from: downloadURL)
-        if let httpResponse = response as? HTTPURLResponse,
-           !(200..<300).contains(httpResponse.statusCode) {
-            throw DependencyProvisionError.failed("yt-dlp download failed with status \(httpResponse.statusCode).")
-        }
-
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: temporaryURL, to: destination)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
-        return destination
     }
 
     static func installMPVKit() async throws -> URL? {
@@ -273,27 +137,6 @@ enum SwiftTubeDependencyManager {
         }
 
         return nil
-    }
-
-    private static func firstExecutableCandidate(
-        _ candidates: [String],
-        label: String,
-        fileManager: FileManager
-    ) -> DependencyCandidate? {
-        for candidate in candidates where fileManager.isExecutableFile(atPath: candidate) {
-            return DependencyCandidate(path: candidate, label: label)
-        }
-        return nil
-    }
-
-    private static func which(_ name: String) -> String? {
-        let output = try? ProcessRunner.runSync(
-            executableURL: URL(fileURLWithPath: "/usr/bin/which"),
-            arguments: [name]
-        )
-        guard output?.exitCode == 0 else { return nil }
-        let path = output?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return path.isEmpty ? nil : path
     }
 
     private static func mpvDisplayName(for path: String) -> String {

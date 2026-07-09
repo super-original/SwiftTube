@@ -9,7 +9,7 @@ It uses a native SwiftUI frontend, an in-process Swift backend actor for YouTube
 and mutations, and an MPV-based playback stack for all video playback.
 
 There is no longer a bundled Python or FastAPI runtime in the app launch path.
-`yt-dlp` is still used as an external helper for stream extraction and browser-cookie import when needed.
+Playback extraction and browser-cookie import are implemented entirely in native Swift.
 
 ## Project shape
 

@@ -13,54 +13,6 @@ final class DependencySelectionTests: XCTestCase {
         super.tearDown()
     }
 
-    func testNativeSwiftYTDLPSelectionDoesNotResolveExecutable() throws {
-        let resolved = try SwiftTubeDependencyManager.resolvedYTDLPExecutable(
-            source: .nativeSwift,
-            customPath: nil,
-            environment: [:]
-        )
-        XCTAssertNil(resolved)
-    }
-
-    func testSystemYTDLPDetectionUsesEnvironmentOverride() throws {
-        let executable = try temporaryExecutable(named: "yt-dlp")
-        let candidate = SwiftTubeDependencyManager.detectSystemYTDLP(
-            environment: ["SWIFTTUBE_YT_DLP_PATH": executable.path]
-        )
-
-        XCTAssertEqual(candidate?.path, executable.path)
-    }
-
-    func testProvisionedYTDLPDetectionUsesSupportDirectory() throws {
-        let support = try temporaryDirectory()
-        let executable = support
-            .appendingPathComponent("Tools", isDirectory: true)
-            .appendingPathComponent("yt-dlp")
-        try FileManager.default.createDirectory(
-            at: executable.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        FileManager.default.createFile(atPath: executable.path, contents: Data("#!/bin/sh\n".utf8))
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-
-        let candidate = SwiftTubeDependencyManager.detectProvisionedYTDLP(
-            environment: ["SWIFTTUBE_APP_SUPPORT_DIR": support.path]
-        )
-
-        XCTAssertEqual(candidate?.path, executable.path)
-    }
-
-    func testCustomYTDLPPathMustBeExecutable() throws {
-        let executable = try temporaryExecutable(named: "custom-yt-dlp")
-        let resolved = try SwiftTubeDependencyManager.resolvedYTDLPExecutable(
-            source: .custom,
-            customPath: executable.path,
-            environment: [:]
-        )
-
-        XCTAssertEqual(resolved?.path, executable.path)
-    }
-
     func testSystemMPVKitDetectionUsesEnvironmentOverride() throws {
         let framework = try temporaryLibmpvFramework()
         let candidate = SwiftTubeDependencyManager.detectSystemMPVKit(
@@ -105,12 +57,6 @@ final class DependencySelectionTests: XCTestCase {
         XCTAssertEqual(BrowserLoginOption.vivaldi.cookieSource, "vivaldi")
         XCTAssertEqual(BrowserLoginOption.opera.cookieSource, "opera")
         XCTAssertEqual(BrowserLoginOption.whale.cookieSource, "whale")
-    }
-
-    func testExtractorSpeedTestModesMapToDependencySources() throws {
-        XCTAssertEqual(ExtractorSpeedTestMode.nativeSwift.dependencySource, .nativeSwift)
-        XCTAssertEqual(ExtractorSpeedTestMode.systemYTDLP.dependencySource, .system)
-        XCTAssertEqual(ExtractorSpeedTestMode.provisionedYTDLP.dependencySource, .provisioned)
     }
 
     func testNativeStartupPairsVideoWithCompatibleAudioHeaders() throws {
@@ -567,15 +513,6 @@ final class DependencySelectionTests: XCTestCase {
             throw XCTSkip("Set SWIFTTUBE_RUN_REAL_YOUTUBE_TESTS=1 to hit real YouTube.")
         }
 
-        let settings = AppSettings.shared
-        let previousSource = settings.ytDLPDependencySource
-        let previousCustomPath = settings.ytDLPCustomPath
-        defer {
-            settings.ytDLPDependencySource = previousSource
-            settings.ytDLPCustomPath = previousCustomPath
-        }
-
-        settings.ytDLPDependencySource = .nativeSwift
         let nativeStart = Date()
         let nativePlayback = try await SwiftTubeBackend.shared.fetchVideo(id: "dQw4w9WgXcQ")
         let nativeElapsed = Date().timeIntervalSince(nativeStart)
@@ -585,121 +522,7 @@ final class DependencySelectionTests: XCTestCase {
         XCTAssertNotNil(nativePlayback.bestStream)
         XCTAssertFalse(nativePlayback.playbackStrategy.isEmpty)
 
-        var timings = ["native": nativeElapsed]
-        var streamCounts = ["native": nativePlayback.streams.count]
-
-        if let systemYTDLP = SwiftTubeDependencyManager.detectSystemYTDLP() {
-            settings.ytDLPDependencySource = .system
-            let ytdlpStart = Date()
-            let ytdlpPlayback = try await SwiftTubeBackend.shared.fetchVideo(id: "dQw4w9WgXcQ")
-            let ytdlpElapsed = Date().timeIntervalSince(ytdlpStart)
-
-            XCTAssertFalse(ytdlpPlayback.streams.isEmpty)
-            XCTAssertTrue(nativePlayback.streams.contains(where: isAdaptiveMasterManifest))
-            XCTAssertEqual(parityComparableStreams(from: nativePlayback).count, ytdlpPlayback.streams.count)
-            timings["system"] = ytdlpElapsed
-            streamCounts["system"] = ytdlpPlayback.streams.count
-
-            settings.ytDLPCustomPath = systemYTDLP.path
-            settings.ytDLPDependencySource = .custom
-            let customStart = Date()
-            let customPlayback = try await SwiftTubeBackend.shared.fetchVideo(id: "dQw4w9WgXcQ")
-            let customElapsed = Date().timeIntervalSince(customStart)
-
-            XCTAssertFalse(customPlayback.streams.isEmpty)
-            timings["custom"] = customElapsed
-            streamCounts["custom"] = customPlayback.streams.count
-
-            _ = try await SwiftTubeDependencyManager.installYTDLP()
-            settings.ytDLPDependencySource = .provisioned
-            let provisionedStart = Date()
-            let provisionedPlayback = try await SwiftTubeBackend.shared.fetchVideo(id: "dQw4w9WgXcQ")
-            let provisionedElapsed = Date().timeIntervalSince(provisionedStart)
-
-            XCTAssertFalse(provisionedPlayback.streams.isEmpty)
-            timings["provisioned"] = provisionedElapsed
-            streamCounts["provisioned"] = provisionedPlayback.streams.count
-        } else {
-            print("yt-dlp path skipped")
-        }
-
-        print("YouTube extraction timings: \(timings)")
-        print("YouTube extraction stream counts: \(streamCounts)")
-    }
-
-    func testNativeYouTubeExtractorMatchesYTDLPFormatsAndPreferencesWhenEnabled() async throws {
-        guard ProcessInfo.processInfo.environment["SWIFTTUBE_RUN_REAL_YOUTUBE_TESTS"] == "1" else {
-            throw XCTSkip("Set SWIFTTUBE_RUN_REAL_YOUTUBE_TESTS=1 to hit real YouTube.")
-        }
-        guard let systemYTDLP = SwiftTubeDependencyManager.detectSystemYTDLP() else {
-            throw XCTSkip("System yt-dlp is required for parity comparison.")
-        }
-
-        let explicitVideoIDs: [String]
-        if let rawVideoIDs = ProcessInfo.processInfo.environment["SWIFTTUBE_PARITY_VIDEO_IDS"] {
-            explicitVideoIDs = rawVideoIDs
-                .split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { $0.isEmpty == false }
-        } else if let rawVideoID = ProcessInfo.processInfo.environment["SWIFTTUBE_PARITY_VIDEO_ID"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  rawVideoID.isEmpty == false {
-            explicitVideoIDs = [rawVideoID]
-        } else {
-            explicitVideoIDs = []
-        }
-        let parityVideoIDs = explicitVideoIDs.isEmpty
-            ? ["3utEVmyNJuc", "dQw4w9WgXcQ", "jNQXAC9IVRw", "GpQSUjNsNm0", "LXb3EKWsInQ", "bBZF6PWEL0o", "FuuC4dpSQ1M"]
-            : explicitVideoIDs
-        let settings = AppSettings.shared
-        let previousSource = settings.ytDLPDependencySource
-        let previousCustomPath = settings.ytDLPCustomPath
-        defer {
-            settings.ytDLPDependencySource = previousSource
-            settings.ytDLPCustomPath = previousCustomPath
-        }
-
-        for videoID in parityVideoIDs {
-            settings.ytDLPDependencySource = .nativeSwift
-            let nativePlayback = try await SwiftTubeBackend.shared.fetchVideo(id: videoID)
-
-            settings.ytDLPDependencySource = .system
-            let ytdlpPlayback = try await SwiftTubeBackend.shared.fetchVideo(id: videoID)
-
-            let nativeIDs = playableFormatIDs(from: nativePlayback)
-            let ytdlpIDs = playableFormatIDs(from: ytdlpPlayback)
-            let rawYTDLPDescriptors = try rawYTDLPPlayableDescriptors(
-                videoID: videoID,
-                executablePath: systemYTDLP.path
-            )
-            print("\(videoID) native IDs: \(nativeIDs.joined(separator: ","))")
-            print("\(videoID) yt-dlp IDs: \(ytdlpIDs.joined(separator: ","))")
-            XCTAssertEqual(nativeIDs, ytdlpIDs, "Format IDs differed for \(videoID)")
-
-            let nativeDescriptors = streamDescriptors(from: nativePlayback)
-            let ytdlpDescriptors = streamDescriptors(from: ytdlpPlayback)
-            print("\(videoID) native descriptors: \(nativeDescriptors)")
-            print("\(videoID) yt-dlp descriptors: \(ytdlpDescriptors)")
-            print("\(videoID) raw yt-dlp descriptors: \(rawYTDLPDescriptors)")
-            XCTAssertEqual(nativeDescriptors, ytdlpDescriptors, "Stream metadata differed for \(videoID)")
-            XCTAssertEqual(nativeDescriptors, rawYTDLPDescriptors, "Raw yt-dlp stream metadata differed for \(videoID)")
-
-            let nativeQualities = await preferredSelectionByQuality(from: nativePlayback)
-            let ytdlpQualities = await preferredSelectionByQuality(from: ytdlpPlayback)
-            print("\(videoID) native qualities: \(nativeQualities)")
-            print("\(videoID) yt-dlp qualities: \(ytdlpQualities)")
-            XCTAssertEqual(nativeQualities, ytdlpQualities, "Quality preferences differed for \(videoID)")
-
-            XCTAssertEqual(
-                debugAutomaticStartupMPVSelectionsForTesting(playback: nativePlayback).first.map(selectionKey),
-                debugAutomaticStartupMPVSelectionsForTesting(playback: ytdlpPlayback).first.map(selectionKey),
-                "Automatic startup selection differed for \(videoID)"
-            )
-            XCTAssertEqual(
-                debugAutomaticSteadyStateMPVSelectionsForTesting(playback: nativePlayback).first.map(selectionKey),
-                debugAutomaticSteadyStateMPVSelectionsForTesting(playback: ytdlpPlayback).first.map(selectionKey),
-                "Automatic steady-state selection differed for \(videoID)"
-            )
-        }
+        print("Native YouTube extraction: \(nativeElapsed)s, \(nativePlayback.streams.count) streams")
     }
 
     func testBrowserAccountDiscoveryWhenEnabled() async throws {
@@ -783,93 +606,6 @@ final class DependencySelectionTests: XCTestCase {
         stream.formatId == "hls-manifest"
             && stream.streamKind == "manifest"
             && stream.container?.lowercased() == "m3u8"
-    }
-
-    private func rawYTDLPPlayableDescriptors(videoID: String, executablePath: String) throws -> [String] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executablePath)
-        process.arguments = [
-            "--dump-single-json",
-            "--skip-download",
-            "--no-warnings",
-            "https://www.youtube.com/watch?v=\(videoID)"
-        ]
-
-        let directory = try temporaryDirectory()
-        let outputURL = directory.appendingPathComponent("\(videoID)-yt-dlp.json")
-        let errorURL = directory.appendingPathComponent("\(videoID)-yt-dlp.stderr")
-        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-        FileManager.default.createFile(atPath: errorURL.path, contents: nil)
-        let outputHandle = try FileHandle(forWritingTo: outputURL)
-        let errorHandle = try FileHandle(forWritingTo: errorURL)
-        defer {
-            try? outputHandle.close()
-            try? errorHandle.close()
-        }
-        process.standardOutput = outputHandle
-        process.standardError = errorHandle
-        try process.run()
-        process.waitUntilExit()
-
-        try outputHandle.close()
-        try errorHandle.close()
-        let output = try Data(contentsOf: outputURL)
-        let errorOutput = try Data(contentsOf: errorURL)
-        guard process.terminationStatus == 0 else {
-            let message = String(data: errorOutput, encoding: .utf8) ?? "yt-dlp exited with \(process.terminationStatus)"
-            XCTFail("yt-dlp failed for \(videoID): \(message)")
-            return []
-        }
-
-        guard
-            let payload = try JSONSerialization.jsonObject(with: output) as? [String: Any],
-            let formats = payload["formats"] as? [[String: Any]]
-        else {
-            XCTFail("yt-dlp returned malformed JSON for \(videoID)")
-            return []
-        }
-
-        return formats.compactMap(rawYTDLPStreamDescriptor)
-    }
-
-    private func rawYTDLPStreamDescriptor(from format: [String: Any]) -> String? {
-        guard let url = format["url"] as? String, url.isEmpty == false else { return nil }
-        let protocolValue = format["protocol"] as? String
-        guard protocolValue?.hasPrefix("http") == true || protocolValue?.hasPrefix("m3u8") == true else {
-            return nil
-        }
-
-        let videoCodec = stringify(format["vcodec"])
-        let audioCodec = stringify(format["acodec"])
-        let hasVideo = videoCodec != nil && videoCodec != "none"
-        let hasAudio = audioCodec != nil && audioCodec != "none"
-        let qualityLabel = stringify(format["format_note"]) ?? intValue(format["height"]).map { "\($0)p" } ?? "-"
-        let streamKind = rawStreamKind(for: url, hasAudio: hasAudio, hasVideo: hasVideo)
-        let formatID = stringify(format["format_id"]) ?? "-"
-        let width = intValue(format["width"]).map(String.init) ?? "-"
-        let height = intValue(format["height"]).map(String.init) ?? "-"
-        let fps = intValue(format["fps"]).map(String.init) ?? "-"
-        let container = normalizedContainer(stringify(format["container"]) ?? stringify(format["ext"]))
-        let normalizedVideoCodec = normalizedCodec(videoCodec)
-        let normalizedAudioCodec = normalizedCodec(audioCodec)
-        let audioLanguage = normalizedAudioLanguage(stringify(format["language"]))
-        let audioTrackKind = rawAudioTrackKind(from: format, url: url) ?? "-"
-        let audioDefault = rawAudioIsDefault(from: format, url: url).map { $0 ? "default" : "not-default" } ?? "-"
-
-        return [
-            formatID,
-            streamKind,
-            qualityLabel,
-            width,
-            height,
-            fps,
-            container,
-            normalizedVideoCodec,
-            normalizedAudioCodec,
-            audioLanguage,
-            audioTrackKind,
-            audioDefault
-        ].joined(separator: "|")
     }
 
     private func rawStreamKind(for url: String, hasAudio: Bool, hasVideo: Bool) -> String {

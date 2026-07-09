@@ -823,7 +823,7 @@ private extension MPVPlaybackEngine {
         guard eventPumpTask == nil else { return }
         let handleBits = UInt(bitPattern: handle)
         let mpvLibrary = mpvLibrary
-        eventPumpTask = Task.detached(priority: .userInitiated) {
+        eventPumpTask = Task.detached(priority: .userInitiated) { [weak self, mpvLibrary] in
             let handle = OpaquePointer(bitPattern: handleBits)!
 
             while Task.isCancelled == false {
@@ -838,7 +838,7 @@ private extension MPVPlaybackEngine {
                     let prefix = String(cString: logMessage.pointee.prefix)
                     let level = String(cString: logMessage.pointee.level)
                     let text = String(cString: logMessage.pointee.text).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if Self.shouldLogMPVMessage(prefix: prefix, level: level) {
+                    if MPVPlaybackEngine.shouldLogMPVMessage(prefix: prefix, level: level) {
                         PlaybackDebugLogger.log("mpv log [\(prefix)] [\(level)] \(text)")
                     }
                 case MPV_EVENT_END_FILE:

@@ -36,7 +36,6 @@ actor SwiftTubeBackend {
     private let watchHistoryStore = WatchHistoryStore()
     private lazy var api = YouTubeAPI(authManager: authManager)
     private var channelAvatarCache: [String: String?] = [:]
-    private var playbackCache: [String: YTDLPPlaybackData] = [:]
     private var inlinePlaybackCache: [String: InlinePlaybackPayload] = [:]
     private var trackingCache: [String: WatchTrackingSnapshot] = [:]
     private var playerScriptResolverCache: [String: YouTubeStreamURLResolver] = [:]
@@ -58,8 +57,8 @@ actor SwiftTubeBackend {
         return await authManager.authStatus()
     }
 
-    func connectBrowserAuth(browser: String) async throws -> AuthStatusResponse {
-        _ = try await authManager.connect(browser: browser)
+    func connectBrowserAuth(browser: String, profilePath: String? = nil) async throws -> AuthStatusResponse {
+        _ = try await authManager.connect(browser: browser, profilePath: profilePath)
         do {
             try await api.validateAuthentication()
             await refreshSignedInAccountProfile()
@@ -72,94 +71,7 @@ actor SwiftTubeBackend {
 
     func discoverBrowserAccounts() async throws -> [BrowserAccountDiscoveryResponse] {
         let browsers = BrowserLoginOption.installedOptions.filter { $0.cookieSource != nil }
-
-        let probes = await withTaskGroup(of: BrowserAccountProbe?.self) { group in
-            for browser in browsers {
-                group.addTask {
-                    await probeBrowserAccount(browser)
-                }
-            }
-
-            var values: [BrowserAccountProbe] = []
-            for await probe in group {
-                if let probe {
-                    values.append(probe)
-                }
-            }
-            return values
-        }
-
-        return groupedBrowserAccounts(from: probes)
-    }
-
-    func runExtractorSpeedTest(videoID: String) async throws -> [ExtractorSpeedTestResult] {
-        var results: [ExtractorSpeedTestResult] = []
-
-        for mode in ExtractorSpeedTestMode.allCases {
-            if let unavailableMessage = unavailableExtractorMessage(for: mode) {
-                results.append(
-                    ExtractorSpeedTestResult(
-                        mode: mode,
-                        isAvailable: false,
-                        elapsedMilliseconds: nil,
-                        streamCount: 0,
-                        bestFormatID: nil,
-                        errorMessage: unavailableMessage
-                    )
-                )
-                continue
-            }
-
-            playbackCache.removeAll()
-            let startDate = Date()
-
-            do {
-                let playbackData: (streamCount: Int, bestFormatID: String?)
-                if mode == .nativeSwift {
-                    let playback = try await withTimeout(
-                        seconds: extractorSpeedTestModeTimeoutSeconds,
-                        timeoutMessage: "\(mode.title) timed out."
-                    ) {
-                        try await self.buildVideoPlayback(videoID: videoID, authenticated: false, allowYTDLPFallback: false)
-                    }
-                    playbackData = (playback.streams.count, playback.bestStream?.formatId)
-                } else if let ytdlpPlayback = try await extractYTDLPPlayback(
-                    videoID: videoID,
-                    cookieFileURL: nil,
-                    source: mode.dependencySource,
-                    timeout: ytDLPPlaybackTimeoutSeconds
-                ) {
-                    playbackData = (ytdlpPlayback.streams.count, ytdlpPlayback.streams.first?.formatId)
-                } else {
-                    throw BackendClientError(message: "\(mode.title) did not return playback formats.")
-                }
-                let elapsedMilliseconds = Int(Date().timeIntervalSince(startDate) * 1000)
-                results.append(
-                    ExtractorSpeedTestResult(
-                        mode: mode,
-                        isAvailable: true,
-                        elapsedMilliseconds: elapsedMilliseconds,
-                        streamCount: playbackData.streamCount,
-                        bestFormatID: playbackData.bestFormatID,
-                        errorMessage: nil
-                    )
-                )
-            } catch {
-                let elapsedMilliseconds = Int(Date().timeIntervalSince(startDate) * 1000)
-                results.append(
-                    ExtractorSpeedTestResult(
-                        mode: mode,
-                        isAvailable: true,
-                        elapsedMilliseconds: elapsedMilliseconds,
-                        streamCount: 0,
-                        bestFormatID: nil,
-                        errorMessage: error.localizedDescription
-                    )
-                )
-            }
-        }
-
-        return results
+        return BrowserAccountMetadataScanner.discoverAccounts(in: browsers)
     }
 
     func clearAuthSession() async throws -> AuthStatusResponse {
@@ -1037,11 +949,7 @@ actor SwiftTubeBackend {
         trackingCache[videoID] = tracking
     }
 
-    private func buildVideoPlayback(
-        videoID: String,
-        authenticated: Bool,
-        allowYTDLPFallback: Bool = true
-    ) async throws -> VideoPlayback {
+    private func buildVideoPlayback(videoID: String, authenticated: Bool) async throws -> VideoPlayback {
         async let watchTask = api.next(videoID: videoID, authenticated: authenticated)
         async let webSafariWatchPageTask = api.watchPage(videoID: videoID, profile: .webSafari, authenticated: false)
         async let androidPlayerTask = api.player(videoID: videoID, profile: .android, authenticated: false)
@@ -1164,61 +1072,19 @@ actor SwiftTubeBackend {
             "native youtube extraction video=\(videoID) streams=\(nativePlaybackStreams.count) subtitles=\(playerSubtitles.count) best=\(nativePlaybackBundle.bestStream?.formatId ?? "nil")"
         )
 
-        let preferredYTDLPPlayback: YTDLPPlaybackData?
-        let shouldProbeYTDLP = allowYTDLPFallback
-            && AppSettings.shared.ytDLPDependencySource != .nativeSwift
-            && (!isLive || nativePlaybackBundle.bestStream == nil)
-        if shouldProbeYTDLP {
-            let publicPlayback = try? await cachedYTDLPPlayback(
-                videoID: videoID,
-                cookieFileURL: nil,
-                cacheScope: "public"
-            )
-            if let publicPlayback, publicPlayback.streams.isEmpty == false {
-                preferredYTDLPPlayback = publicPlayback
-            } else if authenticated {
-                preferredYTDLPPlayback = try? await cachedYTDLPPlayback(
-                    videoID: videoID,
-                    cookieFileURL: await authManager.playbackCookieFileURL(),
-                    cacheScope: "auth"
-                )
-            } else {
-                preferredYTDLPPlayback = nil
-            }
-        } else {
-            preferredYTDLPPlayback = nil
-        }
-
-        let useYTDLPStreams = (preferredYTDLPPlayback?.streams.isEmpty == false)
-            && !(isLive && nativePlaybackBundle.bestStream != nil)
-        let resolvedStreams = (useYTDLPStreams ? preferredYTDLPPlayback?.streams : nil)
-            ?? nativePlaybackStreams
-        let playbackStreams = useYTDLPStreams
-            ? resolvedStreams
-            : mergeYouTubeFormatStreams(resolvedStreams, adaptiveManifestStreams)
-
-        let playbackBundle: PlaybackBundle = {
-            if let preferredYTDLPPlayback, useYTDLPStreams {
-                return buildPlaybackBundle(
-                    streams: preferredYTDLPPlayback.streams,
-                    subtitles: playerSubtitles + preferredYTDLPPlayback.subtitles,
-                    preferHLSManifest: isLive
-                )
-            }
-            return nativePlaybackBundle
-        }()
+        let resolvedStreams = nativePlaybackStreams
+        let playbackStreams = mergeYouTubeFormatStreams(resolvedStreams, adaptiveManifestStreams)
+        let playbackBundle = nativePlaybackBundle
         let bestStream = pickBestStream(in: resolvedStreams)
         if resolvedStreams.isEmpty, accessIssue == nil {
             throw BackendClientError(message: "No playable streams found")
         }
 
         let title: String? = metadata["title"]
-            ?? preferredYTDLPPlayback?.title
             ?? (webSafariDetails?["title"] as? String)
             ?? (androidDetails?["title"] as? String)
             ?? (iosDetails?["title"] as? String)
         let duration = metadata["durationText"]
-            ?? preferredYTDLPPlayback?.durationText
             ?? metadataDurationText(from: webSafariDetails)
             ?? metadataDurationText(from: androidDetails)
             ?? metadataDurationText(from: iosDetails)
@@ -1292,29 +1158,6 @@ actor SwiftTubeBackend {
         ) {
             try await self.buildVideoPlayback(videoID: videoID, authenticated: authenticated)
         }
-    }
-
-    private func cachedYTDLPPlayback(videoID: String, cookieFileURL: URL?, cacheScope: String) async throws -> YTDLPPlaybackData? {
-        let settings = AppSettings.shared
-        let cacheKey = [
-            cacheScope,
-            settings.ytDLPDependencySource.rawValue,
-            settings.ytDLPDependencySource == .custom ? settings.ytDLPCustomPath : "",
-            videoID
-        ].joined(separator: ":")
-        if let cached = playbackCache[cacheKey] {
-            return cached
-        }
-
-        let playback = try await extractYTDLPPlayback(
-            videoID: videoID,
-            cookieFileURL: cookieFileURL,
-            timeout: ytDLPPlaybackTimeoutSeconds
-        )
-        if let playback, playback.streams.isEmpty == false {
-            playbackCache[cacheKey] = playback
-        }
-        return playback
     }
 
     private func streamURLResolver(from watchPageHTML: String?) async -> YouTubeStreamURLResolver? {
@@ -1507,17 +1350,6 @@ actor SwiftTubeBackend {
 
     private func currentSignedInAccountProfile() async -> SignedInAccountProfile {
         await signedInAccountProfile(using: api)
-    }
-
-    private func unavailableExtractorMessage(for mode: ExtractorSpeedTestMode) -> String? {
-        switch mode {
-        case .nativeSwift:
-            return nil
-        case .systemYTDLP:
-            return SwiftTubeDependencyManager.detectSystemYTDLP() == nil ? "Not found" : nil
-        case .provisionedYTDLP:
-            return SwiftTubeDependencyManager.detectProvisionedYTDLP() == nil ? "Not installed" : nil
-        }
     }
 
     private func loadRecommendations(continuation: String?, authenticated: Bool) async throws -> JSONDictionary {
@@ -1881,20 +1713,11 @@ private struct PlaybackIssueSource {
     let streams: [StreamInfo]
 }
 
-private struct YTDLPPlaybackData {
-    let title: String?
-    let durationText: String?
-    let streams: [StreamInfo]
-    let subtitles: [SubtitleTrack]
-}
-
 private struct LiveManifestMetadata {
     let windowDurationSeconds: Double?
     let storyboardTimeline: LiveStoryboardTimeline?
 }
 
-private let ytDLPPlaybackTimeoutSeconds: TimeInterval = 12
-private let extractorSpeedTestModeTimeoutSeconds: TimeInterval = 24
 private let videoPlaybackTimeoutSeconds: TimeInterval = 24
 
 private func withTimeout<T: Sendable>(
@@ -1940,76 +1763,6 @@ private func resolveVideoAccessIssue(
     }
 
     return extractVideoAccessIssue(from: nil, fallbackTags: fallbackTags)
-}
-
-private func extractYTDLPPlayback(
-    videoID: String,
-    cookieFileURL: URL?,
-    source explicitSource: YTDLPDependencySource? = nil,
-    timeout: TimeInterval? = nil
-) async throws -> YTDLPPlaybackData? {
-    let settings = AppSettings.shared
-    let source = explicitSource ?? settings.ytDLPDependencySource
-    guard source != .nativeSwift else {
-        return nil
-    }
-
-    let ytDLPPath: URL
-    do {
-        if let explicitSource {
-            guard let explicitPath = try SwiftTubeDependencyManager.resolvedYTDLPExecutable(
-                source: explicitSource,
-                customPath: settings.ytDLPCustomPath
-            ) else {
-                return nil
-            }
-            ytDLPPath = explicitPath
-        } else {
-            ytDLPPath = try YTDLPTool.resolvePath()
-        }
-    } catch {
-        return nil
-    }
-
-    var arguments = [
-        "-J",
-        "--skip-download",
-        "--quiet",
-        "--no-warnings",
-        "--ignore-no-formats-error",
-        "https://www.youtube.com/watch?v=\(videoID)",
-    ]
-
-    if let cookieFile = cookieFileURL {
-        arguments.insert(contentsOf: ["--cookies", cookieFile.path], at: 0)
-    }
-
-    let startDate = Date()
-    let result = try await ProcessRunner.run(
-        executableURL: ytDLPPath,
-        arguments: arguments,
-        timeout: timeout,
-        timeoutMessage: "yt-dlp timed out while extracting playback data."
-    )
-    let elapsed = Date().timeIntervalSince(startDate)
-    guard result.exitCode == 0, let data = result.output.data(using: .utf8) else { return nil }
-
-    guard let payload = try JSONSerialization.jsonObject(with: data) as? JSONDictionary else {
-        return nil
-    }
-
-    let streams = parseYTDLPStreams(from: payload)
-    let subtitles = parseYTDLPSubtitles(from: payload)
-    PlaybackDebugLogger.log(
-        "yt-dlp extraction video=\(videoID) source=\(source.rawValue) elapsed=\(String(format: "%.3f", elapsed)) streams=\(streams.count) subtitles=\(subtitles.count)"
-    )
-
-    return YTDLPPlaybackData(
-        title: payload["title"] as? String,
-        durationText: formatDuration(seconds: payload["duration"]),
-        streams: streams,
-        subtitles: subtitles
-    )
 }
 
 private func metadataDurationText(from details: JSONDictionary?) -> String? {
@@ -2499,7 +2252,7 @@ private func parseStreams(
             let formatId = nativeFormatID(baseFormatId, isSuperResolution: isSuperResolution)
             let qualityLabel = nativeQualityLabel(
                 (entry["qualityLabel"] as? String)
-                    ?? ytdlpAudioFormatNote(
+                    ?? nativeAudioFormatNote(
                         quality: audioQualityLabel(from: entry["audioQuality"]),
                         language: audioLanguage,
                         trackKind: audioTrackKind,
@@ -2573,7 +2326,7 @@ private func audioQualityLabel(from value: Any?) -> String? {
     return String(value.dropFirst("audio_quality_".count))
 }
 
-private func ytdlpAudioFormatNote(
+private func nativeAudioFormatNote(
     quality: String?,
     language: String?,
     trackKind: String?,
@@ -2675,10 +2428,10 @@ private func parseHLSVariantStreams(from manifest: String, manifest baseStream: 
         )
     }
 
-    return hlsVariantsWithYTDLPFormatIDs(results)
+    return hlsVariantsWithUniqueFormatIDs(results)
 }
 
-private func hlsVariantsWithYTDLPFormatIDs(_ streams: [StreamInfo]) -> [StreamInfo] {
+private func hlsVariantsWithUniqueFormatIDs(_ streams: [StreamInfo]) -> [StreamInfo] {
     var groups: [String: [StreamInfo]] = [:]
     var order: [String] = []
     for stream in streams {
@@ -2698,7 +2451,7 @@ private func hlsVariantsWithYTDLPFormatIDs(_ streams: [StreamInfo]) -> [StreamIn
         guard variants.count > 1 else { return variants }
         return variants
             .sorted {
-                hlsVariantYTDLPSortKey($0).lexicographicallyPrecedes(hlsVariantYTDLPSortKey($1))
+                hlsVariantSortKey($0).lexicographicallyPrecedes(hlsVariantSortKey($1))
             }
             .enumerated()
             .map { index, stream in
@@ -2707,7 +2460,7 @@ private func hlsVariantsWithYTDLPFormatIDs(_ streams: [StreamInfo]) -> [StreamIn
     }
 }
 
-private func hlsVariantYTDLPSortKey(_ stream: StreamInfo) -> [Int] {
+private func hlsVariantSortKey(_ stream: StreamInfo) -> [Int] {
     [
         stream.audioTrackKind == "original" ? 1 : 0,
         stream.bitrate ?? 0,
@@ -3180,80 +2933,6 @@ private func firstCapturedString(in source: String, match: NSTextCheckingResult,
         }
     }
     return nil
-}
-
-private func parseYTDLPStreams(from payload: JSONDictionary) -> [StreamInfo] {
-    guard let formats = payload["formats"] as? [Any] else { return [] }
-
-    return formats.compactMap { format in
-        guard let format = format as? JSONDictionary else { return nil }
-        guard let url = format["url"] as? String, !url.isEmpty else { return nil }
-
-        let protocolValue = format["protocol"] as? String
-        guard protocolValue?.hasPrefix("http") == true || protocolValue?.hasPrefix("m3u8") == true else {
-            return nil
-        }
-
-        let videoCodec = format["vcodec"] as? String
-        let audioCodec = format["acodec"] as? String
-        let hasVideo = videoCodec != nil && videoCodec != "none"
-        let hasAudio = audioCodec != nil && audioCodec != "none"
-        let bitrate = ((format["tbr"] as? Double).map { Int($0 * 1000) }) ?? intValue(format["tbr"])
-
-        return StreamInfo(
-            url: url,
-            formatId: stringify(format["format_id"]),
-            mimeType: mimeTypeFromYTDLP(format: format),
-            qualityLabel: (format["format_note"] as? String) ?? ((format["height"] as? Int).map { "\($0)p" }),
-            httpHeaders: (format["http_headers"] as? JSONDictionary)?.compactMapValues { $0 as? String },
-            bitrate: bitrate,
-            width: intValue(format["width"]),
-            height: intValue(format["height"]),
-            fps: intValue(format["fps"]),
-            audioChannels: intValue(format["audio_channels"]),
-            audioCodec: audioCodec,
-            videoCodec: videoCodec,
-            container: (format["container"] as? String) ?? (format["ext"] as? String),
-            hasAudio: hasAudio,
-            hasVideo: hasVideo,
-            isAdaptive: hasAudio != hasVideo,
-            streamKind: streamKind(for: url, hasAudio: hasAudio, hasVideo: hasVideo),
-            audioLanguage: stringify(format["language"]) ?? audioLanguage(from: format, url: url),
-            audioTrackKind: audioTrackKind(from: format, url: url),
-            audioLanguagePreference: intValue(format["language_preference"]),
-            audioIsDefault: audioIsDefault(from: format, url: url)
-        )
-    }
-}
-
-private func parseYTDLPSubtitles(from payload: JSONDictionary) -> [SubtitleTrack] {
-    var results: [SubtitleTrack] = []
-    var seen = Set<String>()
-
-    let groups: [(String, Bool)] = [("subtitles", false), ("automatic_captions", true)]
-    for (key, autoGenerated) in groups {
-        guard let map = payload[key] as? JSONDictionary else { continue }
-        for (language, rawEntries) in map {
-            if seen.contains(language) && autoGenerated {
-                continue
-            }
-            guard let entries = rawEntries as? [Any] else { continue }
-            let url = entries.compactMap { ($0 as? JSONDictionary)?["url"] as? String }.first
-            guard let url else { continue }
-
-            results.append(
-                SubtitleTrack(
-                    language: language,
-                    label: languageLabel(for: language),
-                    url: url,
-                    isAutoGenerated: autoGenerated
-                )
-            )
-            seen.insert(language)
-        }
-    }
-
-    return results
 }
 
 private func extractSubtitles(from playerData: JSONDictionary) -> [SubtitleTrack] {
@@ -5983,91 +5662,6 @@ private struct SignedInAccountProfile {
     }
 }
 
-private struct BrowserAccountProbe {
-    let displayName: String
-    let identifier: String?
-    let avatarURL: String?
-    let source: BrowserAccountSource
-}
-
-private func probeBrowserAccount(_ browser: BrowserLoginOption) async -> BrowserAccountProbe? {
-    await probeBrowserAccount(browser, timeout: 7, allowBrowseFallback: true)
-}
-
-private func probeBrowserAccount(
-    _ browser: BrowserLoginOption,
-    timeout: TimeInterval,
-    allowBrowseFallback: Bool
-) async -> BrowserAccountProbe? {
-    do {
-        let authManager = YouTubeAuthManager()
-        let material = try await authManager.probeMaterial(for: browser, timeout: timeout)
-        defer {
-            try? FileManager.default.removeItem(at: material.cookieFileURL)
-        }
-        _ = await authManager.activateProbeMaterial(material)
-        let api = YouTubeAPI(authManager: authManager)
-        let profile = await signedInAccountProfile(using: api, allowBrowseFallback: allowBrowseFallback)
-
-        let displayName = profile.displayName?.nonEmptyTrimmed
-            ?? profile.email?.nonEmptyTrimmed
-            ?? profile.handle?.nonEmptyTrimmed
-            ?? browser.displayName
-        let source = BrowserAccountSource(
-            browser: browser.rawValue,
-            browserLabel: browser.displayName,
-            bundleIdentifier: browser.primaryBundleIdentifier
-        )
-
-        return BrowserAccountProbe(
-            displayName: displayName,
-            identifier: profile.email?.nonEmptyTrimmed ?? profile.handle?.nonEmptyTrimmed,
-            avatarURL: profile.avatarURL?.nonEmptyTrimmed,
-            source: source
-        )
-    } catch {
-        return nil
-    }
-}
-
-private func groupedBrowserAccounts(from probes: [BrowserAccountProbe]) -> [BrowserAccountDiscoveryResponse] {
-    var grouped: [String: [BrowserAccountProbe]] = [:]
-
-    for probe in probes {
-        let key = browserAccountGroupingKey(for: probe)
-        grouped[key, default: []].append(probe)
-    }
-
-    return grouped.map { key, probes in
-        let sortedProbes = probes.sorted { lhs, rhs in
-            let lhsRank = BrowserLoginOption(rawValue: lhs.source.browser)?.sortRank ?? 999
-            let rhsRank = BrowserLoginOption(rawValue: rhs.source.browser)?.sortRank ?? 999
-            return lhsRank < rhsRank
-        }
-        let first = sortedProbes[0]
-        let sources = sortedProbes.map(\.source)
-
-        return BrowserAccountDiscoveryResponse(
-            id: key,
-            displayName: first.displayName,
-            identifier: first.identifier,
-            avatarUrl: first.avatarURL,
-            sources: sources
-        )
-    }
-    .sorted { lhs, rhs in
-        lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
-    }
-}
-
-private func browserAccountGroupingKey(for probe: BrowserAccountProbe) -> String {
-    let rawKey = probe.identifier?.nonEmptyTrimmed
-        ?? probe.avatarURL?.nonEmptyTrimmed
-        ?? probe.displayName.nonEmptyTrimmed
-        ?? probe.source.browser
-    return rawKey.lowercased()
-}
-
 private func signedInAccountProfile(using api: YouTubeAPI, allowBrowseFallback: Bool = true) async -> SignedInAccountProfile {
     var profile = SignedInAccountProfile()
 
@@ -6653,20 +6247,6 @@ private func isSupportedVideoCodec(_ codec: String?) -> Bool {
         || codec.hasPrefix("av01")
         || codec.hasPrefix("hvc1")
         || codec.hasPrefix("hev1")
-}
-
-private func mimeTypeFromYTDLP(format: JSONDictionary) -> String? {
-    guard let ext = format["ext"] as? String else { return nil }
-    let videoCodec = format["vcodec"] as? String
-    let audioCodec = format["acodec"] as? String
-
-    if videoCodec != nil && videoCodec != "none" {
-        return "video/\(ext)"
-    }
-    if audioCodec != nil && audioCodec != "none" {
-        return "audio/\(ext)"
-    }
-    return nil
 }
 
 private func languageLabel(for code: String) -> String {

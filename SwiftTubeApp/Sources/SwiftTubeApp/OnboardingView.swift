@@ -3,7 +3,6 @@ import SwiftUI
 
 private enum OnboardingStage: String, CaseIterable, Identifiable, Comparable {
     case welcome = "Welcome"
-    case ytDLP = "yt-dlp"
     case theme = "Theme"
     case sponsorBlock = "SponsorBlock"
     case controls = "Controls"
@@ -110,11 +109,6 @@ struct OnboardingView: View {
         switch stage {
         case .welcome:
             WelcomeStage()
-        case .ytDLP:
-            YTDLPOnboardingStage(
-                selection: $settings.ytDLPDependencySource,
-                customPath: $settings.ytDLPCustomPath
-            )
         case .theme:
             ThemeStage(selection: $settings.appearanceMode)
         case .sponsorBlock:
@@ -209,116 +203,6 @@ private struct WelcomeStage: View {
             Text("SwiftTube")
                 .font(.system(size: 58, weight: .bold))
                 .foregroundStyle(.white)
-        }
-    }
-}
-
-private struct YTDLPOnboardingStage: View {
-    @Binding var selection: YTDLPDependencySource
-    @Binding var customPath: String
-    @State private var snapshot = DependencyDetectionSnapshot.empty
-    @State private var isInstalling = false
-    @State private var errorMessage: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            stageTitle("yt-dlp")
-
-            VStack(spacing: 12) {
-                ForEach(YTDLPDependencySource.allCases) { source in
-                    OnboardingDependencyChoice(
-                        title: source.title,
-                        value: status(for: source),
-                        isSelected: selection == source,
-                        isEnabled: isEnabled(source),
-                        action: {
-                            selection = source
-                        }
-                    )
-                }
-            }
-
-            HStack(spacing: 12) {
-                Button("Install yt-dlp") {
-                    install()
-                }
-                .disabled(isInstalling)
-
-                Button("Choose yt-dlp") {
-                    if let path = choosePath(allowsDirectories: false) {
-                        customPath = path
-                        selection = .custom
-                    }
-                }
-            }
-            .controlSize(.large)
-
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.callout)
-                    .foregroundStyle(.red)
-            }
-        }
-        .task {
-            refresh()
-        }
-    }
-
-    private func status(for source: YTDLPDependencySource) -> String {
-        switch source {
-        case .nativeSwift:
-            return "YouTube only"
-        case .system:
-            return snapshot.systemYTDLP?.path ?? "Not found"
-        case .provisioned:
-            return snapshot.provisionedYTDLP?.path ?? "Not installed"
-        case .custom:
-            return customPath.isEmpty ? "Not selected" : customPath
-        }
-    }
-
-    private func isEnabled(_ source: YTDLPDependencySource) -> Bool {
-        switch source {
-        case .nativeSwift:
-            return true
-        case .system:
-            return snapshot.systemYTDLP != nil
-        case .provisioned:
-            return snapshot.provisionedYTDLP != nil
-        case .custom:
-            return customPath.isEmpty == false
-        }
-    }
-
-    private func install() {
-        isInstalling = true
-        errorMessage = nil
-        Task {
-            do {
-                _ = try await SwiftTubeDependencyManager.installYTDLP()
-                let updatedSnapshot = SwiftTubeDependencyManager.detectionSnapshot()
-                await MainActor.run {
-                    snapshot = updatedSnapshot
-                    selection = .provisioned
-                    isInstalling = false
-                }
-            } catch {
-                let updatedSnapshot = SwiftTubeDependencyManager.detectionSnapshot()
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    snapshot = updatedSnapshot
-                    isInstalling = false
-                }
-            }
-        }
-    }
-
-    private func refresh() {
-        Task.detached(priority: .utility) {
-            let updatedSnapshot = SwiftTubeDependencyManager.detectionSnapshot()
-            await MainActor.run {
-                snapshot = updatedSnapshot
-            }
         }
     }
 }

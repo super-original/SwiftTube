@@ -4,15 +4,15 @@ import Security
 import SQLite3
 
 enum NativeBrowserCookieImporter {
-    static func exportCookies(for browser: BrowserLoginOption, to destinationURL: URL) throws {
+    static func exportCookies(for browser: BrowserLoginOption, profilePath: String? = nil, to destinationURL: URL) throws {
         let cookies: [NativeBrowserCookie]
         switch browser {
         case .safari:
             cookies = try SafariCookieReader().cookies()
         case .firefox, .zen, .librewolf, .floorp:
-            cookies = try FirefoxCookieReader(browser: browser).cookies()
+            cookies = try FirefoxCookieReader(browser: browser, explicitProfilePath: profilePath).cookies()
         default:
-            cookies = try ChromiumCookieReader(browser: browser).cookies()
+            cookies = try ChromiumCookieReader(browser: browser, explicitProfilePath: profilePath).cookies()
         }
 
         let relevantCookies = cookies.filter { cookie in
@@ -57,6 +57,7 @@ private func writeNetscapeCookieFile(_ cookies: [NativeBrowserCookie], to destin
 
 private struct FirefoxCookieReader {
     let browser: BrowserLoginOption
+    let explicitProfilePath: String?
 
     func cookies() throws -> [NativeBrowserCookie] {
         let profileURL = try profileDirectory()
@@ -93,6 +94,9 @@ private struct FirefoxCookieReader {
     }
 
     private func profileDirectory() throws -> URL {
+        if let explicitProfilePath {
+            return URL(fileURLWithPath: explicitProfilePath)
+        }
         if let path = profilePath(from: browser.cookieSource) {
             return URL(fileURLWithPath: path)
         }
@@ -124,6 +128,7 @@ private struct FirefoxCookieReader {
 
 private struct ChromiumCookieReader {
     let browser: BrowserLoginOption
+    let explicitProfilePath: String?
 
     func cookies() throws -> [NativeBrowserCookie] {
         let profileURL = try profileDirectory()
@@ -171,6 +176,9 @@ private struct ChromiumCookieReader {
     }
 
     private func profileDirectory() throws -> URL {
+        if let explicitProfilePath {
+            return URL(fileURLWithPath: explicitProfilePath)
+        }
         if let path = profilePath(from: browser.cookieSource) {
             return URL(fileURLWithPath: path)
         }

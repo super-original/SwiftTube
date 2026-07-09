@@ -988,8 +988,16 @@ struct BrowserAccountSource: Codable, Hashable, Identifiable, Sendable {
     let browser: String
     let browserLabel: String
     let bundleIdentifier: String?
+    let profilePath: String?
 
-    var id: String { browser }
+    init(browser: String, browserLabel: String, bundleIdentifier: String?, profilePath: String? = nil) {
+        self.browser = browser
+        self.browserLabel = browserLabel
+        self.bundleIdentifier = bundleIdentifier
+        self.profilePath = profilePath
+    }
+
+    var id: String { "\(browser)|\(profilePath ?? "default")" }
 }
 
 struct BrowserAccountDiscoveryResponse: Codable, Hashable, Identifiable, Sendable {
@@ -1003,47 +1011,6 @@ struct BrowserAccountDiscoveryResponse: Codable, Hashable, Identifiable, Sendabl
         guard let avatarUrl else { return nil }
         return URL(string: avatarUrl)
     }
-}
-
-enum ExtractorSpeedTestMode: String, Codable, CaseIterable, Identifiable, Sendable {
-    case nativeSwift
-    case systemYTDLP
-    case provisionedYTDLP
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .nativeSwift:
-            return "Native Swift"
-        case .systemYTDLP:
-            return "System yt-dlp"
-        case .provisionedYTDLP:
-            return "Installed yt-dlp"
-        }
-    }
-
-    var dependencySource: YTDLPDependencySource {
-        switch self {
-        case .nativeSwift:
-            return .nativeSwift
-        case .systemYTDLP:
-            return .system
-        case .provisionedYTDLP:
-            return .provisioned
-        }
-    }
-}
-
-struct ExtractorSpeedTestResult: Codable, Hashable, Identifiable, Sendable {
-    let mode: ExtractorSpeedTestMode
-    let isAvailable: Bool
-    let elapsedMilliseconds: Int?
-    let streamCount: Int
-    let bestFormatID: String?
-    let errorMessage: String?
-
-    var id: String { mode.rawValue }
 }
 
 struct PlaylistOptionsResponse: Codable, Sendable {

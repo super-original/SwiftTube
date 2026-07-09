@@ -11,6 +11,7 @@ private enum AuthConstants {
 struct AuthSessionConfig: Codable, Sendable {
     let browser: String
     let browserLabel: String
+    var profilePath: String?
     var avatarURL: String?
     var displayName: String?
     var email: String?
@@ -25,11 +26,6 @@ struct AuthMaterial: Sendable {
 
     var browser: String { config.browser }
     var browserLabel: String { config.browserLabel }
-}
-
-struct AuthSessionSnapshot: Sendable {
-    let config: AuthSessionConfig?
-    let material: AuthMaterial?
 }
 
 actor YouTubeAuthManager {
@@ -94,18 +90,19 @@ actor YouTubeAuthManager {
             && config?.handle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
     }
 
-    func connect(browser: String) async throws -> AuthStatusResponse {
+    func connect(browser: String, profilePath: String? = nil) async throws -> AuthStatusResponse {
         let browserKey = browser.lowercased()
         guard let browserOption = BrowserLoginOption(rawValue: browserKey),
-              let cookieSource = browserOption.cookieSource else {
+              browserOption.cookieSource != nil else {
             throw BackendClientError(message: "Unsupported browser or browser profile.")
         }
         let browserLabel = browserOption.displayName
 
-        try await exportBrowserCookies(for: browserOption, cookieSource: cookieSource, to: cookieFileURL, timeout: 30)
+        try exportBrowserCookies(for: browserOption, profilePath: profilePath, to: cookieFileURL)
         let config = AuthSessionConfig(
             browser: browserKey,
             browserLabel: browserLabel,
+            profilePath: profilePath,
             avatarURL: self.config?.avatarURL,
             displayName: self.config?.displayName,
             email: self.config?.email,
@@ -124,11 +121,11 @@ actor YouTubeAuthManager {
             return signedOutStatus()
         }
         guard let browserOption = BrowserLoginOption(rawValue: config.browser),
-              let cookieSource = browserOption.cookieSource else {
+              browserOption.cookieSource != nil else {
             return signedOutStatus(message: "The saved browser profile is no longer available.")
         }
 
-        try await exportBrowserCookies(for: browserOption, cookieSource: cookieSource, to: cookieFileURL, timeout: 30)
+        try exportBrowserCookies(for: browserOption, profilePath: config.profilePath, to: cookieFileURL)
         let material = try Self.loadMaterial(config: config, cookieFileURL: cookieFileURL)
         self.material = material
         return authStatus()
@@ -197,50 +194,12 @@ actor YouTubeAuthManager {
         material?.cookieFileURL
     }
 
-    func probeMaterial(for browser: BrowserLoginOption, timeout: TimeInterval = 8) async throws -> AuthMaterial {
-        guard let cookieSource = browser.cookieSource else {
-            throw BackendClientError(message: "\(browser.displayName) does not expose a readable profile.")
-        }
-
-        let probesDirectory = supportDirectoryURL.appendingPathComponent("CookieProbes", isDirectory: true)
-        try FileManager.default.createDirectory(at: probesDirectory, withIntermediateDirectories: true)
-        let probeCookieURL = probesDirectory.appendingPathComponent("\(browser.rawValue)-\(UUID().uuidString).txt")
-        try await exportBrowserCookies(for: browser, cookieSource: cookieSource, to: probeCookieURL, timeout: timeout)
-
-        let config = AuthSessionConfig(
-            browser: browser.rawValue,
-            browserLabel: browser.displayName,
-            avatarURL: nil,
-            displayName: nil,
-            email: nil,
-            handle: nil
-        )
-        return try Self.loadMaterial(config: config, cookieFileURL: probeCookieURL)
-    }
-
-    func activateProbeMaterial(_ material: AuthMaterial) -> AuthSessionSnapshot {
-        let snapshot = AuthSessionSnapshot(config: config, material: self.material)
-        config = material.config
-        self.material = material
-        return snapshot
-    }
-
-    func restoreProbeMaterial(_ snapshot: AuthSessionSnapshot) {
-        config = snapshot.config
-        material = snapshot.material
-    }
-
     private func exportBrowserCookies(
         for browser: BrowserLoginOption,
-        cookieSource: String,
-        to destinationURL: URL,
-        timeout: TimeInterval
-    ) async throws {
-        do {
-            try NativeBrowserCookieImporter.exportCookies(for: browser, to: destinationURL)
-        } catch {
-            try await YTDLPTool.exportCookies(from: cookieSource, to: destinationURL, timeout: timeout)
-        }
+        profilePath: String?,
+        to destinationURL: URL
+    ) throws {
+        try NativeBrowserCookieImporter.exportCookies(for: browser, profilePath: profilePath, to: destinationURL)
     }
 
     private static func loadConfig(at url: URL) -> AuthSessionConfig? {
@@ -340,60 +299,6 @@ private func parseCookieLine(_ line: Substring) -> NetscapeCookie? {
         name: components[5],
         value: components[6]
     )
-}
-
-enum YTDLPTool {
-    static func exportCookies(from browser: String, to destinationURL: URL, timeout: TimeInterval? = nil) async throws {
-        let settings = AppSettings.shared
-        let toolPath = try SwiftTubeDependencyManager.resolvedYTDLPExecutableForCookieImport(
-            preferredSource: settings.ytDLPDependencySource,
-            customPath: settings.ytDLPCustomPath
-        )
-        try? FileManager.default.removeItem(at: destinationURL)
-
-        let result = try await ProcessRunner.run(
-            executableURL: toolPath,
-            arguments: [
-                "--cookies-from-browser", browser,
-                "--cookies", destinationURL.path,
-                "--skip-download",
-                "--simulate",
-                "--quiet",
-                "--no-warnings",
-                "--ignore-no-formats-error",
-                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-            ],
-            timeout: timeout,
-            timeoutMessage: "\(browser) cookie import timed out."
-        )
-
-        let exportedCookies = FileManager.default.fileExists(atPath: destinationURL.path)
-        guard result.exitCode == 0 || exportedCookies else {
-            let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw BackendClientError(message: message.isEmpty ? "Failed to import browser cookies with yt-dlp." : message)
-        }
-
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destinationURL.path)
-    }
-
-    static func resolvePath() throws -> URL {
-        let settings = AppSettings.shared
-        guard let url = try SwiftTubeDependencyManager.resolvedYTDLPExecutable(
-            source: settings.ytDLPDependencySource,
-            customPath: settings.ytDLPCustomPath
-        ) else {
-            throw BackendClientError(message: "Native Swift extraction does not use yt-dlp.")
-        }
-        return url
-    }
-
-    static func resolveFallbackExecutablePath() throws -> URL {
-        let settings = AppSettings.shared
-        return try SwiftTubeDependencyManager.resolvedYTDLPExecutableForCookieImport(
-            preferredSource: settings.ytDLPDependencySource,
-            customPath: settings.ytDLPCustomPath
-        )
-    }
 }
 
 struct ProcessOutput: Sendable {

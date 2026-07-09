@@ -747,8 +747,6 @@ final class AppSettings: ObservableObject {
     private let playerControlLayoutKey = "playerControlLayout"
     private let sendWatchProgressToYouTubeKey = "sendWatchProgressToYouTube"
     private let onboardingCompletedKey = "onboardingCompleted"
-    private let ytDLPDependencySourceKey = "ytDLPDependencySource"
-    private let ytDLPCustomPathKey = "ytDLPCustomPath"
     private let mpvKitDependencySourceKey = "mpvKitDependencySource"
     private let mpvKitCustomPathKey = "mpvKitCustomPath"
 
@@ -853,14 +851,6 @@ final class AppSettings: ObservableObject {
 
     @Published var onboardingCompleted: Bool {
         didSet { defaults.set(onboardingCompleted, forKey: onboardingCompletedKey) }
-    }
-
-    @Published var ytDLPDependencySource: YTDLPDependencySource {
-        didSet { defaults.set(ytDLPDependencySource.rawValue, forKey: ytDLPDependencySourceKey) }
-    }
-
-    @Published var ytDLPCustomPath: String {
-        didSet { defaults.set(ytDLPCustomPath, forKey: ytDLPCustomPathKey) }
     }
 
     @Published var mpvKitDependencySource: MPVKitDependencySource {
@@ -998,10 +988,6 @@ final class AppSettings: ObservableObject {
             self.onboardingCompleted = defaults.bool(forKey: onboardingCompletedKey)
         }
 
-        self.ytDLPDependencySource = YTDLPDependencySource(
-            rawValue: defaults.string(forKey: ytDLPDependencySourceKey) ?? ""
-        ) ?? .nativeSwift
-        self.ytDLPCustomPath = defaults.string(forKey: ytDLPCustomPathKey) ?? ""
         self.mpvKitDependencySource = MPVKitDependencySource(
             rawValue: defaults.string(forKey: mpvKitDependencySourceKey) ?? ""
         ) ?? .provisioned

@@ -7,7 +7,6 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case themes
     case sidebar
     case notifications
-    case extractor
     case advanced
     case playback
     case controls
@@ -21,7 +20,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     }
 
     static var toolsSection: [SettingsPane] {
-        [.extractor, .advanced]
+        [.advanced]
     }
 
     static var playbackSection: [SettingsPane] {
@@ -39,7 +38,6 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .themes: return "Themes"
         case .sidebar: return "Sidebar"
         case .notifications: return "Notifications"
-        case .extractor: return "YouTube Extractor"
         case .advanced: return "Advanced"
         case .playback: return "Playback"
         case .controls: return "Controls"
@@ -55,7 +53,6 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .themes: return "paintpalette"
         case .sidebar: return "sidebar.left"
         case .notifications: return "bell.badge"
-        case .extractor: return "shippingbox"
         case .advanced: return "wrench.and.screwdriver"
         case .playback: return "play.circle"
         case .controls: return "keyboard"
@@ -171,8 +168,6 @@ struct SettingsView: View {
                         SidebarPane()
                     case .notifications:
                         NotificationsPane()
-                    case .extractor:
-                        ExtractorPane()
                     case .advanced:
                         AdvancedPane()
                     case .playback:
@@ -506,224 +501,6 @@ private struct NotificationsPane: View {
                 }
             }
         }
-    }
-}
-
-private struct ExtractorPane: View {
-    @ObservedObject private var settings = AppSettings.shared
-    @State private var dependencySnapshot = DependencyDetectionSnapshot.empty
-    @State private var isInstallingYTDLP = false
-    @State private var dependencyError: String?
-    @State private var speedTestVideoURL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-    @State private var isRunningExtractorSpeedTest = false
-    @State private var extractorSpeedResults: [ExtractorSpeedTestResult] = []
-    @State private var extractorSpeedError: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            SettingsHeader(
-                title: "YouTube Extractor",
-                subtitle: "Playback extraction and speed tests."
-            )
-
-            SettingsCard(title: nil, icon: nil) {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("YouTube extractor")
-                            .font(.headline)
-
-                        VStack(spacing: 8) {
-                            ForEach(YTDLPDependencySource.allCases) { source in
-                                SettingsDependencyChoice(
-                                    title: source.title,
-                                    value: ytdlpStatus(for: source),
-                                    isSelected: settings.ytDLPDependencySource == source,
-                                    isEnabled: ytdlpEnabled(for: source)
-                                ) {
-                                    settings.ytDLPDependencySource = source
-                                }
-                            }
-                        }
-                    }
-
-                    HStack(spacing: 10) {
-                        Button("Install yt-dlp") {
-                            installYTDLP()
-                        }
-                        .disabled(isInstallingYTDLP)
-
-                        Button("Choose yt-dlp") {
-                            if let path = chooseDependencyPath(allowsDirectories: false) {
-                                settings.ytDLPCustomPath = path
-                                settings.ytDLPDependencySource = .custom
-                            }
-                        }
-                    }
-
-                    if let dependencyError {
-                        Text(dependencyError)
-                            .font(.callout)
-                            .foregroundStyle(.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .task {
-                    refreshDependencies()
-                }
-            }
-
-            SettingsCard(title: "Extractor Speed Test", icon: "speedometer") {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(spacing: 10) {
-                        TextField("YouTube URL or video ID", text: $speedTestVideoURL)
-                            .textFieldStyle(.roundedBorder)
-
-                        Button {
-                            runExtractorSpeedTest()
-                        } label: {
-                            if isRunningExtractorSpeedTest {
-                                Label("Running", systemImage: "timer")
-                            } else {
-                                Label("Run", systemImage: "play.fill")
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(isRunningExtractorSpeedTest || speedTestVideoID == nil)
-                    }
-
-                    if isRunningExtractorSpeedTest {
-                        LoadingStatusView(text: "Testing extractors...", spinnerSize: 20)
-                    }
-
-                    if extractorSpeedResults.isEmpty == false {
-                        VStack(spacing: 8) {
-                            ForEach(extractorSpeedResults) { result in
-                                ExtractorSpeedResultRow(result: result)
-                            }
-                        }
-                    }
-
-                    if let extractorSpeedError {
-                        Text(extractorSpeedError)
-                            .font(.callout)
-                            .foregroundStyle(.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        }
-    }
-
-    private func ytdlpStatus(for source: YTDLPDependencySource) -> String? {
-        switch source {
-        case .nativeSwift:
-            return "YouTube only"
-        case .system:
-            return dependencySnapshot.systemYTDLP?.path ?? "Not found"
-        case .provisioned:
-            return dependencySnapshot.provisionedYTDLP?.path ?? "Not installed"
-        case .custom:
-            return settings.ytDLPCustomPath.isEmpty ? "Not selected" : settings.ytDLPCustomPath
-        }
-    }
-
-    private func ytdlpEnabled(for source: YTDLPDependencySource) -> Bool {
-        switch source {
-        case .nativeSwift:
-            return true
-        case .system:
-            return dependencySnapshot.systemYTDLP != nil
-        case .provisioned:
-            return dependencySnapshot.provisionedYTDLP != nil
-        case .custom:
-            return settings.ytDLPCustomPath.isEmpty == false
-        }
-    }
-
-    private var speedTestVideoID: String? {
-        let trimmed = speedTestVideoURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.isEmpty == false else { return nil }
-
-        if trimmed.range(of: #"^[A-Za-z0-9_-]{11}$"#, options: .regularExpression) != nil {
-            return trimmed
-        }
-
-        guard let url = URL(string: trimmed),
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return nil
-        }
-
-        if let host = url.host?.lowercased(), host.contains("youtu.be") {
-            let candidate = url.pathComponents.dropFirst().first ?? ""
-            return candidate.range(of: #"^[A-Za-z0-9_-]{11}$"#, options: .regularExpression) != nil ? candidate : nil
-        }
-
-        let candidate = components.queryItems?.first(where: { $0.name == "v" })?.value ?? ""
-        return candidate.range(of: #"^[A-Za-z0-9_-]{11}$"#, options: .regularExpression) != nil ? candidate : nil
-    }
-
-    private func refreshDependencies() {
-        Task.detached(priority: .utility) {
-            let snapshot = SwiftTubeDependencyManager.detectionSnapshot()
-            await MainActor.run {
-                dependencySnapshot = snapshot
-            }
-        }
-    }
-
-    private func installYTDLP() {
-        isInstallingYTDLP = true
-        dependencyError = nil
-        Task {
-            do {
-                _ = try await SwiftTubeDependencyManager.installYTDLP()
-                await MainActor.run {
-                    isInstallingYTDLP = false
-                    settings.ytDLPDependencySource = .provisioned
-                    refreshDependencies()
-                }
-            } catch {
-                await MainActor.run {
-                    isInstallingYTDLP = false
-                    dependencyError = error.localizedDescription
-                    refreshDependencies()
-                }
-            }
-        }
-    }
-
-    private func runExtractorSpeedTest() {
-        guard let videoID = speedTestVideoID else { return }
-        isRunningExtractorSpeedTest = true
-        extractorSpeedError = nil
-        extractorSpeedResults = []
-
-        Task {
-            do {
-                let results = try await BackendClient.shared.runExtractorSpeedTest(videoID: videoID)
-                await MainActor.run {
-                    extractorSpeedResults = results
-                    isRunningExtractorSpeedTest = false
-                    refreshDependencies()
-                }
-            } catch {
-                await MainActor.run {
-                    extractorSpeedError = error.localizedDescription
-                    isRunningExtractorSpeedTest = false
-                    refreshDependencies()
-                }
-            }
-        }
-    }
-
-    @MainActor
-    private func chooseDependencyPath(allowsDirectories: Bool) -> String? {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = false
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = allowsDirectories
-        panel.resolvesAliases = true
-        return panel.runModal() == .OK ? panel.url?.path : nil
     }
 }
 
@@ -1391,65 +1168,6 @@ private struct SettingsDependencyChoice: View {
         .buttonStyle(.plain)
         .disabled(isEnabled == false)
         .opacity(isEnabled ? 1 : 0.55)
-    }
-}
-
-private struct ExtractorSpeedResultRow: View {
-    let result: ExtractorSpeedTestResult
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: statusSymbol)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(statusColor)
-                .frame(width: 22)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(result.mode.title)
-                    .font(.callout.weight(.semibold))
-
-                if let errorMessage = result.errorMessage {
-                    Text(errorMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                } else if let elapsedMilliseconds = result.elapsedMilliseconds {
-                    Text("\(elapsedMilliseconds) ms • \(result.streamCount) streams")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Spacer()
-
-            if let elapsedMilliseconds = result.elapsedMilliseconds, result.errorMessage == nil {
-                Text("\(elapsedMilliseconds) ms")
-                    .font(.callout.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.primary.opacity(0.035))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.primary.opacity(0.07), lineWidth: 0.7)
-        )
-    }
-
-    private var statusSymbol: String {
-        if result.isAvailable == false { return "minus.circle" }
-        if result.errorMessage != nil { return "exclamationmark.circle" }
-        return "checkmark.circle.fill"
-    }
-
-    private var statusColor: Color {
-        if result.isAvailable == false { return .secondary }
-        if result.errorMessage != nil { return .orange }
-        return .green
     }
 }
 

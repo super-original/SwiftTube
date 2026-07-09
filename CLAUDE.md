@@ -7,7 +7,7 @@ It intentionally mirrors `AGENTS.md` so the repo has one consistent set of expec
 
 SwiftTube is a personal macOS YouTube client built with SwiftUI and Swift Package Manager.
 The app now uses an in-process Swift backend actor plus MPV playback. It does not launch a bundled Python or FastAPI backend anymore.
-`yt-dlp` remains an external helper for browser-cookie import and stream extraction paths.
+Browser-cookie import and stream extraction are implemented entirely in native Swift.
 
 ## Key locations
 

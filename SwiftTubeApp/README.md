@@ -37,7 +37,7 @@ Instead, the app uses:
 - a SwiftUI macOS shell for the UI
 - `SwiftTubeBackend`, an in-process Swift actor that talks to YouTube/InnerTube
 - MPVKit/libmpv for all playback
-- `yt-dlp` only as an external helper for specific stream/auth tasks
+- native Swift stream extraction and browser-session import
 
 ## Documentation
 

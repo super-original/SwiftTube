@@ -3436,6 +3436,9 @@ private struct ToolbarSearchField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = ResignableSearchField()
+        field.isEnabled = true
+        field.isEditable = true
+        field.isSelectable = true
         field.placeholderString = placeholder
         field.delegate = context.coordinator
         field.focusRingType = .default
@@ -3457,9 +3460,16 @@ private struct ToolbarSearchField: NSViewRepresentable {
         if nsView.placeholderString != placeholder {
             nsView.placeholderString = placeholder
         }
-        let isActuallyFocused = nsView.currentEditor() != nil
-        if isFocused == false, isActuallyFocused {
-            nsView.window?.makeFirstResponder(nil)
+        if context.coordinator.lastAppliedFocusRequest != isFocused {
+            context.coordinator.lastAppliedFocusRequest = isFocused
+            if isFocused {
+                DispatchQueue.main.async { [weak nsView] in
+                    guard let nsView, nsView.window?.firstResponder !== nsView.currentEditor() else { return }
+                    nsView.window?.makeFirstResponder(nsView)
+                }
+            } else if nsView.currentEditor() != nil {
+                nsView.window?.makeFirstResponder(nil)
+            }
         }
     }
 
@@ -3518,6 +3528,7 @@ private struct ToolbarSearchField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var parent: ToolbarSearchField
+        var lastAppliedFocusRequest = false
 
         init(_ parent: ToolbarSearchField) {
             self.parent = parent

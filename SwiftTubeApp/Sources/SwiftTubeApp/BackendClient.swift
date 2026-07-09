@@ -152,16 +152,12 @@ final class BackendClient {
         try await backend.authStatus()
     }
 
-    func connectBrowserAuth(browser: String) async throws -> AuthStatusResponse {
-        try await backend.connectBrowserAuth(browser: browser)
+    func connectBrowserAuth(browser: String, profilePath: String? = nil) async throws -> AuthStatusResponse {
+        try await backend.connectBrowserAuth(browser: browser, profilePath: profilePath)
     }
 
     func discoverBrowserAccounts() async throws -> [BrowserAccountDiscoveryResponse] {
         try await backend.discoverBrowserAccounts()
-    }
-
-    func runExtractorSpeedTest(videoID: String) async throws -> [ExtractorSpeedTestResult] {
-        try await backend.runExtractorSpeedTest(videoID: videoID)
     }
 
     func clearAuthSession() async throws -> AuthStatusResponse {

@@ -8,6 +8,14 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.30
+
+- Removed the remaining `yt-dlp` playback, onboarding, settings, authentication, and dependency-management paths; stream extraction and browser-cookie import are now native Swift only.
+- Replaced slow account discovery with a metadata-only browser profile scan that does not unlock browser cookie stores or prompt for Chrome Safe Storage access.
+- Made account connection target the selected browser profile directly, improving reliability with Safari, Zen, Firefox-family, and Chromium-family browsers.
+- Fixed the toolbar search field losing first responder immediately on macOS 27.
+- Fixed an MPV event-pump ownership issue that could retain a playback engine after teardown.
+
 ## 0.15.29
 
 - Fixed PiP Metal-surface rounding, active hover appearance, collapsed edge-tab shape, and main-player sizing after exiting PiP.

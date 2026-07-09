@@ -43,7 +43,7 @@ Responsibilities:
 - handle playlist, rating, subscription, Watch Later, and history mutations
 - maintain progress/watch-history state that the UI can merge in optimistically
 
-The backend now lives inside the app process as Swift code. The old Python/FastAPI path is no longer the main architecture.
+The backend now lives inside the app process as Swift code. The old Python/FastAPI and external extractor paths are no longer part of the app architecture.
 
 ## View models and optimistic state
 

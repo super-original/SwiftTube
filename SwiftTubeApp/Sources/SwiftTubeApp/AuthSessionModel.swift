@@ -278,11 +278,11 @@ final class AuthSessionModel: ObservableObject {
     }
 
     func connect(using browser: BrowserLoginOption) async -> Bool {
-        await connect(browserRawValue: browser.rawValue)
+        await connect(browserRawValue: browser.rawValue, profilePath: nil)
     }
 
     func connect(using source: BrowserAccountSource) async -> Bool {
-        await connect(browserRawValue: source.browser)
+        await connect(browserRawValue: source.browser, profilePath: source.profilePath)
     }
 
     func discoverAccounts() async {
@@ -310,12 +310,12 @@ final class AuthSessionModel: ObservableObject {
         }
     }
 
-    private func connect(browserRawValue: String) async -> Bool {
+    private func connect(browserRawValue: String, profilePath: String?) async -> Bool {
         isWorking = true
         defer { isWorking = false }
 
         do {
-            status = try await BackendClient.shared.connectBrowserAuth(browser: browserRawValue)
+            status = try await BackendClient.shared.connectBrowserAuth(browser: browserRawValue, profilePath: profilePath)
             errorMessage = nil
             mergeDiscoveredAccounts([status.discoveryAccount].compactMap { $0 })
             contentRefreshID = UUID()
