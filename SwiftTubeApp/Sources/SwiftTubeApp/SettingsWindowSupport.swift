@@ -35,33 +35,5 @@ enum SettingsWindowSupport {
 extension View {
     func removeSidebarToggle() -> some View {
         toolbar(removing: .sidebarToggle)
-            .toolbar {
-                Color.clear
-            }
-    }
-}
-
-extension NSSplitViewItem {
-    @nonobjc private static let swiftTubeSettingsSwizzler: Void = {
-        let originalSelector = #selector(getter: canCollapse)
-        let swizzledSelector = #selector(getter: swiftTubeSettingsCanCollapse)
-
-        guard let originalMethod = class_getInstanceMethod(NSSplitViewItem.self, originalSelector),
-              let swizzledMethod = class_getInstanceMethod(NSSplitViewItem.self, swizzledSelector) else {
-            return
-        }
-
-        method_exchangeImplementations(originalMethod, swizzledMethod)
-    }()
-
-    @MainActor @objc private var swiftTubeSettingsCanCollapse: Bool {
-        if viewController.view.window?.identifier == SettingsWindowSupport.windowIdentifier {
-            return false
-        }
-        return self.swiftTubeSettingsCanCollapse
-    }
-
-    static func swizzleSwiftTubeSettingsCanCollapse() {
-        _ = swiftTubeSettingsSwizzler
     }
 }

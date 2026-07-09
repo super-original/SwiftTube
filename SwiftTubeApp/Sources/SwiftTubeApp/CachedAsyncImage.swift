@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct CachedAsyncImage<Placeholder: View>: View {
+    @ObservedObject private var settings = AppSettings.shared
     let url: URL?
     let maxPixelSize: Int?
     let contentMode: ContentMode
@@ -26,10 +27,16 @@ struct CachedAsyncImage<Placeholder: View>: View {
                 Image(decorative: image.cgImage, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
+                    .transition(.opacity)
             } else {
                 placeholder
+                    .transition(.opacity)
             }
         }
+        .animation(
+            settings.thumbnailFadeInEnabled ? .easeOut(duration: 0.18) : nil,
+            value: loader.image != nil
+        )
         .onAppear {
             loader.load(from: url, maxPixelSize: maxPixelSize)
         }

@@ -3,7 +3,6 @@ import SwiftUI
 
 private enum SettingsPane: String, CaseIterable, Identifiable {
     case general
-    case appearance
     case themes
     case sidebar
     case notifications
@@ -16,7 +15,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     static var appSection: [SettingsPane] {
-        [.general, .appearance, .themes, .sidebar, .notifications]
+        [.general, .themes, .sidebar, .notifications]
     }
 
     static var toolsSection: [SettingsPane] {
@@ -34,7 +33,6 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: return "General"
-        case .appearance: return "Appearance"
         case .themes: return "Themes"
         case .sidebar: return "Sidebar"
         case .notifications: return "Notifications"
@@ -49,7 +47,6 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .general: return "gearshape"
-        case .appearance: return "circle.lefthalf.filled"
         case .themes: return "paintpalette"
         case .sidebar: return "sidebar.left"
         case .notifications: return "bell.badge"
@@ -68,7 +65,7 @@ struct SettingsView: View {
     @Namespace private var settingsScrollTop
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: .constant(.all)) {
             settingsSidebar
         } detail: {
             settingsDetail
@@ -81,7 +78,7 @@ struct SettingsView: View {
             idealHeight: 650,
             maxHeight: SettingsWindowSupport.maxSize.height
         )
-        .background(settings.windowBackgroundColor.ignoresSafeArea())
+        .background(Rectangle().fill(settings.windowBackgroundStyle).ignoresSafeArea())
         .preferredColorScheme(settings.preferredColorScheme)
         .background(
             WindowAccessor { window in
@@ -103,7 +100,7 @@ struct SettingsView: View {
             )) {
                 Section {
                     ForEach(SettingsPane.appSection) { pane in
-                        Label(pane.title, systemImage: pane.systemImage)
+                        SettingsSidebarLabel(pane: pane)
                             .tag(pane)
                     }
                 } header: {
@@ -117,7 +114,7 @@ struct SettingsView: View {
 
                 Section("Player") {
                     ForEach(SettingsPane.playbackSection) { pane in
-                        Label(pane.title, systemImage: pane.systemImage)
+                        SettingsSidebarLabel(pane: pane)
                             .tag(pane)
                     }
                 }
@@ -125,7 +122,7 @@ struct SettingsView: View {
 
                 Section("Tools") {
                     ForEach(SettingsPane.toolsSection) { pane in
-                        Label(pane.title, systemImage: pane.systemImage)
+                        SettingsSidebarLabel(pane: pane)
                             .tag(pane)
                     }
                 }
@@ -133,7 +130,7 @@ struct SettingsView: View {
 
                 Section("About") {
                     ForEach(SettingsPane.aboutSection) { pane in
-                        Label(pane.title, systemImage: pane.systemImage)
+                        SettingsSidebarLabel(pane: pane)
                             .tag(pane)
                     }
                 }
@@ -160,8 +157,6 @@ struct SettingsView: View {
                     switch selection {
                     case .general:
                         GeneralPane()
-                    case .appearance:
-                        AppearancePane()
                     case .themes:
                         ThemesPane()
                     case .sidebar:
@@ -187,7 +182,7 @@ struct SettingsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(settings.windowBackgroundColor)
+        .background(Rectangle().fill(settings.windowBackgroundStyle))
     }
 }
 
@@ -201,10 +196,12 @@ private struct GeneralPane: View {
                 subtitle: "Navigation and startup behavior."
             )
 
+            AppearancePaneContent()
+
             SettingsCard(title: nil, icon: nil) {
                 VStack(spacing: 18) {
                     NativeToggleRow(
-                        title: "Hide sidebar on video pages",
+                        title: "Automatically collapse sidebar on video pages",
                         isOn: $settings.autoHideSidebarOnPlayback
                     )
 
@@ -216,22 +213,36 @@ private struct GeneralPane: View {
                     )
                 }
             }
+
+            SettingsCard(title: "Thumbnails", icon: "photo") {
+                NativePickerRow(title: "Corner style") {
+                    Picker("Corner style", selection: $settings.thumbnailCornerStyle) {
+                        ForEach(ThumbnailCornerStyle.allCases) { style in
+                            Text(style.title).tag(style)
+                        }
+                    }
+                    .labelsHidden()
+                }
+
+                SettingsDivider().padding(.vertical, 14)
+                NativeToggleRow(title: "Fade images in", isOn: $settings.thumbnailFadeInEnabled)
+                SettingsDivider().padding(.vertical, 14)
+                NativeToggleRow(title: "Animate on hover", isOn: $settings.hoverAnimationsEnabled)
+                SettingsDivider().padding(.vertical, 14)
+                NativeToggleRow(title: "Show watch progress", isOn: $settings.showVideoProgressBars)
+                SettingsDivider().padding(.vertical, 14)
+                NativeToggleRow(title: "Show duration badges", isOn: $settings.showDurationBadges)
+            }
         }
     }
 }
 
-private struct AppearancePane: View {
+private struct AppearancePaneContent: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            SettingsHeader(
-                title: "Appearance",
-                subtitle: "Browse layout."
-            )
-
-            SettingsCard(title: "Video Grid", icon: "rectangle.grid.2x2") {
-                VStack(alignment: .leading, spacing: 14) {
+        SettingsCard(title: "Video Grid", icon: "rectangle.grid.2x2") {
+            VStack(alignment: .leading, spacing: 14) {
                     HStack(alignment: .center) {
                         Text("Recommendations and search size")
                             .font(.headline)
@@ -247,13 +258,14 @@ private struct AppearancePane: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                }
             }
         }
     }
 }
 
 private struct ThemesPane: View {
+    @ObservedObject private var settings = AppSettings.shared
+
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsHeader(
@@ -261,30 +273,122 @@ private struct ThemesPane: View {
                 subtitle: "Color presets."
             )
 
-            SettingsCard(title: "Default Themes", icon: "circle.lefthalf.filled") {
-                ThemeGroup(themes: AppAppearanceMode.defaultThemes)
+            SettingsCard(title: "Presets", icon: "paintpalette") {
+                VStack(alignment: .leading, spacing: 14) {
+                    ThemeGroup(themes: AppAppearanceMode.defaultThemes + AppAppearanceMode.coloredThemes)
+
+                    Text("Gradients")
+                        .font(.headline)
+                    ThemeGroup(themes: AppAppearanceMode.gradientThemes)
+                }
             }
 
-            SettingsCard(title: "Colored Themes", icon: "paintpalette") {
-                ThemeGroup(themes: AppAppearanceMode.coloredThemes)
+            SettingsCard(title: "Custom", icon: "slider.horizontal.3") {
+                VStack(alignment: .leading, spacing: 14) {
+                    NativeToggleRow(title: "Use custom theme", isOn: $settings.usesCustomTheme)
+                    SettingsDivider()
+
+                    HStack(spacing: 12) {
+                        ForEach(settings.customThemeConfiguration.colors.indices, id: \.self) { index in
+                            ColorPicker(
+                                "Color \(index + 1)",
+                                selection: customColorBinding(at: index),
+                                supportsOpacity: false
+                            )
+                            .labelsHidden()
+                        }
+
+                        Spacer()
+
+                        Stepper(
+                            "\(settings.customThemeConfiguration.colors.count) color\(settings.customThemeConfiguration.colors.count == 1 ? "" : "s")",
+                            value: colorCountBinding,
+                            in: 1...3
+                        )
+                    }
+
+                    NativePickerRow(title: "Direction") {
+                        Picker("Direction", selection: customDirectionBinding) {
+                            ForEach(CustomThemeDirection.allCases) { direction in
+                                Text(direction.title).tag(direction)
+                            }
+                        }
+                        .labelsHidden()
+                        .disabled(settings.customThemeConfiguration.colors.count == 1)
+                    }
+
+                    NativeToggleRow(title: "Use dark interface text", isOn: customDarkTextBinding)
+                }
             }
         }
+    }
+
+    private var colorCountBinding: Binding<Int> {
+        Binding(
+            get: { settings.customThemeConfiguration.colors.count },
+            set: { count in
+                var configuration = settings.customThemeConfiguration
+                while configuration.colors.count < count {
+                    configuration.colors.append(configuration.colors.last ?? .init(red: 0.1, green: 0.42, blue: 0.82))
+                }
+                configuration.colors = Array(configuration.colors.prefix(count))
+                settings.customThemeConfiguration = configuration
+                settings.usesCustomTheme = true
+            }
+        )
+    }
+
+    private func customColorBinding(at index: Int) -> Binding<Color> {
+        Binding(
+            get: { settings.customThemeConfiguration.colors[index].color },
+            set: { color in
+                var configuration = settings.customThemeConfiguration
+                configuration.colors[index] = ThemeColorComponents(color: color)
+                settings.customThemeConfiguration = configuration
+                settings.usesCustomTheme = true
+            }
+        )
+    }
+
+    private var customDirectionBinding: Binding<CustomThemeDirection> {
+        Binding(
+            get: { settings.customThemeConfiguration.direction },
+            set: { direction in
+                var configuration = settings.customThemeConfiguration
+                configuration.direction = direction
+                settings.customThemeConfiguration = configuration
+                settings.usesCustomTheme = true
+            }
+        )
+    }
+
+    private var customDarkTextBinding: Binding<Bool> {
+        Binding(
+            get: { settings.customThemeConfiguration.usesDarkText },
+            set: { usesDarkText in
+                var configuration = settings.customThemeConfiguration
+                configuration.usesDarkText = usesDarkText
+                settings.customThemeConfiguration = configuration
+                settings.usesCustomTheme = true
+            }
+        )
     }
 }
 
 private struct ThemeGroup: View {
     @ObservedObject private var settings = AppSettings.shared
     let themes: [AppAppearanceMode]
-    private let columns = [GridItem(.adaptive(minimum: 104, maximum: 140), spacing: 14)]
+    private let columns = [GridItem(.adaptive(minimum: 52, maximum: 52), spacing: 10)]
 
     var body: some View {
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
             ForEach(themes) { theme in
                 ThemeSwatch(
                     theme: theme,
-                    isSelected: settings.appearanceMode == theme
+                    isSelected: !settings.usesCustomTheme && settings.appearanceMode == theme
                 ) {
                     settings.appearanceMode = theme
+                    settings.usesCustomTheme = false
                 }
             }
         }
@@ -301,39 +405,38 @@ private struct ThemeSwatch: View {
 
     var body: some View {
         Button(action: onSelect) {
-            VStack(alignment: .leading, spacing: 10) {
-                ZStack(alignment: .topTrailing) {
-                    RoundedRectangle(cornerRadius: 18)
+            ZStack(alignment: .topTrailing) {
+                    RoundedRectangle(cornerRadius: 12)
                         .fill(theme.previewGradient)
-                        .frame(height: 82)
+                        .frame(width: 52, height: 52)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 18)
+                            RoundedRectangle(cornerRadius: 12)
                                 .stroke(borderColor, lineWidth: isSelected ? 2.5 : 1)
                         )
 
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 22, weight: .bold))
+                            .font(.system(size: 16, weight: .bold))
                             .foregroundStyle(Color.accentColor, .white)
                             .background(Circle().fill(Color.white))
-                            .offset(x: 7, y: -7)
+                            .offset(x: 4, y: -4)
                     }
-                }
 
                 Text(theme.title)
-                    .font(.callout.weight(.semibold))
+                    .font(.caption2.weight(.semibold))
                     .lineLimit(1)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(.black.opacity(0.64), in: Capsule())
+                    .frame(maxWidth: 50)
+                    .offset(x: -1, y: 48)
+                    .opacity(isHovered ? 1 : 0)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 22)
-                    .fill(backgroundColor)
-            )
-            .scaleEffect(isHovered ? 1.02 : 1)
+            .scaleEffect(isHovered ? 1.06 : 1)
         }
         .buttonStyle(.plain)
+        .help(theme.title)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.14)) {
                 isHovered = hovering
@@ -346,12 +449,6 @@ private struct ThemeSwatch: View {
         return Color.primary.opacity(isHovered ? 0.45 : 0.18)
     }
 
-    private var backgroundColor: Color {
-        if isSelected {
-            return Color.accentColor.opacity(settings.preferredColorScheme == .dark ? 0.15 : 0.08)
-        }
-        return isHovered ? settings.hoverCardBackgroundColor : .clear
-    }
 }
 
 private struct SidebarPane: View {
@@ -987,12 +1084,20 @@ private struct SettingsHeader: View {
     let subtitle: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 34, weight: .bold))
-            Text(subtitle)
-                .font(.title3)
-                .foregroundStyle(.secondary)
+        Text(title)
+            .font(.system(size: 34, weight: .bold))
+    }
+}
+
+private struct SettingsSidebarLabel: View {
+    let pane: SettingsPane
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: pane.systemImage)
+                .foregroundStyle(BrandAssets.swiftTubeBlue)
+                .frame(width: 18)
+            Text(pane.title)
         }
     }
 }

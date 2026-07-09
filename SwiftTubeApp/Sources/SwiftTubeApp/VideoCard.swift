@@ -56,7 +56,7 @@ struct VideoCard: View {
         .scaleEffect(isHovered ? 1.008 : 1)
         .offset(y: isHovered ? -1 : 0)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
+            withAnimation(settings.hoverAnimationsEnabled ? .easeOut(duration: 0.12) : nil) {
                 isHovered = hovering
             }
         }

@@ -46,7 +46,11 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
     }
 
     static var coloredThemes: [AppAppearanceMode] {
-        allCases.filter { !defaultThemes.contains($0) }
+        allCases.filter { !defaultThemes.contains($0) && !gradientThemes.contains($0) }
+    }
+
+    static var gradientThemes: [AppAppearanceMode] {
+        [.midnightOcean, .midnightAurora, .sunrise, .glacier, .coral]
     }
 
     private static func preview(_ colors: NSColor...) -> [NSColor] {
@@ -723,6 +727,94 @@ enum PlayerControlLayout: String, CaseIterable, Identifiable {
     }
 }
 
+enum ThumbnailCornerStyle: String, CaseIterable, Identifiable {
+    case subtle
+    case rounded
+    case square
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .subtle: return "Subtle"
+        case .rounded: return "Rounded"
+        case .square: return "Square"
+        }
+    }
+
+    func radius(default defaultRadius: CGFloat) -> CGFloat {
+        switch self {
+        case .subtle: return min(defaultRadius, 8)
+        case .rounded: return defaultRadius
+        case .square: return 0
+        }
+    }
+}
+
+enum CustomThemeDirection: String, CaseIterable, Identifiable, Codable {
+    case topToBottom
+    case leftToRight
+    case diagonalDown
+    case diagonalUp
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .topToBottom: return "Vertical"
+        case .leftToRight: return "Horizontal"
+        case .diagonalDown: return "Diagonal ↘"
+        case .diagonalUp: return "Diagonal ↗"
+        }
+    }
+
+    var points: (start: UnitPoint, end: UnitPoint) {
+        switch self {
+        case .topToBottom: return (.top, .bottom)
+        case .leftToRight: return (.leading, .trailing)
+        case .diagonalDown: return (.topLeading, .bottomTrailing)
+        case .diagonalUp: return (.bottomLeading, .topTrailing)
+        }
+    }
+}
+
+struct ThemeColorComponents: Codable, Equatable, Identifiable {
+    var red: Double
+    var green: Double
+    var blue: Double
+
+    var id: String { "\(red)-\(green)-\(blue)" }
+    var color: Color { Color(red: red, green: green, blue: blue) }
+
+    init(red: Double, green: Double, blue: Double) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+    }
+
+    init(color: Color) {
+        let converted = NSColor(color).usingColorSpace(.deviceRGB) ?? .systemBlue
+        red = Double(converted.redComponent)
+        green = Double(converted.greenComponent)
+        blue = Double(converted.blueComponent)
+    }
+}
+
+struct CustomThemeConfiguration: Codable, Equatable {
+    var colors: [ThemeColorComponents]
+    var direction: CustomThemeDirection
+    var usesDarkText: Bool
+
+    static let defaultValue = CustomThemeConfiguration(
+        colors: [
+            ThemeColorComponents(red: 0.04, green: 0.12, blue: 0.28),
+            ThemeColorComponents(red: 0.10, green: 0.42, blue: 0.82)
+        ],
+        direction: .diagonalDown,
+        usesDarkText: false
+    )
+}
+
 final class AppSettings: ObservableObject {
     nonisolated(unsafe) static let shared = AppSettings()
 
@@ -749,9 +841,42 @@ final class AppSettings: ObservableObject {
     private let onboardingCompletedKey = "onboardingCompleted"
     private let mpvKitDependencySourceKey = "mpvKitDependencySource"
     private let mpvKitCustomPathKey = "mpvKitCustomPath"
+    private let customThemeKey = "customThemeConfiguration"
 
     @Published var appearanceMode: AppAppearanceMode {
         didSet { defaults.set(appearanceMode.rawValue, forKey: "appearanceMode") }
+    }
+
+    @Published var usesCustomTheme: Bool {
+        didSet { defaults.set(usesCustomTheme, forKey: "usesCustomTheme") }
+    }
+
+    @Published var customThemeConfiguration: CustomThemeConfiguration {
+        didSet {
+            if let data = try? JSONEncoder().encode(customThemeConfiguration) {
+                defaults.set(data, forKey: customThemeKey)
+            }
+        }
+    }
+
+    @Published var thumbnailCornerStyle: ThumbnailCornerStyle {
+        didSet { defaults.set(thumbnailCornerStyle.rawValue, forKey: "thumbnailCornerStyle") }
+    }
+
+    @Published var thumbnailFadeInEnabled: Bool {
+        didSet { defaults.set(thumbnailFadeInEnabled, forKey: "thumbnailFadeInEnabled") }
+    }
+
+    @Published var hoverAnimationsEnabled: Bool {
+        didSet { defaults.set(hoverAnimationsEnabled, forKey: "hoverAnimationsEnabled") }
+    }
+
+    @Published var showVideoProgressBars: Bool {
+        didSet { defaults.set(showVideoProgressBars, forKey: "showVideoProgressBars") }
+    }
+
+    @Published var showDurationBadges: Bool {
+        didSet { defaults.set(showDurationBadges, forKey: "showDurationBadges") }
     }
 
     @Published var defaultQuality: DefaultQuality {
@@ -887,6 +1012,21 @@ final class AppSettings: ObservableObject {
         }
 
         self.appearanceMode = resolvedAppearance
+        self.usesCustomTheme = defaults.bool(forKey: "usesCustomTheme")
+        self.customThemeConfiguration = defaults.data(forKey: customThemeKey)
+            .flatMap { try? JSONDecoder().decode(CustomThemeConfiguration.self, from: $0) }
+            ?? .defaultValue
+        self.thumbnailCornerStyle = ThumbnailCornerStyle(
+            rawValue: defaults.string(forKey: "thumbnailCornerStyle") ?? ""
+        ) ?? .rounded
+        self.thumbnailFadeInEnabled = defaults.object(forKey: "thumbnailFadeInEnabled") == nil
+            ? true : defaults.bool(forKey: "thumbnailFadeInEnabled")
+        self.hoverAnimationsEnabled = defaults.object(forKey: "hoverAnimationsEnabled") == nil
+            ? true : defaults.bool(forKey: "hoverAnimationsEnabled")
+        self.showVideoProgressBars = defaults.object(forKey: "showVideoProgressBars") == nil
+            ? true : defaults.bool(forKey: "showVideoProgressBars")
+        self.showDurationBadges = defaults.object(forKey: "showDurationBadges") == nil
+            ? true : defaults.bool(forKey: "showDurationBadges")
         let storedDefaultQuality = defaults.string(forKey: "defaultQuality") ?? ""
         let resolvedDefaultQuality = DefaultQuality(rawValue: storedDefaultQuality) ?? .highest
         self.defaultQuality = resolvedDefaultQuality
@@ -1003,19 +1143,40 @@ final class AppSettings: ObservableObject {
     }
 
     var preferredColorScheme: ColorScheme {
-        appearanceMode.preferredColorScheme
+        usesCustomTheme
+            ? (customThemeConfiguration.usesDarkText ? .light : .dark)
+            : appearanceMode.preferredColorScheme
     }
 
     var windowBackgroundColor: Color {
-        appearanceMode.windowBackgroundColor
+        usesCustomTheme
+            ? (customThemeConfiguration.colors.first?.color ?? appearanceMode.windowBackgroundColor)
+            : appearanceMode.windowBackgroundColor
+    }
+
+    var windowBackgroundStyle: AnyShapeStyle {
+        let points = customThemeConfiguration.direction.points
+        if usesCustomTheme {
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: customThemeConfiguration.colors.map(\.color),
+                    startPoint: points.start,
+                    endPoint: points.end
+                )
+            )
+        }
+        if AppAppearanceMode.gradientThemes.contains(appearanceMode) {
+            return AnyShapeStyle(appearanceMode.previewGradient)
+        }
+        return AnyShapeStyle(appearanceMode.windowBackgroundColor)
     }
 
     var cardBackgroundColor: Color {
-        appearanceMode.cardBackgroundColor
+        usesCustomTheme ? Color.black.opacity(preferredColorScheme == .dark ? 0.34 : 0.08) : appearanceMode.cardBackgroundColor
     }
 
     var sidebarBackgroundColor: Color {
-        appearanceMode.sidebarBackgroundColor
+        usesCustomTheme ? Color.black.opacity(preferredColorScheme == .dark ? 0.28 : 0.06) : appearanceMode.sidebarBackgroundColor
     }
 
     var elevatedBackgroundColor: Color {

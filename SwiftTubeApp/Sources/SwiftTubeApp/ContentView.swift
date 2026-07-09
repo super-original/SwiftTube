@@ -56,6 +56,7 @@ struct ContentView: View {
     @State private var keepSearchAssistVisibleUntil = Date.distantPast
     @State private var searchAssistDismissTask: Task<Void, Never>?
     @State private var didHandleAutomationLaunch = false
+    @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var mutationCenter = AppMutationCenter.shared
     @EnvironmentObject private var backend: BackendManager
@@ -72,16 +73,12 @@ struct ContentView: View {
         ZStack(alignment: .topLeading) {
             backgroundView
 
-            if shouldShowSidebar {
-                NavigationSplitView {
-                    sidebar
-                } detail: {
-                    currentScreenContainer
-                }
-                .navigationSplitViewStyle(.balanced)
-            } else {
+            NavigationSplitView(columnVisibility: $sidebarVisibility) {
+                sidebar
+            } detail: {
                 currentScreenContainer
             }
+            .navigationSplitViewStyle(.balanced)
         }
         .overlay(backendOverlay)
         .overlay {
@@ -157,6 +154,7 @@ struct ContentView: View {
         }
         .onAppear {
             navigation.ensureValidSidebarSelection(visibleItems: visibleSidebarItems)
+            syncSidebarVisibility(for: navigation.currentRoute)
             handleAutomationLaunchIfNeeded()
         }
         .onChange(of: authSession.status.authenticated) { _, _ in
@@ -173,6 +171,13 @@ struct ContentView: View {
         }
         .onChange(of: navigation.currentRoute) { _, _ in
             syncHistorySearchQuery()
+            syncSidebarVisibility(for: navigation.currentRoute)
+        }
+        .onChange(of: settings.autoHideSidebarOnPlayback) { _, _ in
+            syncSidebarVisibility(for: navigation.currentRoute)
+        }
+        .onChange(of: settings.showSidebarOnHome) { _, _ in
+            syncSidebarVisibility(for: navigation.currentRoute)
         }
         .onChange(of: searchViewModel.isActive) { _, _ in
             syncHistorySearchQuery()
@@ -256,14 +261,14 @@ private extension ContentView {
         }
     }
 
-    var shouldShowSidebar: Bool {
-        if case .video = navigation.currentRoute, settings.autoHideSidebarOnPlayback {
-            return false
+    func syncSidebarVisibility(for route: AppRoute) {
+        if case .video = route, settings.autoHideSidebarOnPlayback {
+            sidebarVisibility = .detailOnly
+        } else if case .home = route, settings.showSidebarOnHome == false {
+            sidebarVisibility = .detailOnly
+        } else {
+            sidebarVisibility = .all
         }
-        if case .home = navigation.currentRoute, settings.showSidebarOnHome == false {
-            return false
-        }
-        return visibleSidebarItems.count > 1
     }
 
     var toolbarSearchScope: SearchViewModel.Scope {
@@ -312,7 +317,8 @@ private extension ContentView {
     }
 
     var backgroundView: some View {
-        settings.windowBackgroundColor
+        Rectangle()
+            .fill(settings.windowBackgroundStyle)
             .ignoresSafeArea()
     }
 
@@ -401,7 +407,12 @@ private extension ContentView {
                 set: { if let item = $0 { navigation.selectSidebarItem(item) } }
             )) {
                 ForEach(visibleSidebarItems) { item in
-                    Label(item.title, systemImage: item.systemImage)
+                    HStack(spacing: 10) {
+                        Image(systemName: item.systemImage)
+                            .foregroundStyle(BrandAssets.swiftTubeBlue)
+                            .frame(width: 18)
+                        Text(item.title)
+                    }
                         .tag(item)
                 }
             }

@@ -21,10 +21,6 @@ struct SwiftTubeApp: App {
     @StateObject private var authSession = AuthSessionModel()
     @ObservedObject private var settings = AppSettings.shared
 
-    init() {
-        NSSplitViewItem.swizzleSwiftTubeSettingsCanCollapse()
-    }
-
     var body: some Scene {
         WindowGroup {
             Group {

@@ -8,6 +8,15 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.31
+
+- Reorganized settings by merging the sparse Appearance category into General and removing redundant page subtitles.
+- Replaced the settings sidebar collapse swizzle and invisible toolbar filler with supported split-view and toolbar APIs, removing the macOS 27 titlebar artifact.
+- Tinted app and settings sidebar icons with SwiftTube blue, and changed automatic playback behavior to collapse the sidebar while preserving its reveal control.
+- Rebuilt theme selection as a compact hover-labeled grid, added true gradient themes, and added a persistent custom theme editor with one to three colors and configurable direction.
+- Added thumbnail corner, fade, hover motion, progress-bar, and duration-badge preferences.
+- Unified image fade-in behavior and fixed hover previews starting after the pointer had already left a thumbnail.
+
 ## 0.15.30
 
 - Removed the remaining `yt-dlp` playback, onboarding, settings, authentication, and dependency-management paths; stream extraction and browser-cookie import are now native Swift only.

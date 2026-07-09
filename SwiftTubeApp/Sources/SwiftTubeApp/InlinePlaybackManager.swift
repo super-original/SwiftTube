@@ -16,6 +16,7 @@ final class InlinePlaybackManager: ObservableObject {
     private let hoverDelayNanoseconds: UInt64 = 450_000_000
     private let reportThresholdSeconds = 3.0
     private var hoverTasks: [String: Task<Void, Never>] = [:]
+    private var hoveredVideoIDs: Set<String> = []
     private var activeEngine: MPVPlaybackEngine?
     private var activePayload: InlinePlaybackPayload?
     private var pollTask: Task<Void, Never>?
@@ -54,6 +55,7 @@ final class InlinePlaybackManager: ObservableObject {
 
     func scheduleHover(for video: VideoItem) {
         guard canStartInlinePlayback(for: video) else { return }
+        hoveredVideoIDs.insert(video.id)
         guard hoverTasks[video.id] == nil else { return }
 
         let delay = hoverDelayNanoseconds
@@ -65,6 +67,7 @@ final class InlinePlaybackManager: ObservableObject {
     }
 
     func endHover(for videoID: String) {
+        hoveredVideoIDs.remove(videoID)
         hoverTasks[videoID]?.cancel()
         hoverTasks.removeValue(forKey: videoID)
 
@@ -106,6 +109,7 @@ private extension InlinePlaybackManager {
     func start(video: VideoItem) async {
         hoverTasks.removeValue(forKey: video.id)
         guard canStartInlinePlayback(for: video) else { return }
+        guard hoveredVideoIDs.contains(video.id) else { return }
 
         if activeVideoID == video.id, let engine = activeEngine {
             activeVideoID = video.id
@@ -133,7 +137,10 @@ private extension InlinePlaybackManager {
         isLoading = true
         do {
             let payload = try await BackendClient.shared.fetchInlinePlayback(id: video.id)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, hoveredVideoIDs.contains(video.id) else {
+                isLoading = false
+                return
+            }
             let request = try playbackRequest(for: payload)
             let engine = MPVPlaybackEngine(request: request)
             activePayload = payload
@@ -146,7 +153,7 @@ private extension InlinePlaybackManager {
 
             await Task.yield()
             try await engine.prepare(startTime: currentTime, autoPlay: false)
-            guard !Task.isCancelled else {
+            guard !Task.isCancelled, hoveredVideoIDs.contains(video.id) else {
                 engine.stop()
                 if activeVideoID == video.id {
                     activeVideoID = nil
@@ -270,6 +277,7 @@ private extension InlinePlaybackManager {
 
 struct InlineVideoThumbnail: View {
     @ObservedObject private var manager = InlinePlaybackManager.shared
+    @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
     let width: CGFloat?
     let height: CGFloat?
@@ -298,6 +306,7 @@ struct InlineVideoThumbnail: View {
     }
 
     var body: some View {
+        let resolvedCornerRadius = settings.thumbnailCornerStyle.radius(default: cornerRadius)
         GeometryReader { proxy in
             ZStack(alignment: .bottomTrailing) {
                 thumbnailBase
@@ -312,12 +321,12 @@ struct InlineVideoThumbnail: View {
 
                 overlayContent(size: proxy.size)
             }
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous)
                     .stroke(Color.white.opacity(0.06), lineWidth: 1)
             )
-            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous))
             .onHover { hovering in
                 isPointerInside = hovering
                 if hovering {
@@ -382,7 +391,7 @@ struct InlineVideoThumbnail: View {
                 .padding(.bottom, isPointerInLowerRegion ? max(size.height * 0.035, 4) : 0)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .animation(.snappy(duration: 0.18, extraBounce: 0), value: isPointerInLowerRegion)
-        } else if let duration = video.durationText {
+        } else if settings.showDurationBadges, let duration = video.durationText {
             Text(duration)
                 .font(.caption2.weight(.semibold))
                 .padding(.horizontal, 8)
@@ -392,7 +401,7 @@ struct InlineVideoThumbnail: View {
                 .padding(max(size.width * 0.035, 6))
         }
 
-        if !isInlineActive {
+        if !isInlineActive, settings.showVideoProgressBars {
             VideoThumbnailProgressBars(progress: video.progress, cornerRadius: cornerRadius, isEnabled: !video.isLive)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
