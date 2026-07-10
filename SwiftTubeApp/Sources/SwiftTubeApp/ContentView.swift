@@ -596,9 +596,8 @@ private extension ContentView {
                     .fill(.ultraThinMaterial)
                     .ignoresSafeArea()
                 VStack(spacing: 12) {
-                    ProgressView()
-                    Text(backend.statusMessage)
-                        .font(.headline)
+                    SwiftTubeSpinner(size: 28)
+                    ShimmerText(text: backend.statusMessage, font: .headline)
                     if let logLine = backend.lastLogLine {
                         Text(logLine)
                             .font(.caption)
@@ -1864,13 +1863,7 @@ private struct CompactChannelPostVideoPreview: View {
             HStack(spacing: 12) {
                 ZStack(alignment: .bottomTrailing) {
                     CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 640, contentMode: .fill) {
-                        RoundedRectangle(cornerRadius: 18)
-                            .fill(Color.gray.opacity(0.18))
-                            .overlay(
-                                Image(systemName: "play.rectangle.fill")
-                                    .font(.system(size: 24))
-                                    .foregroundStyle(.secondary)
-                            )
+                        ThumbnailPlaceholder(iconSize: 24, cornerRadius: 18)
                     }
                     .frame(width: 156, height: 88)
                     .clipShape(RoundedRectangle(cornerRadius: 18))
@@ -3376,7 +3369,7 @@ private struct AppCommandHandler: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.parent = self
+        context.coordinator.updateActions(from: self)
     }
 
     func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
@@ -3388,11 +3381,33 @@ private struct AppCommandHandler: NSViewRepresentable {
     }
 
     final class Coordinator {
-        var parent: AppCommandHandler
+        private final class CommandActions: @unchecked Sendable {
+            let onRefresh: () -> Void
+            let onSelectNumberedTab: (Int) -> Void
+            let onEscape: () -> Void
+
+            @MainActor
+            init(from parent: AppCommandHandler) {
+                onRefresh = parent.onRefresh
+                onSelectNumberedTab = parent.onSelectNumberedTab
+                onEscape = parent.onEscape
+            }
+        }
+
+        // NSEvent local monitors execute on the main thread, although AppKit's callback
+        // signature does not encode that guarantee. The sendable box keeps actor-bound
+        // callbacks out of the event bridge until `MainActor.assumeIsolated` invokes them.
+        nonisolated(unsafe) private var actions: CommandActions
         private var monitor: Any?
 
+        @MainActor
         init(parent: AppCommandHandler) {
-            self.parent = parent
+            actions = CommandActions(from: parent)
+        }
+
+        @MainActor
+        func updateActions(from parent: AppCommandHandler) {
+            actions = CommandActions(from: parent)
         }
 
         func installMonitor() {
@@ -3400,28 +3415,20 @@ private struct AppCommandHandler: NSViewRepresentable {
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let self else { return event }
                 let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                let actions = self.actions
 
                 if flags == .command, event.keyCode == 15 {
-                    let action = self.parent.onRefresh
-                    MainActor.assumeIsolated {
-                        action()
-                    }
+                    MainActor.assumeIsolated { actions.onRefresh() }
                     return nil
                 }
 
                 if flags == .command, let number = Self.commandNumber(from: event) {
-                    let action = self.parent.onSelectNumberedTab
-                    MainActor.assumeIsolated {
-                        action(number)
-                    }
+                    MainActor.assumeIsolated { actions.onSelectNumberedTab(number) }
                     return nil
                 }
 
                 if flags.isEmpty, event.keyCode == 53 {
-                    let action = self.parent.onEscape
-                    MainActor.assumeIsolated {
-                        action()
-                    }
+                    MainActor.assumeIsolated { actions.onEscape() }
                 }
 
                 return event
@@ -3459,17 +3466,13 @@ private struct AppCommandHandler: NSViewRepresentable {
 struct PlaceholderCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.gray.opacity(0.2))
+            LoadingPlaceholderBlock(cornerRadius: 12)
                 .aspectRatio(16 / 9, contentMode: .fit)
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.gray.opacity(0.25))
+            LoadingPlaceholderBlock(cornerRadius: 6)
                 .frame(height: 16)
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.gray.opacity(0.18))
+            LoadingPlaceholderBlock(cornerRadius: 6)
                 .frame(height: 12)
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.gray.opacity(0.18))
+            LoadingPlaceholderBlock(cornerRadius: 6)
                 .frame(height: 12)
                 .padding(.trailing, 80)
         }

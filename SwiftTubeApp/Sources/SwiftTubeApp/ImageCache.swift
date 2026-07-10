@@ -21,6 +21,7 @@ private final class DecodedImageMemoryCache: @unchecked Sendable {
 
     private init() {
         cache.countLimit = 512
+        cache.totalCostLimit = 192 * 1_024 * 1_024
     }
 
     func image(for key: NSString) -> DecodedImage? {
@@ -28,7 +29,8 @@ private final class DecodedImageMemoryCache: @unchecked Sendable {
     }
 
     func insert(_ image: DecodedImage, for key: NSString) {
-        cache.setObject(DecodedImageBox(image: image), forKey: key)
+        let cost = image.cgImage.bytesPerRow * image.cgImage.height
+        cache.setObject(DecodedImageBox(image: image), forKey: key, cost: cost)
     }
 }
 
@@ -37,6 +39,54 @@ private final class DecodedImageBox: NSObject {
 
     init(image: DecodedImage) {
         self.image = image
+    }
+}
+
+/// Owns raw thumbnail transport separately from decoded variants. A single URL may be
+/// requested at several display sizes; coalescing here prevents downloading it once per size.
+private actor ImageDataPipeline {
+    static let shared = ImageDataPipeline()
+
+    private let session: URLSession
+    private var inFlightTasks: [URL: Task<Data, Error>] = [:]
+
+    private init() {
+        let cache = URLCache(
+            memoryCapacity: 96 * 1_024 * 1_024,
+            diskCapacity: 768 * 1_024 * 1_024,
+            diskPath: "SwiftTubeThumbnails"
+        )
+        let configuration = URLSessionConfiguration.default
+        configuration.urlCache = cache
+        configuration.requestCachePolicy = .returnCacheDataElseLoad
+        configuration.httpMaximumConnectionsPerHost = 16
+        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 45
+        configuration.waitsForConnectivity = false
+        session = URLSession(configuration: configuration)
+    }
+
+    func data(for url: URL) async throws -> Data {
+        if let task = inFlightTasks[url] {
+            return try await task.value
+        }
+
+        var request = URLRequest(url: url)
+        request.cachePolicy = .returnCacheDataElseLoad
+        request.timeoutInterval = 20
+
+        let session = session
+        let task = Task(priority: .userInitiated) {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            return data
+        }
+        inFlightTasks[url] = task
+        defer { inFlightTasks[url] = nil }
+        return try await task.value
     }
 }
 
@@ -59,7 +109,7 @@ actor ImageCache {
             return try await inFlightTask.value
         }
 
-        let task = Task(priority: .utility) {
+        let task = Task(priority: .userInitiated) {
             try await Self.fetchDecodedImage(from: url, maxPixelSize: maxPixelSize)
         }
         inFlightTasks[request] = task
@@ -77,11 +127,14 @@ actor ImageCache {
         from url: URL,
         maxPixelSize: Int?
     ) async throws -> DecodedImage {
-        let (data, response) = try await URLSession.shared.data(from: url)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        let data = try await ImageDataPipeline.shared.data(for: url)
 
+        return try await Task.detached(priority: .utility) {
+            try decode(data, maxPixelSize: maxPixelSize)
+        }.value
+    }
+
+    nonisolated private static func decode(_ data: Data, maxPixelSize: Int?) throws -> DecodedImage {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             throw URLError(.cannotDecodeContentData)
         }

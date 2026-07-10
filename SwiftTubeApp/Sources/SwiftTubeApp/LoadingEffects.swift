@@ -1,5 +1,32 @@
 import SwiftUI
 
+struct ThumbnailPlaceholder: View {
+    var systemImage = "play.rectangle.fill"
+    var iconSize: CGFloat = 26
+    var cornerRadius: CGFloat = 12
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Color.primary.opacity(0.065))
+            .overlay {
+                Image(systemName: systemImage)
+                    .font(.system(size: iconSize, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.72))
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+struct LoadingPlaceholderBlock: View {
+    var cornerRadius: CGFloat = 8
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Color.primary.opacity(0.075))
+            .accessibilityHidden(true)
+    }
+}
+
 struct ShimmerText: View {
     let text: String
     var font: Font = .subheadline.weight(.semibold)
@@ -39,6 +66,7 @@ struct SwiftTubeSpinner: View {
     @Environment(\.displayScale) private var displayScale
 
     var size: CGFloat = 26
+    var color: Color = .primary
 
     var body: some View {
         TimelineView(.animation) { timeline in
@@ -47,7 +75,7 @@ struct SwiftTubeSpinner: View {
                 ForEach(0..<3, id: \.self) { index in
                     let lift = smoothWave(time - Double(index) * 0.17)
                     Circle()
-                        .fill(Color.white)
+                        .fill(color)
                         .frame(width: size * 0.20, height: size * 0.20)
                         .offset(y: snappedOffset(-lift * size * 0.34))
                 }
@@ -80,6 +108,21 @@ struct LoadingStatusView: View {
     }
 }
 
+struct CenteredLoadingState: View {
+    let text: String
+    var spinnerColor: Color = .primary
+
+    var body: some View {
+        VStack(spacing: 12) {
+            SwiftTubeSpinner(size: 28, color: spinnerColor)
+            ShimmerText(text: text, font: .callout.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
+    }
+}
+
 struct LoadingMoreIndicator: View {
     let text: String
 
@@ -98,9 +141,9 @@ struct StaggeredFadeIn: ViewModifier {
     let index: Int
     let columns: Int
     var batchSize: Int = 30
-    var rowDelay: Double = 0.095
-    var columnDelay: Double = 0.012
-    var duration: Double = 0.54
+    var rowDelay: Double = 0
+    var columnDelay: Double = 0
+    var duration: Double = 0.18
 
     @State private var visibleID: String?
     @State private var isVisible = false
@@ -121,7 +164,7 @@ struct StaggeredFadeIn: ViewModifier {
                 let columnCount = max(columns, 1)
                 let row = localIndex / columnCount
                 let column = localIndex % columnCount
-                let delay = min(Double(row) * rowDelay + Double(column) * columnDelay, 0.82)
+                let delay = min(Double(row) * rowDelay + Double(column) * columnDelay, 0.16)
 
                 if delay > 0 {
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
@@ -143,9 +186,9 @@ extension View {
         index: Int,
         columns: Int = 1,
         batchSize: Int = 30,
-        rowDelay: Double = 0.095,
-        columnDelay: Double = 0.012,
-        duration: Double = 0.54
+        rowDelay: Double = 0,
+        columnDelay: Double = 0,
+        duration: Double = 0.18
     ) -> some View {
         modifier(StaggeredFadeIn(
             id: id,

@@ -32,6 +32,20 @@ gradient angle, intensity, and interface contrast; older direction-based configu
 are migrated during decoding. Onboarding intentionally uses the standard Dark background
 instead of the selected theme so its setup surface remains stable and legible.
 
+### Image delivery and loading UI
+
+`ImageCache` owns the shared thumbnail pipeline used by every `CachedAsyncImage`:
+
+- raw responses use a dedicated memory/disk `URLCache`
+- simultaneous requests for the same URL share one download, even when consumers need different decoded sizes
+- image decoding and downsampling happen away from the main actor
+- decoded variants use a cost-bounded memory cache rather than an unbounded count-only cache
+
+`LoadingEffects.swift` is the source of truth for thumbnail placeholders, skeleton blocks,
+centered loading states, pagination indicators, and the SwiftTube activity indicator. New
+screens should reuse these components instead of introducing screen-specific spinners or
+thumbnail placeholders.
+
 ## In-process backend
 
 Important files:

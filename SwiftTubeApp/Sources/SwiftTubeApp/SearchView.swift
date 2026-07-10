@@ -541,9 +541,7 @@ private struct SearchPlaylistItemView: View {
 
     private var artwork: some View {
         CachedAsyncImage(url: playlist.thumbnailURL, maxPixelSize: 640) {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.quaternary)
-                .overlay(Image(systemName: "music.note.list").font(.title2).foregroundStyle(.secondary))
+            ThumbnailPlaceholder(systemImage: "music.note.list", iconSize: 24, cornerRadius: 12)
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }

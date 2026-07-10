@@ -360,13 +360,10 @@ struct InlineVideoThumbnail: View {
 
     private var thumbnailBase: some View {
         CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: maxPixelSize) {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color.gray.opacity(0.18))
-                .overlay(
-                    Image(systemName: "play.rectangle.fill")
-                        .font(.system(size: placeholderIconSize))
-                        .foregroundStyle(.secondary)
-                )
+            ThumbnailPlaceholder(
+                iconSize: placeholderIconSize,
+                cornerRadius: cornerRadius
+            )
         }
     }
 

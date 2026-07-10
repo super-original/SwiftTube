@@ -1554,12 +1554,7 @@ private extension PlayerScreen {
     var transcriptPanelContent: some View {
         Group {
             if viewModel.isLoadingTranscript && viewModel.transcriptSegments.isEmpty {
-                VStack(spacing: 12) {
-                    ProgressView()
-                    Text("Loading transcript...")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                CenteredLoadingState(text: "Loading transcript...")
             } else if let errorMessage = viewModel.transcriptErrorMessage, !errorMessage.isEmpty {
                 Text(errorMessage)
                     .foregroundStyle(.secondary)
@@ -1873,12 +1868,7 @@ private struct LiveChatPanel: View {
         VStack(spacing: 0) {
             Group {
                 if isLoading && messages.isEmpty {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("Connecting to live chat...")
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    CenteredLoadingState(text: "Connecting to live chat...")
                 } else if let errorMessage, messages.isEmpty {
                     Text(errorMessage)
                         .foregroundStyle(.secondary)
@@ -2311,13 +2301,7 @@ private struct PlayerStageLoadingOverlay: View {
     let text: String
 
     var body: some View {
-        VStack(spacing: 14) {
-            ProgressView()
-                .scaleEffect(1.15)
-            Text(text)
-                .font(.headline)
-        }
-        .tint(.white)
+        CenteredLoadingState(text: text, spinnerColor: .white)
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(false)

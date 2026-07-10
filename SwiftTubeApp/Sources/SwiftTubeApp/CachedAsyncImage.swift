@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct CachedAsyncImage<Placeholder: View>: View {
-    @ObservedObject private var settings = AppSettings.shared
+    @AppStorage("thumbnailFadeInEnabled") private var thumbnailFadeInEnabled = true
     let url: URL?
     let maxPixelSize: Int?
     let contentMode: ContentMode
@@ -34,7 +34,7 @@ struct CachedAsyncImage<Placeholder: View>: View {
             }
         }
         .animation(
-            settings.thumbnailFadeInEnabled && loader.shouldAnimatePresentation
+            thumbnailFadeInEnabled && loader.shouldAnimatePresentation
                 ? .easeOut(duration: 0.18)
                 : nil,
             value: loader.image != nil

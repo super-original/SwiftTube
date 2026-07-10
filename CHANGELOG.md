@@ -8,6 +8,13 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.43
+
+- Rebuilt thumbnail delivery around a dedicated memory/disk transport cache, URL-level request coalescing, off-main downsampling, and a cost-bounded decoded-image cache.
+- Removed the artificial per-row reveal delay so fetched videos become visible immediately, while retaining a short presentation fade.
+- Unified thumbnail, skeleton, centered, pagination, player, transcript, live-chat, and backend loading surfaces around shared adaptive components.
+- Narrowed cached-image observation to the one relevant preference and cleaned up the AppKit command bridge's actor boundary.
+
 ## 0.15.42
 
 - Prevented split-stream startup drift by keeping MPV paused while video loads, external audio attaches, and the initial seek completes, then starting both tracks together.
