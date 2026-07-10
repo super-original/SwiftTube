@@ -24,6 +24,9 @@ Current behavior:
 - adaptive Auto decisions use MPV cache/throughput telemetry and avoid direct URL replacement
 - storyboard scrub previews are layered above the render surface during dragging
 - debug logging is disabled by default and can be re-enabled only through the `SWIFTTUBE_PLAYBACK_DEBUG_LOG=1` environment variable
+- split-stream startup remains paused until both the video file and selected external audio decoder are ready, preventing the first video frames from advancing ahead of audio
+- PiP transfers the existing MPV Metal render view between narrow AppKit hosts and forces a drawable rebind after the destination window and backing scale are valid
+- collapsed PiP expansion is driven continuously by drag progress and settles only when distance or inward velocity crosses the expansion threshold
 
 ## Progress and end-of-playback behavior
 

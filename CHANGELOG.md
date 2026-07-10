@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.42
+
+- Prevented split-stream startup drift by keeping MPV paused while video loads, external audio attaches, and the initial seek completes, then starting both tracks together.
+- Forced the MPV Metal drawable to rebind whenever its render view moves between the main window and PiP, with bounded transfer readiness and a deliberate loading surface instead of an intermittent black frame.
+- Rebuilt collapsed PiP pulling as a continuous reversible transition whose frame and content follow drag distance, widened the full-tab hit target, and fixed the drag bridge so it continues receiving every movement after the first handled update.
+
 ## 0.15.41
 
 - Fixed playlist reordering to use YouTube's `browse/edit_playlist` InnerTube route instead of the nonexistent `playlist/edit` route that returned 404.

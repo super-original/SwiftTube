@@ -60,6 +60,7 @@ final class MPVPlaybackEngine: NSObject {
         )
         let handle = try initializeIfNeeded(layer: layer)
         didLoadFile = false
+        setPaused(true)
         try clearAuxiliaryAudioOption()
         try command(["loadfile", request.video.url.absoluteString, "replace", "-1"])
         let loadWaitTask = makeFileLoadedTask(for: handle)
@@ -165,6 +166,7 @@ final class MPVPlaybackEngine: NSObject {
             throw NSError(domain: "SwiftTube.MPV", code: -2, userInfo: [NSLocalizedDescriptionKey: "mpv is not initialized."])
         }
 
+        let shouldResumePlayback = isPlaying
         PlaybackDebugLogger.log(
             "mpv replaceFile start video=\(newRequest.video.url.absoluteString) audio=\(newRequest.audio?.url.absoluteString ?? "nil") seekTo=\(time)"
         )
@@ -176,6 +178,8 @@ final class MPVPlaybackEngine: NSObject {
         _ = await previousEventPump?.result
 
         didLoadFile = false
+        setPaused(true)
+        isPlaying = false
         try applyNetworkOptions(for: newRequest.video)
         try clearAuxiliaryAudioOption()
         try command(["loadfile", newRequest.video.url.absoluteString, "replace"])
@@ -196,6 +200,9 @@ final class MPVPlaybackEngine: NSObject {
         if time > 0 {
             await seek(to: time)
         }
+
+        setPaused(!shouldResumePlayback)
+        isPlaying = shouldResumePlayback
 
         updateCachedState()
         PlaybackDebugLogger.log(
@@ -353,9 +360,10 @@ private extension MPVPlaybackEngine {
             try Task.checkCancellation()
 
             let audioTrackID = Self.intProperty(MPVProperty.audioTrackID, from: handle, library: mpvLibrary) ?? 0
-            if audioTrackID > 0 {
-                let codec = Self.stringProperty(MPVProperty.audioCodecName, from: handle, library: mpvLibrary) ?? "nil"
-                let channels = Self.intProperty(MPVProperty.audioChannelCount, from: handle, library: mpvLibrary).map(String.init) ?? "nil"
+            let codec = Self.stringProperty(MPVProperty.audioCodecName, from: handle, library: mpvLibrary)
+            let channelCount = Self.intProperty(MPVProperty.audioChannelCount, from: handle, library: mpvLibrary) ?? 0
+            if audioTrackID > 0, let codec, !codec.isEmpty, channelCount > 0 {
+                let channels = String(channelCount)
                 PlaybackDebugLogger.log("mpv audio-add ready aid=\(audioTrackID) codec=\(codec) channels=\(channels)")
                 return
             }

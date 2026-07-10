@@ -42,6 +42,11 @@ final class MPVRenderContainerView: NSView {
         applyMetalLayerBounds(size: bounds.size)
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshDrawableSurface()
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }
@@ -58,6 +63,13 @@ final class MPVRenderContainerView: NSView {
         metalLayer.drawableSize = newDrawableSize
         PlaybackDebugLogger.log("mpv render surface bounds size=\(Int(size.width))x\(Int(size.height)) drawable=\(Int(newDrawableSize.width))x\(Int(newDrawableSize.height))")
         onLayoutChange?()
+    }
+
+    func refreshDrawableSurface() {
+        lastDrawableSize = .zero
+        applyMetalLayerBounds(size: bounds.size)
+        metalLayer.setNeedsDisplay()
+        needsDisplay = true
     }
 }
 
@@ -111,11 +123,15 @@ final class MPVSurfaceHostView: NSView {
     }
 
     func attachRenderViewIfNeeded() {
-        if renderView.superview !== self {
+        let didMoveRenderView = renderView.superview !== self
+        if didMoveRenderView {
             renderView.removeFromSuperview()
             addSubview(renderView)
         }
         syncRenderViewFrame()
+        if didMoveRenderView {
+            renderView.refreshDrawableSurface()
+        }
     }
 
     private func syncRenderViewFrame() {

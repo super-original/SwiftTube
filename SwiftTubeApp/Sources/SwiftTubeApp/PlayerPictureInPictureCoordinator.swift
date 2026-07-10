@@ -13,12 +13,16 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
     @Published private(set) var isCollapsed = false
     @Published private(set) var isPreparing = false
     @Published private(set) var collapsedEdge: CollapsedEdge = .right
+    @Published private(set) var interactiveExpansionProgress: CGFloat = 0
 
     private var panel: PlayerPictureInPicturePanel?
     private var expandedFrame: NSRect?
     private var snapTask: Task<Void, Never>?
+    private var settleTask: Task<Void, Never>?
     private var isApplyingProgrammaticFrame = false
     private var isInteractivelyMoving = false
+    private var collapsedDragStartFrame: NSRect?
+    private var collapsedDragTargetFrame: NSRect?
     private weak var previousKeyWindow: NSWindow?
     private weak var previousFirstResponder: NSResponder?
 
@@ -65,6 +69,9 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
         isPreparing = true
         isActive = true
         isCollapsed = false
+        interactiveExpansionProgress = 0
+        collapsedDragStartFrame = nil
+        collapsedDragTargetFrame = nil
         applyFrame(frame, to: panel, animate: false)
         panel.orderFrontRegardless()
         refreshTransferredSurface(engine: engine, playbackCoordinator: playbackCoordinator)
@@ -73,6 +80,8 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
     func stop() {
         snapTask?.cancel()
         snapTask = nil
+        settleTask?.cancel()
+        settleTask = nil
         guard let panel else {
             isActive = false
             isCollapsed = false
@@ -85,9 +94,12 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
         panel.close()
         self.panel = nil
         expandedFrame = nil
+        collapsedDragStartFrame = nil
+        collapsedDragTargetFrame = nil
         isActive = false
         isCollapsed = false
         isPreparing = false
+        interactiveExpansionProgress = 0
     }
 
     func reset() {
@@ -106,23 +118,39 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
     func collapse(to edge: CollapsedEdge, from sourceFrame: NSRect) {
         guard let panel, !isCollapsed else { return }
         snapTask?.cancel()
+        settleTask?.cancel()
         expandedFrame = clampedExpandedFrame(sourceFrame, screen: panel.screen)
         collapsedEdge = edge
         isCollapsed = true
+        interactiveExpansionProgress = 1
         panel.minSize = tabSize
+        withAnimation(.smooth(duration: 0.24)) {
+            interactiveExpansionProgress = 0
+        }
         applyFrame(collapsedFrame(from: sourceFrame, edge: edge, screen: panel.screen), to: panel, animate: true)
     }
 
     func expand() {
         guard let panel, isCollapsed else { return }
-        isCollapsed = false
-        panel.minSize = NSSize(width: 360, height: 202)
-        let frame = clampedExpandedFrame(
+        settleTask?.cancel()
+        let frame = collapsedDragTargetFrame ?? clampedExpandedFrame(
             expandedFrame ?? defaultExpandedFrame(aspect: Double(panel.contentAspectRatio.width)),
             screen: panel.screen
         )
         expandedFrame = frame
+        withAnimation(.smooth(duration: 0.24)) {
+            interactiveExpansionProgress = 1
+        }
         applyFrame(frame, to: panel, animate: true)
+        settleTask = Task { @MainActor [weak self, weak panel] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled, let self, self.panel === panel else { return }
+            self.isCollapsed = false
+            self.interactiveExpansionProgress = 0
+            panel?.minSize = NSSize(width: 360, height: 202)
+            self.collapsedDragStartFrame = nil
+            self.collapsedDragTargetFrame = nil
+        }
     }
 
     func raiseForInteraction() {
@@ -151,33 +179,38 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
     fileprivate func beginInteractiveMove() {
         isInteractivelyMoving = true
         snapTask?.cancel()
+        settleTask?.cancel()
+        if isCollapsed, let panel {
+            collapsedDragStartFrame = panel.frame
+            collapsedDragTargetFrame = expandedFrame(
+                fromCollapsedFrame: panel.frame,
+                edge: collapsedEdge,
+                screen: panel.screen
+            )
+        }
     }
 
     fileprivate func updateCollapsedDrag(_ delta: CGVector) -> Bool {
         guard isCollapsed, let panel else { return false }
-        let inwardDistance = collapsedEdge == .left ? delta.dx : -delta.dx
-        guard inwardDistance > 18 else { return false }
+        let startFrame = collapsedDragStartFrame ?? panel.frame
+        let inwardDistance = max(collapsedEdge == .left ? delta.dx : -delta.dx, 0)
+        let revealDistance = min(max((expandedFrame?.width ?? defaultWidth) * 0.58, 180), 300)
+        let progress = min(max(inwardDistance / revealDistance, 0), 1)
 
-        let tabFrame = panel.frame.offsetBy(dx: delta.dx, dy: delta.dy)
-        let expandedSize = expandedFrame?.size
-            ?? defaultExpandedFrame(aspect: Double(panel.contentAspectRatio.width)).size
-        let originX = collapsedEdge == .left
-            ? tabFrame.maxX + 8
-            : tabFrame.minX - expandedSize.width - 8
-        let target = clampedExpandedFrame(
-            NSRect(
-                x: originX,
-                y: tabFrame.midY - expandedSize.height / 2,
-                width: expandedSize.width,
-                height: expandedSize.height
-            ),
+        let movedTabFrame = collapsedFrame(
+            from: startFrame.offsetBy(dx: 0, dy: delta.dy),
+            edge: collapsedEdge,
             screen: panel.screen
         )
-
-        isCollapsed = false
-        panel.minSize = NSSize(width: 360, height: 202)
+        let target = expandedFrame(
+            fromCollapsedFrame: movedTabFrame,
+            edge: collapsedEdge,
+            screen: panel.screen
+        )
+        collapsedDragTargetFrame = target
         expandedFrame = target
-        applyFrame(target, to: panel, animate: true)
+        interactiveExpansionProgress = progress
+        panel.setFrame(interpolatedFrame(from: movedTabFrame, to: target, progress: progress), display: true)
         return true
     }
 
@@ -185,7 +218,7 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
         guard isActive, let panel else { return }
         isInteractivelyMoving = false
         if isCollapsed {
-            completeCollapsedMove(panel: panel)
+            completeCollapsedMove(panel: panel, velocity: velocity)
             return
         }
         expandedFrame = panel.frame
@@ -221,69 +254,95 @@ extension PlayerPictureInPictureCoordinator: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         guard let closingPanel = notification.object as? NSPanel, closingPanel === panel else { return }
         snapTask?.cancel()
+        settleTask?.cancel()
         panel = nil
         expandedFrame = nil
+        collapsedDragStartFrame = nil
+        collapsedDragTargetFrame = nil
         isActive = false
         isCollapsed = false
         isPreparing = false
+        interactiveExpansionProgress = 0
     }
 }
 
 private extension PlayerPictureInPictureCoordinator {
     var padding: CGFloat { 18 }
     var defaultWidth: CGFloat { 520 }
-    var tabSize: CGSize { CGSize(width: 32, height: 72) }
+    var tabSize: CGSize { CGSize(width: 44, height: 76) }
 
     func refreshTransferredSurface(
         engine: MPVPlaybackEngine,
         playbackCoordinator: PlayerPlaybackCoordinator
     ) {
         Task { @MainActor [weak self, weak engine, weak playbackCoordinator] in
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 45_000_000)
-            guard let self, self.isActive, let engine else { return }
-            if let renderView = engine.renderController.view as? MPVRenderContainerView {
-                renderView.needsLayout = true
-                renderView.layoutSubtreeIfNeeded()
-                renderView.applyMetalLayerBounds(size: renderView.bounds.size)
-                renderView.needsDisplay = true
+            guard let self, let engine else { return }
+            for _ in 0..<40 {
+                guard self.isActive, !Task.isCancelled else { return }
+                if let renderView = engine.renderController.view as? MPVRenderContainerView,
+                   renderView.window === self.panel,
+                   renderView.bounds.width > 1,
+                   renderView.bounds.height > 1 {
+                    renderView.needsLayout = true
+                    renderView.layoutSubtreeIfNeeded()
+                    renderView.refreshDrawableSurface()
+                    try? await Task.sleep(nanoseconds: 80_000_000)
+                    renderView.refreshDrawableSurface()
+                    if !engine.snapshot().isPlaying, let playbackCoordinator {
+                        try? engine.refreshPausedFrame(at: playbackCoordinator.currentTime)
+                    }
+                    self.isPreparing = false
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 15_000_000)
             }
-            if !engine.snapshot().isPlaying, let playbackCoordinator {
-                try? engine.refreshPausedFrame(at: playbackCoordinator.currentTime)
-            }
+            PlaybackDebugLogger.log("pip render surface transfer timed out")
             self.isPreparing = false
         }
     }
 
-    func completeCollapsedMove(panel: NSPanel) {
-        let visibleFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? panel.frame
-        let pulledInward: Bool
-        switch collapsedEdge {
-        case .left:
-            pulledInward = panel.frame.minX - visibleFrame.minX > 18
-        case .right:
-            pulledInward = visibleFrame.maxX - panel.frame.maxX > 18
-        }
-
-        if pulledInward {
-            let expandedSize = expandedFrame?.size ?? defaultExpandedFrame(aspect: Double(panel.contentAspectRatio.width)).size
-            let originX = collapsedEdge == .left
-                ? panel.frame.maxX + 8
-                : panel.frame.minX - expandedSize.width - 8
-            let pulledFrame = NSRect(
-                x: originX,
-                y: panel.frame.midY - expandedSize.height / 2,
-                width: expandedSize.width,
-                height: expandedSize.height
-            )
-            expandedFrame = clampedExpandedFrame(pulledFrame, screen: panel.screen)
+    func completeCollapsedMove(panel: NSPanel, velocity: CGVector) {
+        let inwardVelocity = collapsedEdge == .left ? velocity.dx : -velocity.dx
+        if interactiveExpansionProgress >= 0.44 || inwardVelocity > 420 {
             expand()
             return
         }
 
-        let edge = nearestHorizontalEdge(for: panel.frame, on: panel.screen)
-        collapsedEdge = edge
-        applyFrame(collapsedFrame(from: panel.frame, edge: edge, screen: panel.screen), to: panel, animate: true)
+        withAnimation(.smooth(duration: 0.2)) {
+            interactiveExpansionProgress = 0
+        }
+        let collapsed = collapsedFrame(from: panel.frame, edge: collapsedEdge, screen: panel.screen)
+        applyFrame(collapsed, to: panel, animate: true)
+        collapsedDragStartFrame = nil
+        collapsedDragTargetFrame = nil
+    }
+
+    func expandedFrame(fromCollapsedFrame tabFrame: NSRect, edge: CollapsedEdge, screen: NSScreen?) -> NSRect {
+        let visibleFrame = screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? tabFrame
+        let expandedSize = expandedFrame?.size
+            ?? defaultExpandedFrame(aspect: Double(panel?.contentAspectRatio.width ?? 16 / 9)).size
+        let x = edge == .left
+            ? visibleFrame.minX + padding
+            : visibleFrame.maxX - expandedSize.width - padding
+        return clampedExpandedFrame(
+            NSRect(
+                x: x,
+                y: tabFrame.midY - expandedSize.height / 2,
+                width: expandedSize.width,
+                height: expandedSize.height
+            ),
+            screen: screen
+        )
+    }
+
+    func interpolatedFrame(from start: NSRect, to end: NSRect, progress: CGFloat) -> NSRect {
+        let value = min(max(progress, 0), 1)
+        return NSRect(
+            x: start.minX + (end.minX - start.minX) * value,
+            y: start.minY + (end.minY - start.minY) * value,
+            width: start.width + (end.width - start.width) * value,
+            height: start.height + (end.height - start.height) * value
+        )
     }
 
     func makePanel(title: String) -> PlayerPictureInPicturePanel {
@@ -470,44 +529,70 @@ private struct PlayerPictureInPictureContent: View {
 
     var body: some View {
         GeometryReader { geo in
-            if pictureInPicture.isCollapsed {
-                collapsedButton
-                    .frame(width: geo.size.width, height: geo.size.height)
-            } else {
-                let videoSize = aspectFitSize(container: geo.size, aspect: playbackCoordinator.videoAspect)
-
-                ZStack {
-                    ZStack {
-                        Color.black
-
-                        MPVMetalRenderView(
-                            engine: engine,
-                            cornerRadius: 22,
-                            onLayoutChange: playbackCoordinator.handlePlayerSurfaceLayoutChange
+            ZStack {
+                if !pictureInPicture.isCollapsed || pictureInPicture.interactiveExpansionProgress > 0.001 {
+                    expandedPlayer(size: geo.size)
+                        .opacity(
+                            pictureInPicture.isCollapsed
+                                ? pictureInPicture.interactiveExpansionProgress
+                                : 1
                         )
-                        .id(engine.id)
-
-                        PlayerPictureInPictureInteractionView(
-                            onHover: handleHover,
-                            onMove: handlePointerMove,
-                            onClick: playbackCoordinator.togglePlayback,
-                            onDragBegan: pictureInPicture.beginInteractiveMove,
-                            onDragEnded: { optionHeld, velocity in
-                                pictureInPicture.completeMove(optionHeld: optionHeld, velocity: velocity)
-                            }
-                        )
-
-                        pipChrome
-                    }
-                    .frame(width: videoSize.width, height: videoSize.height)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .allowsHitTesting(!pictureInPicture.isCollapsed)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if pictureInPicture.isCollapsed {
+                    let alignment: Alignment = pictureInPicture.collapsedEdge == .left ? .leading : .trailing
+                    collapsedButton
+                        .frame(width: min(44, geo.size.width), height: min(76, geo.size.height))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+                        .opacity(1 - pictureInPicture.interactiveExpansionProgress)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
         .environment(\.controlActiveState, .key)
+    }
+
+    private func expandedPlayer(size: CGSize) -> some View {
+        let videoSize = aspectFitSize(container: size, aspect: playbackCoordinator.videoAspect)
+
+        return ZStack {
+            ZStack {
+                Color.black
+
+                MPVMetalRenderView(
+                    engine: engine,
+                    cornerRadius: 22,
+                    onLayoutChange: playbackCoordinator.handlePlayerSurfaceLayoutChange
+                )
+                .id(engine.id)
+
+                PlayerPictureInPictureInteractionView(
+                    onHover: handleHover,
+                    onMove: handlePointerMove,
+                    onClick: playbackCoordinator.togglePlayback,
+                    onDragBegan: pictureInPicture.beginInteractiveMove,
+                    onDragEnded: { optionHeld, velocity in
+                        pictureInPicture.completeMove(optionHeld: optionHeld, velocity: velocity)
+                    }
+                )
+
+                pipChrome
+
+                if pictureInPicture.isPreparing {
+                    ZStack {
+                        Color.black.opacity(0.72)
+                        SwiftTubeSpinner(size: 28)
+                    }
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                }
+            }
+            .frame(width: videoSize.width, height: videoSize.height)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var pipChrome: some View {
@@ -735,7 +820,6 @@ private final class PlayerPictureInPictureInteractionNSView: NSView {
     private var lastMouseTime: TimeInterval?
     private var velocity: CGVector = .zero
     private var didDrag = false
-    private var suppressDragUntilMouseUp = false
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         if excludesResizeEdges {
@@ -780,7 +864,6 @@ private final class PlayerPictureInPictureInteractionNSView: NSView {
         lastMouseTime = event.timestamp
         velocity = .zero
         didDrag = false
-        suppressDragUntilMouseUp = false
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -797,10 +880,10 @@ private final class PlayerPictureInPictureInteractionNSView: NSView {
         }
 
         if didDrag {
-            if !suppressDragUntilMouseUp, onDragChanged?(delta) == true {
-                suppressDragUntilMouseUp = true
+            if onDragChanged?(delta) == true {
+                updateVelocity(currentLocation: currentLocation, timestamp: event.timestamp)
+                return
             }
-            guard !suppressDragUntilMouseUp else { return }
             window.setFrameOrigin(NSPoint(
                 x: windowStartOrigin.x + delta.dx,
                 y: windowStartOrigin.y + delta.dy
@@ -823,7 +906,6 @@ private final class PlayerPictureInPictureInteractionNSView: NSView {
         lastMouseTime = nil
         velocity = .zero
         didDrag = false
-        suppressDragUntilMouseUp = false
     }
 
     private func updateVelocity(currentLocation: NSPoint, timestamp: TimeInterval) {
