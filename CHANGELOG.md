@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.40
+
+- Replaced the onboarding Theme card grid with a live SwiftTube window preview and compact palette choices.
+- Rebuilt the SponsorBlock onboarding step around an interactive player-timeline preview and one direct auto-skip setting.
+- Replaced the Privacy binary cards with a concise YouTube sync control and an explicit local-history guarantee.
+
 ## 0.15.39
 
 - Rebuilt theme rendering around one normalized background pipeline shared by the main and Settings windows, reducing the visual intensity gap between solid and gradient presets.

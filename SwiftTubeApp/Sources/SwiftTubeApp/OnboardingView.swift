@@ -353,58 +353,119 @@ private struct ThemeStage: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            stageTitle("Theme")
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                stageTitle("Choose a look")
+                Text("You can create a custom theme later in Settings.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 14) {
-                ForEach(themes) { theme in
-                    ThemePreviewButton(theme: theme, isSelected: selection == theme) {
-                        selection = theme
-                        usesCustomTheme = false
+            HStack(spacing: 18) {
+                OnboardingThemeWindowPreview(theme: selection)
+
+                LazyVGrid(
+                    columns: [GridItem(.flexible()), GridItem(.flexible())],
+                    spacing: 8
+                ) {
+                    ForEach(themes) { theme in
+                        OnboardingThemeChoice(
+                            theme: theme,
+                            isSelected: selection == theme
+                        ) {
+                            selection = theme
+                            usesCustomTheme = false
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity)
             }
         }
     }
 }
 
-private struct ThemePreviewButton: View {
+private struct OnboardingThemeWindowPreview: View {
+    let theme: AppAppearanceMode
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(theme.windowBackgroundGradient)
+
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 6) {
+                        Circle().frame(width: 7, height: 7)
+                        Capsule().frame(width: 38, height: 6)
+                    }
+                    ForEach(0..<4, id: \.self) { index in
+                        HStack(spacing: 7) {
+                            RoundedRectangle(cornerRadius: 3)
+                                .frame(width: 11, height: 11)
+                            Capsule()
+                                .frame(width: index == 0 ? 54 : 42, height: 6)
+                        }
+                        .opacity(index == 0 ? 0.9 : 0.48)
+                    }
+                    Spacer()
+                }
+                .padding(14)
+                .frame(width: 104)
+                .background(theme.sidebarBackgroundColor.opacity(0.88))
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Capsule()
+                        .frame(width: 74, height: 8)
+                    HStack(spacing: 10) {
+                        ForEach(0..<2, id: \.self) { _ in
+                            VStack(alignment: .leading, spacing: 7) {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(theme.elevatedBackgroundColor)
+                                    .aspectRatio(16 / 9, contentMode: .fit)
+                                Capsule().frame(height: 6)
+                                Capsule().frame(width: 46, height: 5).opacity(0.45)
+                            }
+                        }
+                    }
+                    Spacer()
+                }
+                .padding(16)
+            }
+            .foregroundStyle(theme.preferredColorScheme == .dark ? Color.white.opacity(0.72) : Color.black.opacity(0.55))
+        }
+        .frame(width: 410, height: 220)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        }
+        .animation(.smooth(duration: 0.24), value: theme)
+    }
+}
+
+private struct OnboardingThemeChoice: View {
     let theme: AppAppearanceMode
     let isSelected: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 12) {
-                ZStack(alignment: .bottomLeading) {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(theme.previewGradient)
-
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(Color.white.opacity(0.8))
-                            .frame(width: 9, height: 9)
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(Color.white.opacity(0.55))
-                            .frame(width: 58, height: 8)
-                    }
-                    .padding(10)
-                }
-                .frame(height: 66)
-
-                HStack {
-                    Text(theme.title)
-                        .font(.headline)
-                    Spacer()
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
-                }
+            HStack(spacing: 9) {
+                Circle()
+                    .fill(theme.previewGradient)
+                    .frame(width: 22, height: 22)
+                    .overlay(Circle().stroke(Color.primary.opacity(0.12), lineWidth: 1))
+                Text(theme.title)
+                    .font(.callout.weight(.semibold))
+                Spacer(minLength: 4)
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
             }
-            .padding(10)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(isSelected ? BrandAssets.swiftTubeBlue.opacity(0.8) : Color.white.opacity(0.08), lineWidth: 1.5)
+            .padding(.horizontal, 10)
+            .frame(height: 46)
+            .background(
+                isSelected ? BrandAssets.swiftTubeBlue.opacity(0.12) : Color.primary.opacity(0.035),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
             )
         }
         .buttonStyle(.plain)
@@ -415,28 +476,86 @@ private struct SponsorBlockStage: View {
     @Binding var sponsorBlockEnabled: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            stageTitle("SponsorBlock")
-
-            Text("Detect, mark, and skip sponsored segments and other interruptions.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(alignment: .top, spacing: 16) {
-                SponsorBlockModeCard(
-                    title: "On",
-                    isSelected: sponsorBlockEnabled,
-                    action: { sponsorBlockEnabled = true }
-                )
-
-                SponsorBlockModeCard(
-                    title: "Off",
-                    isSelected: !sponsorBlockEnabled,
-                    action: { sponsorBlockEnabled = false }
-                )
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                stageTitle("Skip interruptions")
+                Text("SponsorBlock marks community-reported segments on the player timeline.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
+
+            SponsorBlockOnboardingPreview(isEnabled: sponsorBlockEnabled)
+
+            HStack(spacing: 14) {
+                Image(systemName: "scissors")
+                    .font(.title2)
+                    .foregroundStyle(BrandAssets.swiftTubeBlue)
+                    .frame(width: 32)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Automatically skip sponsors")
+                        .font(.headline)
+                    Text(sponsorBlockEnabled ? "Sponsor segments will be skipped." : "Segments stay visible on the timeline.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Toggle("Automatically skip sponsors", isOn: $sponsorBlockEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+            }
+            .padding(16)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
+    }
+}
+
+private struct SponsorBlockOnboardingPreview: View {
+    let isEnabled: Bool
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.black.opacity(0.78))
+
+            Image(systemName: "play.rectangle.fill")
+                .font(.system(size: 48, weight: .light))
+                .foregroundStyle(Color.white.opacity(0.13))
+
+            VStack(spacing: 10) {
+                if isEnabled {
+                    Label("Sponsor skipped", systemImage: "forward.fill")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(.regularMaterial, in: Capsule())
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.20))
+                        Capsule()
+                            .fill(Color.white.opacity(0.85))
+                            .frame(width: proxy.size.width * 0.36)
+                        Capsule()
+                            .fill(SponsorBlockCategory.sponsor.tint)
+                            .frame(width: proxy.size.width * 0.20)
+                            .offset(x: proxy.size.width * 0.36)
+                        Circle()
+                            .fill(.white)
+                            .frame(width: 14, height: 14)
+                            .offset(x: proxy.size.width * (isEnabled ? 0.56 : 0.36) - 7)
+                    }
+                }
+                .frame(height: 14)
+            }
+            .padding(16)
+        }
+        .frame(height: 190)
+        .animation(.smooth(duration: 0.25), value: isEnabled)
     }
 }
 
@@ -452,34 +571,6 @@ private struct ControlsStage: View {
                 ControlLayoutCard(layout: .standard, selection: $controlLayout)
             }
         }
-    }
-}
-
-private struct SponsorBlockModeCard: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
-                    .font(.body.weight(.semibold))
-
-                Text(title)
-                    .font(.body.weight(.semibold))
-                Spacer()
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(isSelected ? BrandAssets.swiftTubeBlue.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1.5)
-            )
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -573,65 +664,60 @@ private struct PrivacyStage: View {
     @Binding var sendWatchProgressToYouTube: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            stageTitle("Privacy")
-
-            HStack(spacing: 16) {
-                PrivacyChoiceCard(
-                    title: "Sync with YouTube",
-                    systemImage: "arrow.triangle.2.circlepath",
-                    isSelected: sendWatchProgressToYouTube,
-                    detail: "SwiftTube sends watch progress to YouTube, so recommendations keep adapting.",
-                    action: { sendWatchProgressToYouTube = true }
-                )
-
-                PrivacyChoiceCard(
-                    title: "Local only",
-                    systemImage: "lock.fill",
-                    isSelected: !sendWatchProgressToYouTube,
-                    detail: "SwiftTube keeps local history, but YouTube recommendations will not update from these views.",
-                    action: { sendWatchProgressToYouTube = false }
-                )
-            }
-        }
-    }
-}
-
-private struct PrivacyChoiceCard: View {
-    let title: String
-    let systemImage: String
-    let isSelected: Bool
-    let detail: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 20, weight: .semibold))
-                    Spacer()
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
-                }
-
-                Text(title)
-                    .font(.headline)
-
-                Text(detail)
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                stageTitle("Watch history")
+                Text("SwiftTube always keeps local resume progress.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, minHeight: 140, alignment: .topLeading)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(isSelected ? BrandAssets.swiftTubeBlue.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1.5)
-            )
+
+            VStack(spacing: 0) {
+                HStack(spacing: 14) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.title2)
+                        .foregroundStyle(BrandAssets.swiftTubeBlue)
+                        .frame(width: 34)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Sync progress with YouTube")
+                            .font(.headline)
+                        Text("Keeps YouTube recommendations and history current.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Toggle("Sync progress with YouTube", isOn: $sendWatchProgressToYouTube)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+                .padding(18)
+
+                Divider().padding(.leading, 66)
+
+                HStack(spacing: 14) {
+                    Image(systemName: "lock.fill")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Local history")
+                            .font(.headline)
+                        Text("Resume positions stay on this Mac in either mode.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.title3)
+                }
+                .padding(18)
+            }
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .buttonStyle(.plain)
     }
 }
 
