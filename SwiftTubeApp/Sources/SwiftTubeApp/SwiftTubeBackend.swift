@@ -57,8 +57,8 @@ actor SwiftTubeBackend {
         return await authManager.authStatus()
     }
 
-    func connectBrowserAuth(browser: String, profilePath: String? = nil) async throws -> AuthStatusResponse {
-        _ = try await authManager.connect(browser: browser, profilePath: profilePath)
+    func connectWebAuth(cookies: [WebSessionCookie]) async throws -> AuthStatusResponse {
+        _ = try await authManager.connect(webCookies: cookies)
         do {
             try await api.validateAuthentication()
             await refreshSignedInAccountProfile()
@@ -67,37 +67,6 @@ actor SwiftTubeBackend {
             _ = try? await authManager.clear()
             throw error
         }
-    }
-
-    func discoverBrowserAccounts() async throws -> [BrowserAccountDiscoveryResponse] {
-        let browsers = BrowserLoginOption.installedOptions.filter { $0.cookieSource != nil }
-        let metadataAccounts = BrowserAccountMetadataScanner.discoverAccounts(in: browsers)
-        let safeSources = metadataAccounts
-            .flatMap(\.sources)
-            .filter { source in
-                guard let browser = BrowserLoginOption(rawValue: source.browser) else { return false }
-                return browser == .safari || [.firefox, .zen, .librewolf, .floorp].contains(browser)
-            }
-
-        let probedAccounts = await withTaskGroup(of: BrowserAccountDiscoveryResponse?.self) { group in
-            for source in safeSources {
-                group.addTask {
-                    await probeBrowserAccount(source: source)
-                }
-            }
-
-            var accounts: [BrowserAccountDiscoveryResponse] = []
-            for await account in group {
-                if let account { accounts.append(account) }
-            }
-            return accounts
-        }
-
-        let probedSourceIDs = Set(probedAccounts.flatMap(\.sources).map(\.id))
-        let retainedMetadata = metadataAccounts.filter { account in
-            account.identifier != nil || account.sources.allSatisfy { !probedSourceIDs.contains($0.id) }
-        }
-        return mergeBrowserAccounts(retainedMetadata + probedAccounts)
     }
 
     func clearAuthSession() async throws -> AuthStatusResponse {
@@ -580,7 +549,7 @@ actor SwiftTubeBackend {
                     continuation: extractContinuationToken(from: data)
                 )
             }
-            throw BackendClientError(message: "Your YouTube session expired. SwiftTube is reconnecting using the last browser session if possible.")
+            throw BackendClientError(message: "Your YouTube session expired. Sign in again to continue.")
         }
     }
 
@@ -611,7 +580,7 @@ actor SwiftTubeBackend {
                     isInitialPage: continuation == nil
                 )
             }
-            throw BackendClientError(message: "Your YouTube session expired. SwiftTube is reconnecting using the last browser session if possible.")
+            throw BackendClientError(message: "Your YouTube session expired. Sign in again to continue.")
         }
     }
 
@@ -5826,61 +5795,6 @@ private struct SignedInAccountProfile {
         email = email ?? other.email
         handle = handle ?? other.handle
         avatarURL = avatarURL ?? other.avatarURL
-    }
-}
-
-private func probeBrowserAccount(source: BrowserAccountSource) async -> BrowserAccountDiscoveryResponse? {
-    guard let browser = BrowserLoginOption(rawValue: source.browser) else { return nil }
-    do {
-        return try await withTimeout(seconds: 4, timeoutMessage: "Account scan timed out.") {
-            let manager = YouTubeAuthManager()
-            let material = try await manager.probeMaterial(for: browser, profilePath: source.profilePath)
-            defer { try? FileManager.default.removeItem(at: material.cookieFileURL) }
-            await manager.activateProbeMaterial(material)
-            let profile = await signedInAccountProfile(using: YouTubeAPI(authManager: manager))
-            let identifier = profile.email?.nonEmptyTrimmed ?? profile.handle?.nonEmptyTrimmed
-            let displayName = profile.displayName?.nonEmptyTrimmed ?? identifier
-            guard let displayName else { return nil }
-            return BrowserAccountDiscoveryResponse(
-                id: (identifier ?? profile.avatarURL ?? "\(source.id)|\(displayName)").lowercased(),
-                displayName: displayName,
-                identifier: identifier,
-                avatarUrl: profile.avatarURL?.nonEmptyTrimmed,
-                sources: [source]
-            )
-        }
-    } catch {
-        return nil
-    }
-}
-
-private func mergeBrowserAccounts(
-    _ accounts: [BrowserAccountDiscoveryResponse]
-) -> [BrowserAccountDiscoveryResponse] {
-    var merged: [String: BrowserAccountDiscoveryResponse] = [:]
-    for account in accounts {
-        let key = account.identifier?.nonEmptyTrimmed?.lowercased()
-            ?? account.avatarUrl?.nonEmptyTrimmed?.lowercased()
-            ?? account.id.lowercased()
-        if let existing = merged[key] {
-            let sources = Array(Set(existing.sources + account.sources)).sorted {
-                let lhs = BrowserLoginOption(rawValue: $0.browser)?.sortRank ?? 999
-                let rhs = BrowserLoginOption(rawValue: $1.browser)?.sortRank ?? 999
-                return lhs == rhs ? $0.id < $1.id : lhs < rhs
-            }
-            merged[key] = BrowserAccountDiscoveryResponse(
-                id: key,
-                displayName: existing.displayName.count >= account.displayName.count ? existing.displayName : account.displayName,
-                identifier: existing.identifier ?? account.identifier,
-                avatarUrl: existing.avatarUrl ?? account.avatarUrl,
-                sources: sources
-            )
-        } else {
-            merged[key] = account
-        }
-    }
-    return merged.values.sorted {
-        $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
     }
 }
 

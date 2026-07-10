@@ -69,23 +69,12 @@ struct SwiftTubeSpinner: View {
 
 struct LoadingStatusView: View {
     let text: String
-    var iconSize: CGFloat = 22
     var spinnerSize: CGFloat = 24
-    var browsers: [BrowserLoginOption] = []
 
     var body: some View {
         HStack(spacing: 9) {
             SwiftTubeSpinner(size: spinnerSize)
             ShimmerText(text: text)
-
-            if browsers.isEmpty == false {
-                HStack(spacing: -1) {
-                    ForEach(Array(browsers.enumerated()), id: \.element.id) { index, browser in
-                        BrowserLoadingIcon(browser: browser, index: index, size: iconSize)
-                    }
-                }
-                .padding(.leading, 1)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -167,48 +156,5 @@ extension View {
             columnDelay: columnDelay,
             duration: duration
         ))
-    }
-}
-
-private struct BrowserLoadingIcon: View {
-    @Environment(\.displayScale) private var displayScale
-
-    let browser: BrowserLoginOption
-    let index: Int
-    let size: CGFloat
-
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate / 1.18 - Double(index) * 0.17
-            let lift = smoothWave(phase)
-
-            Image(nsImage: icon)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: size, height: size)
-                .scaleEffect(1 + lift * 0.035)
-                .offset(y: snappedOffset(-lift * 5.0))
-                .help(browser.displayName)
-        }
-        .frame(width: size, height: size)
-    }
-
-    private func smoothWave(_ rawPhase: Double) -> Double {
-        let phase = rawPhase - floor(rawPhase)
-        return (1 - cos(phase * 2 * .pi)) / 2
-    }
-
-    private func snappedOffset(_ offset: Double) -> CGFloat {
-        let scale = max(displayScale, 1)
-        return CGFloat((offset * scale).rounded() / scale)
-    }
-
-    private var icon: NSImage {
-        if let bundleID = browser.primaryBundleIdentifier,
-           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            return NSWorkspace.shared.icon(forFile: url.path)
-        }
-        return NSImage(systemSymbolName: browser.fallbackSymbol, accessibilityDescription: browser.displayName)
-            ?? NSImage(size: NSSize(width: size, height: size))
     }
 }

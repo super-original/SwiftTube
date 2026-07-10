@@ -23,8 +23,7 @@ let package = Package(
                 .copy("Resources")
             ],
             linkerSettings: [
-                .linkedFramework("Security"),
-                .linkedLibrary("sqlite3")
+                .linkedFramework("WebKit")
             ]
         ),
         .testTarget(

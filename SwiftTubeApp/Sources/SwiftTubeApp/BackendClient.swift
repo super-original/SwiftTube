@@ -158,12 +158,8 @@ final class BackendClient {
         try await backend.authStatus()
     }
 
-    func connectBrowserAuth(browser: String, profilePath: String? = nil) async throws -> AuthStatusResponse {
-        try await backend.connectBrowserAuth(browser: browser, profilePath: profilePath)
-    }
-
-    func discoverBrowserAccounts() async throws -> [BrowserAccountDiscoveryResponse] {
-        try await backend.discoverBrowserAccounts()
+    func connectWebAuth(cookies: [WebSessionCookie]) async throws -> AuthStatusResponse {
+        try await backend.connectWebAuth(cookies: cookies)
     }
 
     func clearAuthSession() async throws -> AuthStatusResponse {

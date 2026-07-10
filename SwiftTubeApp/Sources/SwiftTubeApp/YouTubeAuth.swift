@@ -1,11 +1,13 @@
 import CryptoKit
 import Foundation
 
-private enum AuthConstants {
-    static let youtubeOrigin = "https://www.youtube.com"
-    static let supportedBrowsers = Dictionary(
-        uniqueKeysWithValues: BrowserLoginOption.allCases.map { ($0.rawValue, $0.displayName) }
-    )
+struct WebSessionCookie: Sendable {
+    let domain: String
+    let path: String
+    let isSecure: Bool
+    let expiresAt: Date?
+    let name: String
+    let value: String
 }
 
 struct AuthSessionConfig: Codable, Sendable {
@@ -90,44 +92,22 @@ actor YouTubeAuthManager {
             && config?.handle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
     }
 
-    func connect(browser: String, profilePath: String? = nil) async throws -> AuthStatusResponse {
-        let browserKey = browser.lowercased()
-        guard let browserOption = BrowserLoginOption(rawValue: browserKey),
-              browserOption.cookieSource != nil else {
-            throw BackendClientError(message: "Unsupported browser or browser profile.")
-        }
-        let browserLabel = browserOption.displayName
-
-        try exportBrowserCookies(for: browserOption, profilePath: profilePath, to: cookieFileURL)
+    func connect(webCookies: [WebSessionCookie]) throws -> AuthStatusResponse {
+        try Self.writeWebSessionCookies(webCookies, to: cookieFileURL)
         let config = AuthSessionConfig(
-            browser: browserKey,
-            browserLabel: browserLabel,
-            profilePath: profilePath,
-            avatarURL: self.config?.avatarURL,
-            displayName: self.config?.displayName,
-            email: self.config?.email,
-            handle: self.config?.handle
+            browser: "swifttube",
+            browserLabel: "SwiftTube Sign-In",
+            profilePath: nil,
+            avatarURL: nil,
+            displayName: nil,
+            email: nil,
+            handle: nil
         )
         let material = try Self.loadMaterial(config: config, cookieFileURL: cookieFileURL)
 
         self.config = config
         self.material = material
         try Self.saveConfig(config, to: configURL)
-        return authStatus()
-    }
-
-    func refreshLastUsedBrowserSession() async throws -> AuthStatusResponse {
-        guard let config else {
-            return signedOutStatus()
-        }
-        guard let browserOption = BrowserLoginOption(rawValue: config.browser),
-              browserOption.cookieSource != nil else {
-            return signedOutStatus(message: "The saved browser profile is no longer available.")
-        }
-
-        try exportBrowserCookies(for: browserOption, profilePath: config.profilePath, to: cookieFileURL)
-        let material = try Self.loadMaterial(config: config, cookieFileURL: cookieFileURL)
-        self.material = material
         return authStatus()
     }
 
@@ -194,39 +174,6 @@ actor YouTubeAuthManager {
         material?.cookieFileURL
     }
 
-    func probeMaterial(
-        for browser: BrowserLoginOption,
-        profilePath: String?
-    ) throws -> AuthMaterial {
-        let probesDirectory = supportDirectoryURL.appendingPathComponent("CookieProbes", isDirectory: true)
-        try FileManager.default.createDirectory(at: probesDirectory, withIntermediateDirectories: true)
-        let probeURL = probesDirectory.appendingPathComponent("\(browser.rawValue)-\(UUID().uuidString).txt")
-        try exportBrowserCookies(for: browser, profilePath: profilePath, to: probeURL)
-        let probeConfig = AuthSessionConfig(
-            browser: browser.rawValue,
-            browserLabel: browser.displayName,
-            profilePath: profilePath,
-            avatarURL: nil,
-            displayName: nil,
-            email: nil,
-            handle: nil
-        )
-        return try Self.loadMaterial(config: probeConfig, cookieFileURL: probeURL)
-    }
-
-    func activateProbeMaterial(_ probeMaterial: AuthMaterial) {
-        config = probeMaterial.config
-        material = probeMaterial
-    }
-
-    private func exportBrowserCookies(
-        for browser: BrowserLoginOption,
-        profilePath: String?,
-        to destinationURL: URL
-    ) throws {
-        try NativeBrowserCookieImporter.exportCookies(for: browser, profilePath: profilePath, to: destinationURL)
-    }
-
     private static func loadConfig(at url: URL) -> AuthSessionConfig? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(AuthSessionConfig.self, from: data)
@@ -235,6 +182,46 @@ actor YouTubeAuthManager {
     private static func saveConfig(_ config: AuthSessionConfig, to url: URL) throws {
         let data = try JSONEncoder().encode(config)
         try data.write(to: url, options: .atomic)
+    }
+
+    private static func writeWebSessionCookies(
+        _ cookies: [WebSessionCookie],
+        to destinationURL: URL
+    ) throws {
+        let relevantCookies = cookies.filter { cookie in
+            let domain = cookie.domain.lowercased()
+            return domain.contains("youtube.com") || domain.contains("google.com")
+        }
+        guard relevantCookies.isEmpty == false else {
+            throw BackendClientError(message: "The sign-in session did not contain any YouTube cookies.")
+        }
+
+        let lines = relevantCookies.map { cookie in
+            let domain = cookie.domain.replacingOccurrences(of: "\t", with: "")
+            let path = (cookie.path.isEmpty ? "/" : cookie.path).replacingOccurrences(of: "\t", with: "")
+            let name = cookie.name.replacingOccurrences(of: "\t", with: "")
+            let value = cookie.value
+                .replacingOccurrences(of: "\t", with: "")
+                .replacingOccurrences(of: "\n", with: "")
+                .replacingOccurrences(of: "\r", with: "")
+            let expiration = Int(cookie.expiresAt?.timeIntervalSince1970 ?? 0)
+            return [
+                domain,
+                domain.hasPrefix(".") ? "TRUE" : "FALSE",
+                path,
+                cookie.isSecure ? "TRUE" : "FALSE",
+                String(expiration),
+                name,
+                value,
+            ].joined(separator: "\t")
+        }
+
+        try FileManager.default.createDirectory(
+            at: destinationURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let contents = "# Netscape HTTP Cookie File\n" + lines.joined(separator: "\n") + "\n"
+        try contents.write(to: destinationURL, atomically: true, encoding: .utf8)
     }
 
     private static func loadMaterial(config: AuthSessionConfig, cookieFileURL: URL) throws -> AuthMaterial {
@@ -254,14 +241,14 @@ actor YouTubeAuthManager {
         }.first
 
         guard let sapisid, !sapisid.isEmpty else {
-            throw BackendClientError(message: "Your browser session is missing the SAPISID cookie needed for authenticated YouTube requests.")
+            throw BackendClientError(message: "The Google sign-in session is missing the cookie required for authenticated YouTube requests.")
         }
 
         let relevantCookies = cookies.filter {
             $0.domain.contains("youtube") || $0.domain.contains("google")
         }
         guard !relevantCookies.isEmpty else {
-            throw BackendClientError(message: "No usable YouTube cookies were found in the exported browser session.")
+            throw BackendClientError(message: "No usable YouTube cookies were found in the Google sign-in session.")
         }
 
         return AuthMaterial(
@@ -278,7 +265,7 @@ actor YouTubeAuthManager {
             .map { "\($0.name)=\($0.value)" }
 
         guard !matchedCookies.isEmpty else {
-            throw BackendClientError(message: "The imported browser session does not include any cookies that apply to YouTube.")
+            throw BackendClientError(message: "The Google sign-in session does not include cookies that apply to YouTube.")
         }
 
         return matchedCookies.joined(separator: "; ")

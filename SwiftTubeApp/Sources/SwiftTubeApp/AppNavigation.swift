@@ -92,6 +92,32 @@ enum AppRoute: Equatable {
         return false
     }
 
+    var isSearchRoute: Bool {
+        if case .search = self {
+            return true
+        }
+        return false
+    }
+
+    var navigationTitle: String {
+        switch self {
+        case .search:
+            return "Search"
+        case .home:
+            return "Home"
+        case .watchHistory:
+            return "History"
+        case .playlistLibrary:
+            return "Playlists"
+        case .playlistFeed(let playlist):
+            return playlist.title
+        case .channel(let route):
+            return route.channel.title ?? "Channel"
+        case .video(let video):
+            return video.title
+        }
+    }
+
     var supportsSearchResultResume: Bool {
         switch self {
         case .video, .channel:

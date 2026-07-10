@@ -8,6 +8,37 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.38
+
+- Removed browser account scanning and cookie-database import completely; the secure embedded Google session is now the single sign-in route in both the account sheet and onboarding.
+- Centered and promoted the onboarding Google sign-in action while retaining a quiet guest option.
+- Made the Search field float above scrolling content without its own background strip and rebuilt suggestions as a full-width native Liquid Glass panel whose selection lifts forward without shifting sideways.
+- Delayed WebKit authentication activation until Google redirects back to YouTube, preventing stale-cookie validation errors on the account chooser.
+
+## 0.15.37
+
+- Added a reliable first-party Google sign-in flow using SwiftTube's own persistent WebKit session, eliminating browser App Data permissions and Chrome Safe Storage prompts from the primary sign-in path while retaining optional browser discovery.
+- Matched Search to the same native window-toolbar treatment as the rest of the app and removed the redundant divider below its page search field.
+- Removed duplicate inline headings from Settings now that each preference page has a native toolbar title.
+
+## 0.15.36
+
+- Restored the permission-free native account probe flow that validates each installed browser session directly and shows only confirmed YouTube accounts.
+- Rebuilt Search around a Kaset-inspired native page structure: a route title in the macOS titlebar, a full-width Liquid Glass search header, a divider, and the shared SwiftTube result cards below it.
+- Restored standard titled macOS windows and visible toolbar backgrounds for both the main app and Settings, including native stoplight controls.
+- Returned Refresh to a standard circular icon-only toolbar button and kept it in the trailing action position.
+- Fixed macOS 27 sidebar reordering by giving `ForEach` and `reorderContainer` the same `SidebarItemKind` identity.
+
+## 0.15.35
+
+- Restored the SwiftTube brand as a standard native toolbar item, kept navigation separate, and pinned Refresh to the trailing edge on every page.
+- Moved search input into the dedicated Search page and unified its video grid, placeholders, first-load fades, hover styling, hover previews, and loading indicators with Home.
+- Rebuilt Search filters from the channel-page pill controls, using native dropdown indicators and the same layout buttons without a custom filter-bar background.
+- Declared protected app-data access for browser profiles, stabilized the packaged app's development signature so App Data approval survives rebuilds, removed browser-only placeholders, and made SQLite cookie snapshots include live WAL data with actionable permission failures.
+- Removed ignored legacy Python environments from packaged resources so the native-only app bundle remains small and validly signed.
+- Changed cached image presentation so thumbnail fades only run for the first uncached load, not when cached rows or sidebar content reappear.
+- Restored Settings to a themed, resizable native `NavigationSplitView` with a non-collapsible sidebar, changed preference surfaces to native Liquid Glass, replaced the video-grid selector with a stepped slider, and moved theme hover names into top-layer Liquid Glass tooltips.
+
 ## 0.15.34
 
 - Added Search as a dedicated, reorderable sidebar destination above Home, with server-provided YouTube filter menus, mixed video/channel/playlist results, and grid/list layouts.

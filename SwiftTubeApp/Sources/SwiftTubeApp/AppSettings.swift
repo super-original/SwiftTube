@@ -636,7 +636,6 @@ enum TimedDebugNotification: String, CaseIterable, Identifiable {
     case qualitySwitch
     case playlists
     case channel
-    case accountScan
 
     var id: String { rawValue }
 
@@ -652,7 +651,6 @@ enum TimedDebugNotification: String, CaseIterable, Identifiable {
         case .qualitySwitch: return "Quality switch"
         case .playlists: return "Playlists"
         case .channel: return "Channels"
-        case .accountScan: return "Account scan"
         }
     }
 
@@ -668,7 +666,6 @@ enum TimedDebugNotification: String, CaseIterable, Identifiable {
         case .qualitySwitch: return "slider.horizontal.3"
         case .playlists: return "music.note.list"
         case .channel: return "person.crop.rectangle.stack"
-        case .accountScan: return "person.crop.circle.badge.magnifyingglass"
         }
     }
 }

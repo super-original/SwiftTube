@@ -13,6 +13,14 @@ FRAMEWORKS_DIR="$APP_DIR/Contents/Frameworks"
 BUILD_DIR=""
 EXECUTABLE_PATH=""
 RESOURCE_BUNDLE_PATH=""
+SIGNING_IDENTITY="${SWIFTTUBE_SIGNING_IDENTITY:-}"
+
+if [[ -z "$SIGNING_IDENTITY" ]]; then
+    SIGNING_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk '/^[[:space:]]*[0-9]+\)/ { print $2; exit }')"
+fi
+if [[ -z "$SIGNING_IDENTITY" ]]; then
+    SIGNING_IDENTITY="-"
+fi
 
 cd "$ROOT_DIR"
 swift build
@@ -102,6 +110,10 @@ fi
 
 cp "$EXECUTABLE_PATH" "$APP_DIR/Contents/MacOS/$EXECUTABLE_NAME"
 ditto "$RESOURCE_BUNDLE_PATH" "$APP_DIR/Contents/Resources/$RESOURCE_BUNDLE_NAME"
+# Old local Python environments may still exist under the ignored source
+# resources directory. They are never part of the native app and must not be
+# copied into or invalidate the signed bundle.
+rm -rf "$APP_DIR/Contents/Resources/$RESOURCE_BUNDLE_NAME/Contents/Resources/Resources/backend"
 if [[ -f "$ROOT_DIR/../CHANGELOG.md" ]]; then
     cp "$ROOT_DIR/../CHANGELOG.md" "$APP_DIR/Contents/Resources/Docs/CHANGELOG.md"
 fi
@@ -238,8 +250,8 @@ function embed_framework_dependencies() {
 embed_framework_dependencies "$EXECUTABLE_PATH" "$APP_DIR/Contents/MacOS/$EXECUTABLE_NAME"
 ensure_framework_rpath "$APP_DIR/Contents/MacOS/$EXECUTABLE_NAME"
 find "$FRAMEWORKS_DIR" -maxdepth 1 -type d -name '*.framework' -print0 | while IFS= read -r -d '' framework; do
-    codesign --force --sign - "$framework"
+    codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$framework"
 done
-codesign --force --sign - "$APP_DIR"
+codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP_DIR"
 
 echo "Updated $APP_DIR"

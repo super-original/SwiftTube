@@ -119,18 +119,6 @@ struct OnboardingView: View {
             LayoutStage(selection: $settings.browseVideoGridPreset)
         case .account:
             AccountStage(
-                status: authSession.status,
-                isWorking: authSession.isWorking,
-                isDiscoveringAccounts: authSession.isDiscoveringAccounts,
-                scanningBrowsers: authSession.accountScanningBrowsers,
-                discoveredAccounts: authSession.discoveredAccounts,
-                errorMessage: authSession.errorMessage,
-                discover: {
-                    await authSession.discoverAccounts()
-                },
-                connect: { source in
-                    await authSession.connect(using: source)
-                },
                 continueWithoutAccount: {
                     stepStage()
                 }
@@ -616,79 +604,52 @@ private struct PrivacyChoiceCard: View {
 }
 
 private struct AccountStage: View {
-    let status: AuthStatusResponse
-    let isWorking: Bool
-    let isDiscoveringAccounts: Bool
-    let scanningBrowsers: [BrowserLoginOption]
-    let discoveredAccounts: [BrowserAccountDiscoveryResponse]
-    let errorMessage: String?
-    let discover: () async -> Void
-    let connect: (BrowserAccountSource) async -> Bool
+    @EnvironmentObject private var authSession: AuthSessionModel
     let continueWithoutAccount: () -> Void
-    @State private var pendingSource: BrowserAccountSource?
+    @State private var isWebSignInPresented = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            stageTitle("Account")
+        VStack(spacing: 24) {
+            VStack(spacing: 8) {
+                Image(systemName: "person.crop.circle.badge.plus")
+                    .font(.system(size: 58, weight: .light))
+                    .foregroundStyle(BrandAssets.swiftTubeBlue)
 
-            if status.authenticated {
-                SignedInAccountCard(status: status)
+                Text("Connect YouTube")
+                    .font(.system(size: 38, weight: .bold))
+
+                Text("Sign in with Google for subscriptions, playlists, history, and personalized recommendations.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 560)
+            }
+
+            if authSession.status.authenticated {
+                SignedInAccountCard(status: authSession.status)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                VStack(spacing: 14) {
-                    if isDiscoveringAccounts {
-                        LoadingStatusView(text: "Looking for accounts...", browsers: scanningBrowsers)
-                    } else if discoveredAccounts.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("No signed-in YouTube accounts found")
-                                .font(.headline)
-                            Button {
-                                Task {
-                                    await discover()
-                                }
-                            } label: {
-                                Label("Scan Again", systemImage: "arrow.clockwise")
-                            }
-                            .disabled(isWorking || isDiscoveringAccounts)
-                        }
-                    } else {
-                        ForEach(discoveredAccounts) { account in
-                            AccountDiscoveryCard(
-                                account: account,
-                                isWorking: isWorking,
-                                pendingSource: pendingSource
-                            ) { source in
-                                Task {
-                                    pendingSource = source
-                                    _ = await connect(source)
-                                    pendingSource = nil
-                                }
-                            }
-                        }
-                    }
-
-                    AccountChoiceButton(
-                        title: "Skip sign in",
-                        subtitle: "Continue without a YouTube account.",
-                        icon: .system("arrow.right"),
-                        isWorking: isWorking,
-                        isLoading: false,
-                        action: continueWithoutAccount
-                    )
-
-                    if let errorMessage, !errorMessage.isEmpty {
-                        Text(errorMessage)
-                            .font(.callout)
-                            .foregroundStyle(.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                Button {
+                    authSession.clearError()
+                    isWebSignInPresented = true
+                } label: {
+                    Label("Sign in with Google", systemImage: "person.crop.circle.badge.plus")
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.extraLarge)
+                .disabled(authSession.isWorking)
+
+                Button("Continue without an account", action: continueWithoutAccount)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .task {
-            await discover()
+        .frame(maxWidth: .infinity, alignment: .center)
+        .sheet(isPresented: $isWebSignInPresented) {
+            YouTubeWebLoginSheet {
+                isWebSignInPresented = false
+            }
+            .environmentObject(authSession)
         }
     }
 }

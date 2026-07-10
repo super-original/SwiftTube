@@ -47,18 +47,6 @@ final class DependencySelectionTests: XCTestCase {
         XCTAssertNil(resolved)
     }
 
-    func testExpandedBrowserLoginOptionsExposeCookieSources() throws {
-        XCTAssertEqual(BrowserLoginOption.safari.cookieSource, "safari")
-        XCTAssertEqual(BrowserLoginOption.chrome.cookieSource, "chrome")
-        XCTAssertEqual(BrowserLoginOption.edge.cookieSource, "edge")
-        XCTAssertEqual(BrowserLoginOption.firefox.cookieSource, "firefox")
-        XCTAssertEqual(BrowserLoginOption.brave.cookieSource, "brave")
-        XCTAssertEqual(BrowserLoginOption.chromium.cookieSource, "chromium")
-        XCTAssertEqual(BrowserLoginOption.vivaldi.cookieSource, "vivaldi")
-        XCTAssertEqual(BrowserLoginOption.opera.cookieSource, "opera")
-        XCTAssertEqual(BrowserLoginOption.whale.cookieSource, "whale")
-    }
-
     func testNativeStartupPairsVideoWithCompatibleAudioHeaders() throws {
         let iosVideo = stream(
             url: "https://example.com/ios-video.mp4",
@@ -523,23 +511,6 @@ final class DependencySelectionTests: XCTestCase {
         XCTAssertFalse(nativePlayback.playbackStrategy.isEmpty)
 
         print("Native YouTube extraction: \(nativeElapsed)s, \(nativePlayback.streams.count) streams")
-    }
-
-    func testBrowserAccountDiscoveryWhenEnabled() async throws {
-        guard ProcessInfo.processInfo.environment["SWIFTTUBE_RUN_REAL_ACCOUNT_DISCOVERY_TESTS"] == "1" else {
-            throw XCTSkip("Set SWIFTTUBE_RUN_REAL_ACCOUNT_DISCOVERY_TESTS=1 to inspect local browser sessions.")
-        }
-
-        let accounts = try await SwiftTubeBackend.shared.discoverBrowserAccounts()
-        let summary = accounts.map { account in
-            [
-                "name": account.displayName,
-                "identifier": account.identifier ?? "nil",
-                "sources": account.sources.map(\.browserLabel).joined(separator: ","),
-            ]
-        }
-        print("Discovered browser accounts: \(summary)")
-        XCTAssertFalse(accounts.isEmpty)
     }
 
     private func temporaryDirectory() throws -> URL {

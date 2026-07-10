@@ -465,7 +465,7 @@ final class YouTubeAPI: @unchecked Sendable {
         let payload = try await browse(browseID: "FEwhat_to_watch", authenticated: true)
         let authenticated = responseAuthenticated(payload)
         guard authenticated == true else {
-            throw BackendClientError(message: "SwiftTube could read the browser cookies, but YouTube did not accept them as a signed-in session.")
+            throw BackendClientError(message: "YouTube did not accept this signed-in session. Try signing in again.")
         }
     }
 

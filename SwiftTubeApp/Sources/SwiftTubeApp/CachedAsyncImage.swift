@@ -34,7 +34,9 @@ struct CachedAsyncImage<Placeholder: View>: View {
             }
         }
         .animation(
-            settings.thumbnailFadeInEnabled ? .easeOut(duration: 0.18) : nil,
+            settings.thumbnailFadeInEnabled && loader.shouldAnimatePresentation
+                ? .easeOut(duration: 0.18)
+                : nil,
             value: loader.image != nil
         )
         .onAppear {

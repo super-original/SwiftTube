@@ -7,70 +7,94 @@ private enum SearchResultLayout: String {
 
 struct SearchScreen: View {
     @ObservedObject var viewModel: SearchViewModel
+    @Binding var isSearchFocused: Bool
     let onOpenVideo: (VideoItem) -> Void
     let onOpenChannel: (ChannelReference) -> Void
     let onOpenPlaylist: (PlaylistSummary) -> Void
     let onRetry: () -> Void
-    let onFocusSearch: () -> Void
+    let onSubmit: () -> Void
+    let onClear: () -> Void
+    let onFocusChange: (Bool) -> Void
+    let onMoveSuggestion: (Int) -> Bool
+    let onAcceptAssist: () -> Bool
 
     @AppStorage("searchResultLayout") private var layoutRawValue = SearchResultLayout.grid.rawValue
+    @ObservedObject private var settings = AppSettings.shared
 
     private var layout: SearchResultLayout {
         SearchResultLayout(rawValue: layoutRawValue) ?? .grid
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
-                header
-
-                if !viewModel.filterGroups.isEmpty {
-                    SearchFilterBar(
-                        groups: viewModel.filterGroups,
-                        layout: layout,
-                        onSelect: viewModel.applyFilter,
-                        onClear: viewModel.clearFilters,
-                        onChangeLayout: { layoutRawValue = $0.rawValue }
-                    )
-                }
-
-                results
-
-                if viewModel.isSearching, viewModel.hasResults {
-                    HStack {
-                        Spacer()
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Loading more")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        Spacer()
+        ZStack(alignment: .top) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    if !viewModel.lastQuery.isEmpty {
+                        resultsHeader
                     }
-                    .padding(.vertical, 14)
-                }
 
-                Color.clear
-                    .frame(height: 1)
-                    .onAppear {
-                        guard viewModel.hasResults else { return }
-                        viewModel.loadMoreResults()
+                    if !viewModel.filterGroups.isEmpty {
+                        SearchFilterBar(
+                            groups: viewModel.filterGroups,
+                            layout: layout,
+                            onSelect: viewModel.applyFilter,
+                            onClear: viewModel.clearFilters,
+                            onChangeLayout: { layoutRawValue = $0.rawValue }
+                        )
                     }
+
+                    results
+
+                    if viewModel.isSearching, viewModel.hasResults {
+                        LoadingMoreIndicator(text: "Loading more videos...")
+                            .padding(.vertical, 14)
+                    }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .onAppear {
+                            guard viewModel.hasResults else { return }
+                            viewModel.loadMoreResults()
+                        }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 92)
+                .padding(.bottom, 24)
             }
-            .padding(24)
+            .scrollEdgeEffectHidden(true, for: .top)
+
+            searchHeader
+                .zIndex(1)
         }
         .onAppear {
             if viewModel.lastQuery.isEmpty {
-                onFocusSearch()
+                isSearchFocused = true
             }
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(viewModel.lastQuery.isEmpty ? "Search" : "Results for “\(viewModel.lastQuery)”")
-                .font(.system(size: 28, weight: .bold))
+    private var searchHeader: some View {
+        SearchPageField(
+                text: $viewModel.query,
+                isFocused: $isSearchFocused,
+                placeholder: "Search or paste YouTube URL",
+                onSubmit: onSubmit,
+                onClear: onClear,
+                onFocusChange: onFocusChange,
+                onMoveSuggestion: onMoveSuggestion,
+                onAcceptAssist: onAcceptAssist
+            )
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(.clear)
+    }
 
-            Text(viewModel.lastQuery.isEmpty ? "Search videos, channels, and playlists." : resultSummary)
+    private var resultsHeader: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Results for “\(viewModel.lastQuery)”")
+                .font(.title2.weight(.bold))
+
+            Text(resultSummary)
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -88,7 +112,7 @@ struct SearchScreen: View {
     @ViewBuilder
     private var results: some View {
         if viewModel.lastQuery.isEmpty {
-            SearchPrompt(onFocusSearch: onFocusSearch)
+            SearchPrompt(onFocusSearch: { isSearchFocused = true })
         } else if !viewModel.hasResults {
             if viewModel.isSearching {
                 SearchResultPlaceholders(layout: layout)
@@ -134,13 +158,25 @@ struct SearchScreen: View {
     private var searchVideos: some View {
         if layout == .grid {
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 230, maximum: 420), spacing: 18, alignment: .top)],
+                columns: browseGridColumns(count: settings.browseVideoGridPreset.columnCount),
                 alignment: .leading,
-                spacing: 18
+                spacing: 20
             ) {
                 ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, video in
-                    SearchVideoGridItem(video: video, onOpen: { onOpenVideo(video) })
-                        .staggeredFadeIn(id: video.id, index: index, columns: 4)
+                    VideoCard(
+                        video: video,
+                        onOpenChannel: video.channelReference.map { channel in
+                            { onOpenChannel(channel) }
+                        }
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(RoundedRectangle(cornerRadius: 16))
+                    .onTapGesture { onOpenVideo(video) }
+                    .staggeredFadeIn(
+                        id: video.id,
+                        index: index,
+                        columns: settings.browseVideoGridPreset.columnCount
+                    )
                 }
             }
         } else {
@@ -208,6 +244,82 @@ struct SearchScreen: View {
     }
 }
 
+private struct SearchPageField: View {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+    let placeholder: String
+    let onSubmit: () -> Void
+    let onClear: () -> Void
+    let onFocusChange: (Bool) -> Void
+    let onMoveSuggestion: (Int) -> Bool
+    let onAcceptAssist: () -> Bool
+
+    @FocusState private var fieldIsFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(.body)
+                .focused($fieldIsFocused)
+                .onSubmit {
+                    if !onAcceptAssist() {
+                        onSubmit()
+                    }
+                }
+                .onKeyPress(.downArrow) {
+                    onMoveSuggestion(1) ? .handled : .ignored
+                }
+                .onKeyPress(.upArrow) {
+                    onMoveSuggestion(-1) ? .handled : .ignored
+                }
+                .onKeyPress(.escape) {
+                    if text.isEmpty {
+                        fieldIsFocused = false
+                    } else {
+                        text = ""
+                        onClear()
+                    }
+                    return .handled
+                }
+
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                    onClear()
+                    fieldIsFocused = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 42)
+        .glassEffect(.regular.interactive(), in: Capsule())
+        .contentShape(Capsule())
+        .onAppear {
+            fieldIsFocused = isFocused
+        }
+        .onChange(of: isFocused) { _, shouldFocus in
+            if fieldIsFocused != shouldFocus {
+                fieldIsFocused = shouldFocus
+            }
+        }
+        .onChange(of: fieldIsFocused) { _, focused in
+            if isFocused != focused {
+                isFocused = focused
+            }
+            onFocusChange(focused)
+        }
+    }
+}
+
 private struct SearchFilterBar: View {
     let groups: [SearchFilterGroup]
     let layout: SearchResultLayout
@@ -220,63 +332,83 @@ private struct SearchFilterBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(groups) { group in
-                Menu {
-                    ForEach(group.options) { option in
-                        Button {
-                            onSelect(option)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 18) {
+                HStack(spacing: 10) {
+                    ForEach(groups) { group in
+                        Menu {
+                            ForEach(group.options) { option in
+                                Button {
+                                    onSelect(option)
+                                } label: {
+                                    if option.selected {
+                                        Label(option.title, systemImage: "checkmark")
+                                    } else {
+                                        Text(option.title)
+                                    }
+                                }
+                                .disabled(option.selected || option.params == nil)
+                            }
                         } label: {
-                            if option.selected {
-                                Label(option.title, systemImage: "checkmark")
-                            } else {
-                                Text(option.title)
+                            HStack(spacing: 7) {
+                                Text(group.options.first(where: \.selected)?.title ?? group.title)
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.down")
+                                    .font(.caption2.weight(.bold))
                             }
                         }
-                        .disabled(option.selected || option.params == nil)
+                        .menuStyle(.button)
+                        .menuIndicator(.hidden)
+                        .buttonStyle(
+                            ChannelToolbarPillButtonStyle(
+                                isSelected: group.options.contains(where: \.selected)
+                            )
+                        )
                     }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(group.options.first(where: \.selected)?.title ?? group.title)
-                            .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.caption2.weight(.bold))
+
+                    if hasSelectedFilter {
+                        Button {
+                            onClear()
+                        } label: {
+                            Label("Clear", systemImage: "xmark")
+                        }
+                        .buttonStyle(ChannelToolbarPillButtonStyle(isSelected: false))
                     }
                 }
-                .menuStyle(.button)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
 
-            if hasSelectedFilter {
-                Button("Clear", systemImage: "xmark") {
-                    onClear()
+                Rectangle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(width: 1, height: 30)
+
+                HStack(spacing: 10) {
+                    SearchLayoutModeButton(
+                        layout: .grid,
+                        currentLayout: layout,
+                        onSelect: onChangeLayout
+                    )
+                    SearchLayoutModeButton(
+                        layout: .list,
+                        currentLayout: layout,
+                        onSelect: onChangeLayout
+                    )
                 }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
             }
-
-            Spacer(minLength: 8)
-
-            ControlGroup {
-                Button {
-                    onChangeLayout(.grid)
-                } label: {
-                    Label("Grid", systemImage: "square.grid.2x2")
-                }
-                .tint(layout == .grid ? .accentColor : nil)
-
-                Button {
-                    onChangeLayout(.list)
-                } label: {
-                    Label("List", systemImage: "list.bullet")
-                }
-                .tint(layout == .list ? .accentColor : nil)
-            }
-            .controlSize(.small)
         }
-        .padding(10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct SearchLayoutModeButton: View {
+    let layout: SearchResultLayout
+    let currentLayout: SearchResultLayout
+    let onSelect: (SearchResultLayout) -> Void
+
+    var body: some View {
+        ChannelToolbarIconButton(
+            symbolName: layout == .grid ? "square.grid.2x2" : "list.bullet",
+            isSelected: layout == currentLayout,
+            accessibilityLabel: layout == .grid ? "Grid View" : "List View",
+            action: { onSelect(layout) }
+        )
     }
 }
 
@@ -293,40 +425,11 @@ private struct SearchResultSection<Content: View>: View {
     }
 }
 
-private struct SearchVideoGridItem: View {
-    let video: VideoItem
-    let onOpen: () -> Void
-
-    var body: some View {
-        Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: 8) {
-                InlineVideoThumbnail(
-                    video: video,
-                    cornerRadius: 12,
-                    maxPixelSize: 720,
-                    placeholderIconSize: 30
-                )
-
-                Text(video.title)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-
-                Text([video.channel, video.viewCountText, video.publishedTimeText].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 private struct SearchVideoListItem: View {
+    @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
     let onOpen: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: onOpen) {
@@ -357,8 +460,18 @@ private struct SearchVideoListItem: View {
             }
             .padding(8)
             .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isHovered ? settings.hoverCardBackgroundColor : .clear)
+            )
         }
         .buttonStyle(.plain)
+        .scaleEffect(isHovered ? 1.004 : 1)
+        .onHover { hovering in
+            withAnimation(settings.hoverAnimationsEnabled ? .easeOut(duration: 0.12) : nil) {
+                isHovered = hovering
+            }
+        }
     }
 }
 
@@ -454,13 +567,14 @@ private struct SearchPrompt: View {
     let onFocusSearch: () -> Void
 
     var body: some View {
-        SearchEmptyState(
-            symbol: "magnifyingglass",
-            title: "Find something to watch",
-            message: "Use the search field in the toolbar.",
-            actionTitle: "Search",
-            action: onFocusSearch
-        )
+        ContentUnavailableView {
+            Label("Search for something to watch", systemImage: "magnifyingglass")
+        } description: {
+            Text("Find videos, channels, and playlists")
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onFocusSearch)
+        .frame(maxWidth: .infinity, minHeight: 360)
     }
 }
 
@@ -488,13 +602,9 @@ private struct SearchResultPlaceholders: View {
 
     var body: some View {
         if layout == .grid {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 18)], spacing: 18) {
+            LazyVGrid(columns: browseGridColumns(count: AppSettings.shared.browseVideoGridPreset.columnCount), spacing: 20) {
                 ForEach(0..<8, id: \.self) { _ in
-                    VStack(alignment: .leading, spacing: 8) {
-                        RoundedRectangle(cornerRadius: 12).fill(.quaternary).aspectRatio(16 / 9, contentMode: .fit)
-                        RoundedRectangle(cornerRadius: 4).fill(.quaternary).frame(height: 14)
-                        RoundedRectangle(cornerRadius: 4).fill(.quaternary).frame(width: 120, height: 10)
-                    }
+                    PlaceholderCard()
                 }
             }
         } else {

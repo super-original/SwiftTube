@@ -64,14 +64,14 @@ struct SettingsView: View {
     @State private var selection: SettingsPane = .general
 
     var body: some View {
-        HStack(spacing: 0) {
-            SettingsNavigationRail(selection: $selection)
-                .frame(width: 196)
-
-            Divider()
-
+        NavigationSplitView {
+            SettingsNativeSidebar(selection: $selection)
+        } detail: {
             SettingsDetailHost(selection: $selection)
         }
+        .navigationSplitViewStyle(.balanced)
+        .removeSidebarToggle()
+        .navigationTitle(selection.title)
         .frame(
             minWidth: SettingsWindowSupport.minSize.width,
             idealWidth: 980,
@@ -80,88 +80,75 @@ struct SettingsView: View {
             idealHeight: 650,
             maxHeight: SettingsWindowSupport.maxSize.height
         )
-        .background(Rectangle().fill(settings.windowBackgroundStyle).ignoresSafeArea())
+        .containerBackground(settings.windowBackgroundStyle, for: .window)
         .preferredColorScheme(settings.preferredColorScheme)
         .background(
             WindowAccessor { window in
                 guard let window else { return }
                 SettingsWindowSupport.configure(window)
+                SettingsWindowSupport.preventSidebarCollapse(in: window)
             }
         )
     }
 }
 
-private struct SettingsNavigationRail: View {
-    @ObservedObject private var settings = AppSettings.shared
+private struct SettingsNativeSidebar: View {
     @Binding var selection: SettingsPane
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 9) {
-                if let logo = BrandAssets.logo {
-                    Image(nsImage: logo)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 26, height: 26)
-                }
-                Text("SwiftTube")
-                    .font(.system(size: 20, weight: .bold))
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 14)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 13) {
-                    SettingsRailSection(title: nil, panes: SettingsPane.appSection, selection: $selection)
-                    SettingsRailSection(title: "Player", panes: SettingsPane.playbackSection, selection: $selection)
-                    SettingsRailSection(title: "Tools", panes: SettingsPane.toolsSection, selection: $selection)
-                    SettingsRailSection(title: "About", panes: SettingsPane.aboutSection, selection: $selection)
-                }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 10)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(settings.sidebarBackgroundColor).opacity(0.72))
-    }
-}
-
-private struct SettingsRailSection: View {
-    let title: String?
-    let panes: [SettingsPane]
-    @Binding var selection: SettingsPane
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if let title {
-                Text(title.uppercased())
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 9)
-                    .padding(.bottom, 2)
-            }
-
-            ForEach(panes) { pane in
-                Button {
-                    selection = pane
-                } label: {
+        List(selection: $selection) {
+            Section {
+                ForEach(SettingsPane.appSection) { pane in
                     SettingsSidebarLabel(pane: pane)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 9)
-                        .frame(height: 30)
-                        .background(
-                            selection == pane ? BrandAssets.swiftTubeBlue.opacity(0.22) : .clear,
-                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        )
+                        .tag(pane)
                 }
-                .buttonStyle(.plain)
+            } header: {
+                HStack(spacing: 8) {
+                    if let logo = BrandAssets.logo {
+                        Image(nsImage: logo)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 24, height: 24)
+                    }
+                    Text("SwiftTube")
+                        .font(.title3.weight(.bold))
+                }
+                .foregroundStyle(.primary)
+                .textCase(nil)
+                .padding(.vertical, 6)
             }
+            .collapsible(false)
+
+            Section("Player") {
+                ForEach(SettingsPane.playbackSection) { pane in
+                    SettingsSidebarLabel(pane: pane)
+                        .tag(pane)
+                }
+            }
+            .collapsible(false)
+
+            Section("Tools") {
+                ForEach(SettingsPane.toolsSection) { pane in
+                    SettingsSidebarLabel(pane: pane)
+                        .tag(pane)
+                }
+            }
+            .collapsible(false)
+
+            Section("About") {
+                ForEach(SettingsPane.aboutSection) { pane in
+                    SettingsSidebarLabel(pane: pane)
+                        .tag(pane)
+                }
+            }
+            .collapsible(false)
         }
+        .listStyle(.sidebar)
+        .navigationSplitViewColumnWidth(min: 205, ideal: 220, max: 250)
     }
 }
 
 private struct SettingsDetailHost: View {
-    @ObservedObject private var settings = AppSettings.shared
     @Binding var selection: SettingsPane
     @Namespace private var scrollTop
 
@@ -201,7 +188,6 @@ private struct SettingsDetailHost: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Rectangle().fill(settings.windowBackgroundStyle))
     }
 }
 
@@ -261,24 +247,24 @@ private struct AppearancePaneContent: View {
 
     var body: some View {
         SettingsCard(title: "Video Grid", icon: "rectangle.grid.2x2") {
-            VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .center) {
-                        Text("Recommendations and search size")
-                            .font(.headline)
-                        Spacer()
-                        Text("\(settings.browseVideoGridPreset.title) · \(settings.browseVideoGridPreset.columnHint)")
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Picker("Grid size", selection: $settings.browseVideoGridPreset) {
-                        ForEach(BrowseVideoGridPreset.allCases) { preset in
-                            Text(preset.title).tag(preset)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+            Slider(value: gridSize, in: 0...2, step: 1) {
+                Text("Grid size")
             }
+            .help("\(settings.browseVideoGridPreset.title), \(settings.browseVideoGridPreset.columnHint)")
+            .accessibilityValue("\(settings.browseVideoGridPreset.title), \(settings.browseVideoGridPreset.columnHint)")
         }
+    }
+
+    private var gridSize: Binding<Double> {
+        Binding(
+            get: {
+                Double(BrowseVideoGridPreset.allCases.firstIndex(of: settings.browseVideoGridPreset) ?? 1)
+            },
+            set: { value in
+                let index = min(max(Int(value.rounded()), 0), BrowseVideoGridPreset.allCases.count - 1)
+                settings.browseVideoGridPreset = BrowseVideoGridPreset.allCases[index]
+            }
+        )
     }
 }
 
@@ -411,11 +397,11 @@ private struct ThemeGroup: View {
                 }
             }
         }
+        .padding(.top, 28)
     }
 }
 
 private struct ThemeSwatch: View {
-    @ObservedObject private var settings = AppSettings.shared
     let theme: AppAppearanceMode
     let isSelected: Bool
     let onSelect: () -> Void
@@ -424,50 +410,48 @@ private struct ThemeSwatch: View {
 
     var body: some View {
         Button(action: onSelect) {
-            ZStack(alignment: .topTrailing) {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.previewGradient)
-                        .frame(width: 52, height: 52)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(borderColor, lineWidth: isSelected ? 2.5 : 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.previewGradient)
+                .frame(width: 52, height: 52)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(
+                            isSelected ? Color.accentColor : Color.primary.opacity(0.18),
+                            lineWidth: isSelected ? 2.5 : 1
                         )
-
+                }
+                .overlay(alignment: .topTrailing) {
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundStyle(Color.accentColor, .white)
-                            .background(Circle().fill(Color.white))
+                            .background(Circle().fill(.white))
                             .offset(x: 4, y: -4)
                     }
-
-                Text(theme.title)
-                    .font(.caption2.weight(.semibold))
-                    .lineLimit(1)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 3)
-                    .background(.black.opacity(0.64), in: Capsule())
-                    .frame(maxWidth: 50)
-                    .offset(x: -1, y: 48)
-                    .opacity(isHovered ? 1 : 0)
-            }
-            .scaleEffect(isHovered ? 1.06 : 1)
+                }
         }
         .buttonStyle(.plain)
         .help(theme.title)
+        .overlay(alignment: .top) {
+            if isHovered {
+                Text(theme.title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 9)
+                    .frame(height: 24)
+                    .glassEffect(.regular, in: Capsule())
+                    .offset(y: -30)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
+        }
+        .zIndex(isHovered ? 100 : 0)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.14)) {
+            withAnimation(.easeOut(duration: 0.12)) {
                 isHovered = hovering
             }
         }
     }
-
-    private var borderColor: Color {
-        if isSelected { return Color.accentColor }
-        return Color.primary.opacity(isHovered ? 0.45 : 0.18)
-    }
-
 }
 
 private struct SidebarPane: View {
@@ -482,7 +466,7 @@ private struct SidebarPane: View {
 
             SettingsCard(title: "Navigation Items", icon: "sidebar.left") {
                 LazyVStack(spacing: 0) {
-                    ForEach(settings.sidebarItemOrder) { item in
+                    ForEach(settings.sidebarItemOrder, id: \.self) { item in
                         SidebarSettingsListRow(
                             item: item,
                             isVisible: settings.isSidebarItemVisible(item)
@@ -1110,9 +1094,7 @@ private struct SettingsHeader: View {
     let subtitle: String
 
     var body: some View {
-        Text(title)
-            .font(.system(size: 26, weight: .bold))
-            .padding(.bottom, 2)
+        EmptyView()
     }
 }
 
@@ -1225,7 +1207,6 @@ private struct ChangelogRelease: Identifiable {
 }
 
 private struct SettingsCard<Content: View>: View {
-    @ObservedObject private var settings = AppSettings.shared
     let title: String?
     let icon: String?
     @ViewBuilder let content: Content
@@ -1249,14 +1230,7 @@ private struct SettingsCard<Content: View>: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            shape
-                .fill(Color(settings.elevatedBackgroundColor).opacity(0.62))
-        )
-        .overlay(
-            shape
-                .strokeBorder(.separator.opacity(0.72), lineWidth: 0.7)
-        )
+        .glassEffect(.regular, in: shape)
     }
 }
 

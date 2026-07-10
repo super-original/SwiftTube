@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-private func browseGridColumns(count: Int) -> [GridItem] {
+func browseGridColumns(count: Int) -> [GridItem] {
     Array(
         repeating: GridItem(
             .flexible(minimum: 220, maximum: 640),
@@ -66,8 +66,6 @@ struct ContentView: View {
     private var columns: [GridItem] {
         browseGridColumns(count: settings.browseVideoGridPreset.columnCount)
     }
-    private let searchChromeWidth: CGFloat = 300
-    private let searchAssistWidth: CGFloat = 680
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -153,6 +151,7 @@ struct ContentView: View {
             sidebar
         } detail: {
             currentScreenContainer
+                .navigationTitle(navigation.currentRoute.navigationTitle)
         }
         .navigationSplitViewStyle(.balanced)
     }
@@ -160,53 +159,42 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var appToolbar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-                Button {
-                    if case .home = navigation.currentRoute {
-                        viewModel.reload()
-                    } else {
-                        searchViewModel.clear()
-                        navigation.showHome()
-                    }
-                } label: {
-                    BrandToolbarLabel()
+            Button {
+                if case .home = navigation.currentRoute {
+                    viewModel.reload()
+                } else {
+                    searchViewModel.clear()
+                    navigation.showHome()
                 }
-                .buttonStyle(.plain)
+            } label: {
+                BrandToolbarLabel()
             }
-            .contentMarginsRemoved()
+            .help("SwiftTube")
+        }
 
         ToolbarSpacer(.fixed)
 
         ToolbarItemGroup(placement: .navigation) {
-                Button(action: handleBackNavigation) {
-                    Label("Back", systemImage: "chevron.left")
-                }
-                .disabled(!navigation.canGoBack)
+            Button(action: handleBackNavigation) {
+                Label("Back", systemImage: "chevron.left")
+            }
+            .disabled(!navigation.canGoBack)
+            .controlSize(.large)
 
-                Button(action: handleForwardNavigation) {
-                    Label("Forward", systemImage: "chevron.right")
-                }
-                .disabled(!navigation.canGoForward)
+            Button(action: handleForwardNavigation) {
+                Label("Forward", systemImage: "chevron.right")
+            }
+            .disabled(!navigation.canGoForward)
+            .controlSize(.large)
         }
 
-        ToolbarItem(placement: .principal) {
-                ToolbarSearchField(
-                    text: $searchViewModel.query,
-                    isFocused: $isSearchFieldFocused,
-                    placeholder: toolbarSearchPlaceholder,
-                    onSubmit: handleToolbarSubmit,
-                    onClear: handleToolbarClear,
-                    onFocusChange: handleSearchFieldFocusChange,
-                    onMoveSuggestion: moveSelectedSearchSuggestion,
-                    onAcceptAssist: acceptSelectedSearchAssist
-                )
-                .frame(width: searchChromeWidth)
-        }
-
-        ToolbarItemGroup(placement: .primaryAction) {
+        ToolbarItem(placement: .confirmationAction) {
             Button(action: refreshCurrentRoute) {
-                Label("Refresh", systemImage: "arrow.clockwise")
+                Image(systemName: "arrow.clockwise")
             }
             .disabled(!backend.isRunning)
+            .buttonBorderShape(.circle)
+            .help("Refresh")
         }
     }
 }
@@ -252,7 +240,8 @@ private extension ContentView {
 
             if searchAssistState.isVisible {
                 searchAssistOverlay
-                    .padding(.top, 12)
+                    .padding(.top, navigation.currentRoute.isSearchRoute ? 76 : 12)
+                    .padding(.horizontal, navigation.currentRoute.isSearchRoute ? 24 : 12)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
@@ -337,6 +326,7 @@ private extension ContentView {
         case .search:
             SearchScreen(
                 viewModel: searchViewModel,
+                isSearchFocused: $isSearchFieldFocused,
                 onOpenVideo: openVideoFromSearch,
                 onOpenChannel: { channel in
                     navigation.showChannel(channel)
@@ -353,7 +343,11 @@ private extension ContentView {
                     searchViewModel.suspendResultsForNavigation()
                 },
                 onRetry: handleToolbarSubmit,
-                onFocusSearch: { isSearchFieldFocused = true }
+                onSubmit: handleToolbarSubmit,
+                onClear: handleToolbarClear,
+                onFocusChange: handleSearchFieldFocusChange,
+                onMoveSuggestion: moveSelectedSearchSuggestion,
+                onAcceptAssist: acceptSelectedSearchAssist
             )
         case .home:
             homeScreen
@@ -718,7 +712,7 @@ private extension ContentView {
             },
             onOpenLink: handleToolbarSubmit
         )
-        .frame(width: searchAssistPanelWidth)
+        .frame(maxWidth: .infinity)
         .shadow(color: .black.opacity(0.22), radius: 20, y: 10)
     }
 
@@ -816,17 +810,6 @@ private extension ContentView {
             return "\(historyViewModel.filteredItems.count) official YouTube history matches for \"\(historyViewModel.searchQuery)\""
         }
         return "\(historyViewModel.totalItemCount) videos synced from YouTube watch history"
-    }
-
-    var searchAssistPanelWidth: CGFloat {
-        switch searchAssistState {
-        case .link:
-            return searchAssistWidth
-        case .loading, .suggestions:
-            return searchChromeWidth
-        case .hidden:
-            return searchChromeWidth
-        }
     }
 
     func handleToolbarSubmit() {
@@ -1656,7 +1639,7 @@ private struct ChannelLayoutModeButton: View {
     }
 }
 
-private struct ChannelToolbarTextButton: View {
+struct ChannelToolbarTextButton: View {
     let title: String
     let isSelected: Bool
     let action: () -> Void
@@ -1670,7 +1653,7 @@ private struct ChannelToolbarTextButton: View {
     }
 }
 
-private struct ChannelToolbarIconButton: View {
+struct ChannelToolbarIconButton: View {
     let symbolName: String
     let isSelected: Bool
     let accessibilityLabel: String
@@ -1687,7 +1670,7 @@ private struct ChannelToolbarIconButton: View {
     }
 }
 
-private struct ChannelToolbarPillButtonStyle: ButtonStyle {
+struct ChannelToolbarPillButtonStyle: ButtonStyle {
     let isSelected: Bool
     var horizontalPadding: CGFloat = 14
 
@@ -3124,22 +3107,17 @@ private struct PlaylistRowHandle: View {
 
 private struct BrandToolbarLabel: View {
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             if let logo = BrandAssets.logo {
                 Image(nsImage: logo)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 28, height: 20)
+                    .frame(width: 20, height: 20)
             }
 
             Text("SwiftTube")
-                .font(.headline)
+                .fontWeight(.semibold)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .foregroundStyle(.primary)
-        .glassEffect(.regular.interactive(), in: Capsule())
-        .contentShape(Capsule())
     }
 }
 
@@ -3232,27 +3210,12 @@ private struct PlaylistFeedSummaryPlaceholder: View {
 private struct AuthConnectionSheet: View {
     @EnvironmentObject private var authSession: AuthSessionModel
     @Environment(\.dismiss) private var dismiss
-    @State private var pendingSource: BrowserAccountSource?
+    @State private var isWebSignInPresented = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("YouTube Account")
-                        .font(.title2.weight(.bold))
-                    if let identifier = authSession.status.accountIdentifier, authSession.status.authenticated {
-                        Text(identifier)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                Button {
-                    Task { await authSession.discoverAccounts() }
-                } label: {
-                    Label("Scan", systemImage: "arrow.clockwise")
-                }
-                .disabled(authSession.isDiscoveringAccounts || authSession.isWorking)
-            }
+        VStack(spacing: 24) {
+            Text("YouTube Account")
+                .font(.title2.weight(.bold))
 
             if authSession.status.authenticated {
                 HStack(spacing: 12) {
@@ -3276,43 +3239,29 @@ private struct AuthConnectionSheet: View {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .stroke(.separator.opacity(0.9), lineWidth: 0.7)
                 )
-            }
-
-            if authSession.isDiscoveringAccounts {
-                LoadingStatusView(
-                    text: "Looking for accounts...",
-                    browsers: authSession.accountScanningBrowsers
-                )
-            } else if authSession.discoveredAccounts.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("No signed-in YouTube accounts found")
-                        .font(.headline)
-                    Button {
-                        Task { await authSession.discoverAccounts() }
-                    } label: {
-                        Label("Scan Again", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(authSession.isDiscoveringAccounts || authSession.isWorking)
-                }
             } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Detected Accounts")
-                        .font(.headline)
-                    ForEach(authSession.discoveredAccounts) { account in
-                        AccountDiscoveryCard(
-                            account: account,
-                            isWorking: authSession.isWorking,
-                            pendingSource: pendingSource
-                        ) { source in
-                            Task {
-                                pendingSource = source
-                                let connected = await authSession.connect(using: source)
-                                pendingSource = nil
-                                if connected { dismiss() }
-                            }
-                        }
-                    }
+                Image(systemName: "person.crop.circle.badge.plus")
+                    .font(.system(size: 54, weight: .light))
+                    .foregroundStyle(BrandAssets.swiftTubeBlue)
+
+                VStack(spacing: 6) {
+                    Text("Sign in to SwiftTube")
+                        .font(.title3.weight(.semibold))
+                    Text("Use Google in a secure session owned only by SwiftTube.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
+
+                Button {
+                    authSession.clearError()
+                    isWebSignInPresented = true
+                } label: {
+                    Label("Sign in with Google", systemImage: "person.crop.circle.badge.plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(authSession.isWorking)
             }
 
             if authSession.isWorking {
@@ -3326,18 +3275,23 @@ private struct AuthConnectionSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack {
-                Spacer()
-                Button("Done") {
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
+            Button("Done") {
+                dismiss()
             }
+            .keyboardShortcut(.cancelAction)
         }
         .padding(24)
-        .frame(width: 560)
-        .task {
-            await authSession.discoverAccounts()
+        .frame(width: 520)
+        .sheet(isPresented: $isWebSignInPresented) {
+            YouTubeWebLoginSheet {
+                isWebSignInPresented = false
+            }
+            .environmentObject(authSession)
+        }
+        .onChange(of: authSession.status.authenticated) { _, authenticated in
+            guard authenticated else { return }
+            isWebSignInPresented = false
+            dismiss()
         }
     }
 }
@@ -3407,174 +3361,6 @@ private struct NoticeBanner: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(NSColor.controlBackgroundColor))
         )
-    }
-}
-
-private struct ToolbarSearchField: NSViewRepresentable {
-    @Binding var text: String
-    @Binding var isFocused: Bool
-    var placeholder: String
-    var onSubmit: () -> Void
-    var onClear: () -> Void
-    var onFocusChange: (Bool) -> Void
-    var onMoveSuggestion: (Int) -> Bool
-    var onAcceptAssist: () -> Bool
-
-    func makeNSView(context: Context) -> NSSearchField {
-        let field = ResignableSearchField()
-        field.isEnabled = true
-        field.isEditable = true
-        field.isSelectable = true
-        field.placeholderString = placeholder
-        field.delegate = context.coordinator
-        field.focusRingType = .default
-        field.bezelStyle = .roundedBezel
-        field.controlSize = .regular
-        field.font = .systemFont(ofSize: NSFont.systemFontSize(for: .regular))
-        field.usesSingleLineMode = true
-        field.cell?.usesSingleLineMode = true
-        field.cell?.wraps = false
-        field.cell?.isScrollable = true
-        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        return field
-    }
-
-    func updateNSView(_ nsView: NSSearchField, context: Context) {
-        if nsView.stringValue != text {
-            nsView.stringValue = text
-        }
-        if nsView.placeholderString != placeholder {
-            nsView.placeholderString = placeholder
-        }
-        if context.coordinator.lastAppliedFocusRequest != isFocused {
-            context.coordinator.lastAppliedFocusRequest = isFocused
-            if isFocused {
-                DispatchQueue.main.async { [weak nsView] in
-                    guard let nsView, nsView.window?.firstResponder !== nsView.currentEditor() else { return }
-                    nsView.window?.makeFirstResponder(nsView)
-                }
-            } else if nsView.currentEditor() != nil {
-                nsView.window?.makeFirstResponder(nil)
-            }
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    /// NSSearchField subclass that resigns first responder when
-    /// clicking outside, matching native macOS search bar behaviour.
-    final class ResignableSearchField: NSSearchField {
-        private nonisolated(unsafe) var clickMonitor: Any?
-
-        override func becomeFirstResponder() -> Bool {
-            let result = super.becomeFirstResponder()
-            if result { installClickOutsideMonitor() }
-            return result
-        }
-
-        override func resignFirstResponder() -> Bool {
-            let result = super.resignFirstResponder()
-            removeClickOutsideMonitor()
-            return result
-        }
-
-        private func installClickOutsideMonitor() {
-            guard clickMonitor == nil else { return }
-            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-                guard let self, let fieldEditor = self.currentEditor() else { return event }
-                let locationInField = self.convert(event.locationInWindow, from: nil)
-                if !self.bounds.contains(locationInField) {
-                    // Also check the field editor (which might be slightly different)
-                    let locationInEditor = fieldEditor.convert(event.locationInWindow, from: nil)
-                    if !fieldEditor.bounds.contains(locationInEditor) {
-                        DispatchQueue.main.async { [weak self] in
-                            self?.window?.makeFirstResponder(nil)
-                        }
-                    }
-                }
-                return event
-            }
-        }
-
-        private func removeClickOutsideMonitor() {
-            if let monitor = clickMonitor {
-                NSEvent.removeMonitor(monitor)
-                clickMonitor = nil
-            }
-        }
-
-        deinit {
-            if let monitor = clickMonitor {
-                NSEvent.removeMonitor(monitor)
-            }
-        }
-    }
-
-    final class Coordinator: NSObject, NSSearchFieldDelegate {
-        var parent: ToolbarSearchField
-        var lastAppliedFocusRequest = false
-
-        init(_ parent: ToolbarSearchField) {
-            self.parent = parent
-        }
-
-        func controlTextDidChange(_ notification: Notification) {
-            guard let field = notification.object as? NSSearchField else { return }
-            parent.text = field.stringValue
-            if field.stringValue.isEmpty {
-                parent.onClear()
-            }
-        }
-
-        func controlTextDidBeginEditing(_ notification: Notification) {
-            parent.isFocused = true
-            parent.onFocusChange(true)
-        }
-
-        func controlTextDidEndEditing(_ notification: Notification) {
-            parent.isFocused = false
-            parent.onFocusChange(false)
-        }
-
-        func control(
-            _ control: NSControl,
-            textView: NSTextView,
-            doCommandBy commandSelector: Selector
-        ) -> Bool {
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                if parent.onAcceptAssist() {
-                    return true
-                }
-                parent.onSubmit()
-                parent.isFocused = false
-                parent.onFocusChange(false)
-                control.window?.makeFirstResponder(nil)
-                return true
-            }
-            if commandSelector == #selector(NSResponder.moveUp(_:)) {
-                return parent.onMoveSuggestion(-1)
-            }
-            if commandSelector == #selector(NSResponder.moveDown(_:)) {
-                return parent.onMoveSuggestion(1)
-            }
-            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-                if control.stringValue.isEmpty {
-                    // Empty field: just deselect
-                    parent.isFocused = false
-                    parent.onFocusChange(false)
-                    control.window?.makeFirstResponder(nil)
-                } else {
-                    // Has text: clear it and the search results
-                    parent.text = ""
-                    (control as? NSSearchField)?.stringValue = ""
-                    parent.onClear()
-                }
-                return true
-            }
-            return false
-        }
     }
 }
 
@@ -3670,7 +3456,7 @@ private struct AppCommandHandler: NSViewRepresentable {
     }
 }
 
-private struct PlaceholderCard: View {
+struct PlaceholderCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             RoundedRectangle(cornerRadius: 12)
@@ -3698,7 +3484,6 @@ private struct PlaceholderCard: View {
 }
 
 private struct SearchAssistPanel: View {
-    @ObservedObject private var settings = AppSettings.shared
     let state: SearchAssistState
     let selectedSuggestionIndex: Int
     let onSelectSuggestion: (String) -> Void
@@ -3728,14 +3513,7 @@ private struct SearchAssistPanel: View {
             }
         }
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 24)
-                .fill(settings.cardBackgroundColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24)
-                .stroke(Color.white.opacity(settings.preferredColorScheme == .dark ? 0.06 : 0.18), lineWidth: 1)
-        )
+        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .animation(.snappy(duration: 0.2, extraBounce: 0), value: state)
     }
 }
@@ -3765,10 +3543,14 @@ private struct SearchSuggestionRow: View {
             .padding(.vertical, 11)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(isHovered || isSelected ? Color.white.opacity(0.08) : .clear)
+                    .fill(isHovered || isSelected ? Color.white.opacity(0.09) : .clear)
             )
-            .offset(x: isHovered || isSelected ? 3 : 0)
-            .scaleEffect(isHovered || isSelected ? 1.008 : 1)
+            .scaleEffect(isHovered || isSelected ? 1.012 : 1)
+            .shadow(
+                color: .black.opacity(isHovered || isSelected ? 0.18 : 0),
+                radius: isHovered || isSelected ? 10 : 0,
+                y: isHovered || isSelected ? 4 : 0
+            )
         }
         .buttonStyle(.plain)
         .contentShape(RoundedRectangle(cornerRadius: 16))

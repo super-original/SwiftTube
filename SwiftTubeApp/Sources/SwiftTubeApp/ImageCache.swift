@@ -148,6 +148,7 @@ actor ImageCache {
 @MainActor
 final class ImageLoader: ObservableObject {
     @Published private(set) var image: DecodedImage? = nil
+    @Published private(set) var shouldAnimatePresentation = false
 
     private var activeRequest: DecodedImageRequest? = nil
     private var loadTask: Task<Void, Never>? = nil
@@ -161,6 +162,7 @@ final class ImageLoader: ObservableObject {
             loadTask?.cancel()
             activeRequest = nil
             image = nil
+            shouldAnimatePresentation = false
             return
         }
 
@@ -173,11 +175,13 @@ final class ImageLoader: ObservableObject {
         activeRequest = request
 
         if let cachedImage = DecodedImageMemoryCache.shared.image(for: request.cacheKey) {
+            shouldAnimatePresentation = false
             image = cachedImage
             return
         }
 
         image = nil
+        shouldAnimatePresentation = true
 
         loadTask = Task { [weak self] in
             do {
@@ -189,6 +193,7 @@ final class ImageLoader: ObservableObject {
                 guard self?.activeRequest == request else { return }
                 self?.image = decodedImage
             } catch {
+                self?.shouldAnimatePresentation = false
                 // Ignore image loading errors to keep UI responsive.
             }
         }

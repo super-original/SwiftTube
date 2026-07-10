@@ -22,7 +22,7 @@ struct SwiftTubeApp: App {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("SwiftTube", id: "main") {
             Group {
                 if settings.onboardingCompleted {
                     ContentView()
@@ -40,20 +40,15 @@ struct SwiftTubeApp: App {
                 BrandAssets.installApplicationIcon()
             }
         }
-        .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             SettingsWindowCommands()
         }
 
-        Window("SwiftTube", id: "settings") {
+        Window("SwiftTube Settings", id: "settings") {
             SettingsView()
                 .environmentObject(authSession)
                 .preferredColorScheme(settings.preferredColorScheme)
         }
-        .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unified(showsTitle: false))
-        .windowResizability(.contentSize)
         .defaultSize(width: SettingsWindowSupport.fixedSize.width, height: SettingsWindowSupport.fixedSize.height)
     }
 }

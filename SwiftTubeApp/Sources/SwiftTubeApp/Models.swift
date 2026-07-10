@@ -1033,35 +1033,6 @@ private extension String {
     }
 }
 
-struct BrowserAccountSource: Codable, Hashable, Identifiable, Sendable {
-    let browser: String
-    let browserLabel: String
-    let bundleIdentifier: String?
-    let profilePath: String?
-
-    init(browser: String, browserLabel: String, bundleIdentifier: String?, profilePath: String? = nil) {
-        self.browser = browser
-        self.browserLabel = browserLabel
-        self.bundleIdentifier = bundleIdentifier
-        self.profilePath = profilePath
-    }
-
-    var id: String { "\(browser)|\(profilePath ?? "default")" }
-}
-
-struct BrowserAccountDiscoveryResponse: Codable, Hashable, Identifiable, Sendable {
-    let id: String
-    let displayName: String
-    let identifier: String?
-    let avatarUrl: String?
-    let sources: [BrowserAccountSource]
-
-    var avatarURL: URL? {
-        guard let avatarUrl else { return nil }
-        return URL(string: avatarUrl)
-    }
-}
-
 struct PlaylistOptionsResponse: Codable, Sendable {
     let options: [PlaylistOption]
 }
