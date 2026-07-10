@@ -68,5 +68,10 @@ Current implementation notes:
 - comments/recommendations composition around the stage
 - end-state, loading-state, and error overlays
 
+When playback originates from a playlist, the secondary panel owns a fixed-height,
+independently scrolling queue. Its header remains pinned, the current item is centered
+when the queue opens or advances, and macOS 27 reorder containers send one neighbor-aware
+`browse/edit_playlist` mutation through the backend.
+
 Keep coordinator logic in `PlayerPlaybackCoordinator` when a change affects playback state.
 Keep `PlayerView.swift` focused on presentation and wiring.

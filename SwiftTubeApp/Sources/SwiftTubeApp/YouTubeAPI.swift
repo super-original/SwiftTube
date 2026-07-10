@@ -247,7 +247,7 @@ final class YouTubeAPI: @unchecked Sendable {
     func editPlaylist(playlistID: String, actions: [JSONDictionary]) async throws -> JSONDictionary {
         try await request(
             profile: .web,
-            endpoint: "playlist/edit",
+            endpoint: "browse/edit_playlist",
             body: [
                 "playlistId": playlistID,
                 "actions": actions,

@@ -1037,98 +1037,51 @@ private extension PlayerScreen {
     }
 
     func playlistQueueColumn(feed: PlaylistFeed) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                if let playlist = activePlaylistSummary {
-                    PlaylistSidebarArtwork(playlist: playlist)
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            PlaylistQueueHeader(
+                playlist: activePlaylistSummary,
+                title: feed.title,
+                details: navigation.activePlaylistDetailsLine,
+                position: activePlaylistPositionLine,
+                loopMode: navigation.activePlaylistLoopMode,
+                shuffleEnabled: navigation.activePlaylistShuffleEnabled,
+                onCycleLoop: navigation.cycleActivePlaylistLoopMode,
+                onToggleShuffle: navigation.toggleActivePlaylistShuffle
+            )
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(feed.title)
-                        .font(.title3.weight(.bold))
+            Divider()
+                .padding(.vertical, 12)
 
-                    if !navigation.activePlaylistDetailsLine.isEmpty {
-                        Text(navigation.activePlaylistDetailsLine)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Text(activePlaylistPositionLine)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary.opacity(0.88))
-                }
-
-                Spacer(minLength: 12)
+            PlaylistQueueList(
+                items: navigation.activePlaylistItems,
+                currentVideoID: navigation.activePlaylistCurrentVideoID,
+                onOpen: { video in navigation.showVideo(video) },
+                onReorder: moveQueueVideo(withID:toInsertionIndex:)
+            ) { queueVideo in
+                VideoContextMenuContent(
+                    video: queueVideo,
+                    userPlaylists: movablePlaylistsForQueue(),
+                    onPlay: { navigation.showVideo(queueVideo) },
+                    onPlayFromHere: { navigation.showVideo(queueVideo) },
+                    onAddToWatchLater: navigation.activePlaylistReference?.kind == .watchLater ? nil : queueAddToWatchLater(videoID: queueVideo.id),
+                    onSaveToPlaylist: { playlistID in
+                        queueSaveToPlaylist(videoID: queueVideo.id, playlistID: playlistID)
+                    },
+                    onMoveToPlaylist: queueVideo.playlistCanRemove ? { playlistID in
+                        moveQueueVideo(queueVideo, to: playlistID)
+                    } : nil,
+                    onMoveToWatchLater: navigation.activePlaylistReference?.kind == .watchLater || !queueVideo.playlistCanRemove ? nil : {
+                        moveQueueVideoToWatchLater(queueVideo)
+                    },
+                    onRemoveFromCurrentPlaylist: queueVideo.playlistCanRemove ? { removeQueueVideo(queueVideo) } : nil,
+                    onMoveToTop: queueVideo.playlistCanMoveToTop ? { moveQueueVideo(queueVideo, position: "top") } : nil,
+                    onMoveToBottom: queueVideo.playlistCanMoveToBottom ? { moveQueueVideo(queueVideo, position: "bottom") } : nil,
+                    onRemoveFromWatchHistory: nil
+                )
             }
-
-            HStack(spacing: 10) {
-                Button {
-                    navigation.cycleActivePlaylistLoopMode()
-                } label: {
-                    Label(navigation.activePlaylistLoopMode.title, systemImage: navigation.activePlaylistLoopMode.symbolName)
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    navigation.toggleActivePlaylistShuffle()
-                } label: {
-                    Label(
-                        navigation.activePlaylistShuffleEnabled ? "Shuffle On" : "Shuffle Off",
-                        systemImage: "shuffle"
-                    )
-                }
-                .buttonStyle(.bordered)
-                .tint(navigation.activePlaylistShuffleEnabled ? .blue : nil)
-            }
-
-            LazyVStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(navigation.activePlaylistItems.enumerated()), id: \.element.playlistIdentity) { index, queueVideo in
-                    PlaylistQueueDropZone {
-                        moveQueueVideo(withID: $0, toInsertionIndex: index)
-                    }
-
-                    Button {
-                        navigation.showVideo(queueVideo)
-                    } label: {
-                        PlaylistQueueRailRow(
-                            video: queueVideo,
-                            index: index + 1,
-                            isCurrent: navigation.activePlaylistCurrentVideoID == queueVideo.id,
-                            canReorder: canReorderQueueVideo(queueVideo)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .draggable(queueVideo.playlistIdentity)
-                    .contextMenu {
-                        VideoContextMenuContent(
-                            video: queueVideo,
-                            userPlaylists: movablePlaylistsForQueue(),
-                            onPlay: { navigation.showVideo(queueVideo) },
-                            onPlayFromHere: { navigation.showVideo(queueVideo) },
-                            onAddToWatchLater: navigation.activePlaylistReference?.kind == .watchLater ? nil : queueAddToWatchLater(videoID: queueVideo.id),
-                            onSaveToPlaylist: { playlistID in
-                                queueSaveToPlaylist(videoID: queueVideo.id, playlistID: playlistID)
-                            },
-                            onMoveToPlaylist: queueVideo.playlistCanRemove ? { playlistID in
-                                moveQueueVideo(queueVideo, to: playlistID)
-                            } : nil,
-                            onMoveToWatchLater: navigation.activePlaylistReference?.kind == .watchLater || !queueVideo.playlistCanRemove ? nil : {
-                                moveQueueVideoToWatchLater(queueVideo)
-                            },
-                            onRemoveFromCurrentPlaylist: queueVideo.playlistCanRemove ? { removeQueueVideo(queueVideo) } : nil,
-                            onMoveToTop: queueVideo.playlistCanMoveToTop ? { moveQueueVideo(queueVideo, position: "top") } : nil,
-                            onMoveToBottom: queueVideo.playlistCanMoveToBottom ? { moveQueueVideo(queueVideo, position: "bottom") } : nil,
-                            onRemoveFromWatchHistory: nil
-                        )
-                    }
-                }
-
-                PlaylistQueueDropZone {
-                    moveQueueVideo(withID: $0, toInsertionIndex: navigation.activePlaylistItems.count)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(maxHeight: .infinity, alignment: .top)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     func handlePlaybackEnded() {
@@ -1795,8 +1748,15 @@ private struct WatchSecondaryPanel: View {
         case .playlist:
             if let playlistContent {
                 wrappedPanelContent(for: .playlist) {
-                    scrollContainerIfNeeded(for: playlistContent)
+                    playlistContent
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: isImmersive ? 0 : standardLiveChatHeight,
+                    maxHeight: isImmersive ? .infinity : standardLiveChatHeight,
+                    alignment: .topLeading
+                )
             } else {
                 unavailableText("Playlist queue isn’t available right now.")
             }
@@ -3741,6 +3701,144 @@ private struct CompactVideoStatPill: View {
     }
 }
 
+private struct PlaylistQueueHeader: View {
+    let playlist: PlaylistSummary?
+    let title: String
+    let details: String
+    let position: String
+    let loopMode: PlaylistLoopMode
+    let shuffleEnabled: Bool
+    let onCycleLoop: () -> Void
+    let onToggleShuffle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if let playlist {
+                PlaylistSidebarArtwork(playlist: playlist)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+
+                Text(position)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                if !details.isEmpty {
+                    Text(details)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 6)
+
+            HStack(spacing: 6) {
+                PlaylistQueueHeaderButton(
+                    symbol: loopMode.symbolName,
+                    help: loopMode.title,
+                    isActive: loopMode != .off,
+                    action: onCycleLoop
+                )
+                PlaylistQueueHeaderButton(
+                    symbol: "shuffle",
+                    help: shuffleEnabled ? "Shuffle On" : "Shuffle Off",
+                    isActive: shuffleEnabled,
+                    action: onToggleShuffle
+                )
+            }
+        }
+    }
+}
+
+private struct PlaylistQueueHeaderButton: View {
+    let symbol: String
+    let help: String
+    let isActive: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 30, height: 30)
+                .foregroundStyle(isActive ? Color.accentColor : .secondary)
+                .background(
+                    isActive ? Color.accentColor.opacity(0.14) : Color.primary.opacity(0.05),
+                    in: Circle()
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+private struct PlaylistQueueList<ContextMenuContent: View>: View {
+    let items: [VideoItem]
+    let currentVideoID: String?
+    let onOpen: (VideoItem) -> Void
+    let onReorder: (String, Int) -> Bool
+    @ViewBuilder let contextMenuContent: (VideoItem) -> ContextMenuContent
+
+    private var currentPlaylistIdentity: String? {
+        guard let currentVideoID else { return nil }
+        return items.first(where: { $0.id == currentVideoID })?.playlistIdentity
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach(items, id: \.playlistIdentity) { video in
+                        Button {
+                            onOpen(video)
+                        } label: {
+                            PlaylistQueueRailRow(
+                                video: video,
+                                isCurrent: currentVideoID == video.id,
+                                canReorder: video.playlistSetVideoId != nil
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .id(video.playlistIdentity)
+                        .contextMenu {
+                            contextMenuContent(video)
+                        }
+                    }
+                    .reorderable()
+                }
+                .reorderContainer(for: VideoItem.self, itemID: \.playlistIdentity) { difference in
+                    guard let draggedID = difference.sources.first else { return }
+                    switch difference.destination.position {
+                    case .before(let destinationID):
+                        guard let destinationIndex = items.firstIndex(where: { $0.playlistIdentity == destinationID }) else {
+                            return
+                        }
+                        _ = onReorder(draggedID, destinationIndex)
+                    case .end:
+                        _ = onReorder(draggedID, items.count)
+                    }
+                }
+                .padding(.trailing, 4)
+            }
+            .onAppear {
+                guard let currentPlaylistIdentity else { return }
+                proxy.scrollTo(currentPlaylistIdentity, anchor: .center)
+            }
+            .onChange(of: currentPlaylistIdentity) { _, identity in
+                guard let identity else { return }
+                withAnimation(.smooth(duration: 0.22)) {
+                    proxy.scrollTo(identity, anchor: .center)
+                }
+            }
+        }
+    }
+}
+
 private struct PlaylistSidebarArtwork: View {
     let playlist: PlaylistSummary
 
@@ -3771,10 +3869,10 @@ private struct PlaylistSidebarArtwork: View {
                 )
             }
         }
-        .frame(width: 64, height: 64)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(width: 52, height: 52)
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .stroke(Color.white.opacity(0.06), lineWidth: 1)
         )
     }
@@ -3782,7 +3880,6 @@ private struct PlaylistSidebarArtwork: View {
 
 private struct PlaylistQueueRailRow: View {
     let video: VideoItem
-    let index: Int
     let isCurrent: Bool
     let canReorder: Bool
 
@@ -3798,68 +3895,41 @@ private struct PlaylistQueueRailRow: View {
                     Image(systemName: "play.fill")
                         .font(.caption.weight(.bold))
                 } else {
-                    Text("\(index)")
-                        .font(.callout.monospacedDigit().weight(.semibold))
+                    Text(video.playlistIndexText ?? "")
+                        .font(.caption.monospacedDigit().weight(.semibold))
                 }
             }
             .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
-            .frame(width: 32, height: 85.5, alignment: .center)
+            .frame(width: 24, height: 65, alignment: .center)
 
-            ZStack(alignment: .bottomTrailing) {
-                CachedAsyncImage(url: video.thumbnailURL, maxPixelSize: 480) {
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Color.gray.opacity(0.18))
-                        .overlay(
-                            Image(systemName: "play.rectangle.fill")
-                                .font(.system(size: 18))
-                                .foregroundStyle(.secondary)
-                        )
-                }
-                .frame(width: 152, height: 85.5)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-                .overlay(alignment: .bottom) {
-                    VideoThumbnailProgressBars(progress: video.progress, cornerRadius: 14, isEnabled: !video.isLive)
-                }
-
-                if let duration = video.durationText {
-                    Text(duration)
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.black.opacity(0.74)))
-                        .foregroundStyle(.white)
-                        .padding(6)
-                }
-            }
+            InlineVideoThumbnail(
+                video: video,
+                width: 116,
+                height: 65,
+                cornerRadius: 10,
+                maxPixelSize: 360,
+                placeholderIconSize: 18
+            )
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(video.title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 13.5, weight: .semibold))
                     .lineLimit(2)
 
                 VideoChannelIdentityLine(
                     avatarURL: video.channelAvatarURL,
                     channelID: video.channelId,
                     channel: video.channel,
-                    avatarSize: 18,
-                    font: .system(size: 12.5, weight: .medium),
+                    avatarSize: 16,
+                    font: .system(size: 11.5, weight: .medium),
                     onOpenChannel: nil
                 )
-
-                if !video.tags.isEmpty || video.viewCountText != nil || video.publishedTimeText != nil {
-                    VideoStatsMetadataLine(
-                        tags: video.tags,
-                        viewCountText: video.viewCountText,
-                        publishedTimeText: video.publishedTimeText,
-                        font: .system(size: 12.5, weight: .medium)
-                    )
-                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 4)
-        .padding(.vertical, 8)
+        .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(
@@ -3873,26 +3943,6 @@ private struct PlaylistQueueRailRow: View {
         .onHover { hovering in
             isHovered = hovering
         }
-    }
-}
-
-private struct PlaylistQueueDropZone: View {
-    let onInsert: (String) -> Bool
-    @State private var isTargeted = false
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 999, style: .continuous)
-            .fill(isTargeted ? Color.blue.opacity(0.65) : .clear)
-            .frame(height: isTargeted ? 4 : 10)
-            .padding(.leading, 18)
-            .padding(.trailing, 10)
-            .animation(.easeOut(duration: 0.12), value: isTargeted)
-            .dropDestination(for: String.self) { items, _ in
-                guard let draggedID = items.first else { return false }
-                return onInsert(draggedID)
-            } isTargeted: { hovering in
-                isTargeted = hovering
-            }
     }
 }
 

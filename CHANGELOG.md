@@ -8,6 +8,12 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.41
+
+- Fixed playlist reordering to use YouTube's `browse/edit_playlist` InnerTube route instead of the nonexistent `playlist/edit` route that returned 404.
+- Rebuilt the in-player playlist panel with a pinned compact header, independent scrolling, automatic current-video centering, shared thumbnail loading, and native macOS 27 reordering.
+- Replaced the dated Loop and Shuffle text buttons with compact stateful controls and tightened queue rows so more of the playlist remains visible.
+
 ## 0.15.40
 
 - Replaced the onboarding Theme card grid with a live SwiftTube window preview and compact palette choices.
