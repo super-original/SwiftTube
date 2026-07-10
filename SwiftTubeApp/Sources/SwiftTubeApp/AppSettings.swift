@@ -108,6 +108,17 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
         )
     }
 
+    var windowBackgroundGradient: LinearGradient {
+        let colors = palette.previewColors.map { color in
+            Color(nsColor: color.blended(withFraction: 0.32, of: palette.windowBackgroundColor) ?? color)
+        }
+        return LinearGradient(
+            colors: colors.isEmpty ? [windowBackgroundColor] : colors,
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
     private var palette: Palette {
         switch self {
         case .dark:
@@ -799,7 +810,8 @@ struct ThemeColorComponents: Codable, Equatable, Identifiable {
 
 struct CustomThemeConfiguration: Codable, Equatable {
     var colors: [ThemeColorComponents]
-    var direction: CustomThemeDirection
+    var angleDegrees: Double
+    var intensity: Double
     var usesDarkText: Bool
 
     static let defaultValue = CustomThemeConfiguration(
@@ -807,9 +819,83 @@ struct CustomThemeConfiguration: Codable, Equatable {
             ThemeColorComponents(red: 0.04, green: 0.12, blue: 0.28),
             ThemeColorComponents(red: 0.10, green: 0.42, blue: 0.82)
         ],
-        direction: .diagonalDown,
+        angleDegrees: 45,
+        intensity: 0.72,
         usesDarkText: false
     )
+
+    var gradientPoints: (start: UnitPoint, end: UnitPoint) {
+        let radians = angleDegrees * .pi / 180
+        let x = cos(radians) * 0.5
+        let y = sin(radians) * 0.5
+        return (
+            UnitPoint(x: 0.5 - x, y: 0.5 - y),
+            UnitPoint(x: 0.5 + x, y: 0.5 + y)
+        )
+    }
+
+    var resolvedColors: [Color] {
+        let clampedIntensity = min(max(intensity, 0), 1)
+        let base = usesDarkText
+            ? ThemeColorComponents(red: 0.94, green: 0.95, blue: 0.97)
+            : ThemeColorComponents(red: 0.055, green: 0.06, blue: 0.075)
+        let safeColors = colors.isEmpty ? Self.defaultValue.colors : colors
+        return safeColors.map { color in
+            Color(
+                red: base.red + (color.red - base.red) * clampedIntensity,
+                green: base.green + (color.green - base.green) * clampedIntensity,
+                blue: base.blue + (color.blue - base.blue) * clampedIntensity
+            )
+        }
+    }
+
+    init(
+        colors: [ThemeColorComponents],
+        angleDegrees: Double,
+        intensity: Double,
+        usesDarkText: Bool
+    ) {
+        self.colors = Array(colors.prefix(5))
+        self.angleDegrees = angleDegrees.truncatingRemainder(dividingBy: 360)
+        self.intensity = min(max(intensity, 0), 1)
+        self.usesDarkText = usesDarkText
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case colors
+        case direction
+        case angleDegrees
+        case intensity
+        case usesDarkText
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedColors = try container.decodeIfPresent([ThemeColorComponents].self, forKey: .colors) ?? []
+        colors = Array((decodedColors.isEmpty ? Self.defaultValue.colors : decodedColors).prefix(5))
+        if let angle = try container.decodeIfPresent(Double.self, forKey: .angleDegrees) {
+            angleDegrees = angle
+        } else {
+            let legacyDirection = try container.decodeIfPresent(CustomThemeDirection.self, forKey: .direction)
+            switch legacyDirection {
+            case .topToBottom: angleDegrees = 90
+            case .leftToRight: angleDegrees = 0
+            case .diagonalDown: angleDegrees = 45
+            case .diagonalUp: angleDegrees = 315
+            case nil: angleDegrees = 45
+            }
+        }
+        intensity = min(max(try container.decodeIfPresent(Double.self, forKey: .intensity) ?? 0.72, 0), 1)
+        usesDarkText = try container.decodeIfPresent(Bool.self, forKey: .usesDarkText) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(colors, forKey: .colors)
+        try container.encode(angleDegrees, forKey: .angleDegrees)
+        try container.encode(intensity, forKey: .intensity)
+        try container.encode(usesDarkText, forKey: .usesDarkText)
+    }
 }
 
 final class AppSettings: ObservableObject {
@@ -1160,18 +1246,18 @@ final class AppSettings: ObservableObject {
     }
 
     var windowBackgroundStyle: AnyShapeStyle {
-        let points = customThemeConfiguration.direction.points
         if usesCustomTheme {
+            let points = customThemeConfiguration.gradientPoints
             return AnyShapeStyle(
                 LinearGradient(
-                    colors: customThemeConfiguration.colors.map(\.color),
+                    colors: customThemeConfiguration.resolvedColors,
                     startPoint: points.start,
                     endPoint: points.end
                 )
             )
         }
         if AppAppearanceMode.gradientThemes.contains(appearanceMode) {
-            return AnyShapeStyle(appearanceMode.previewGradient)
+            return AnyShapeStyle(appearanceMode.windowBackgroundGradient)
         }
         return AnyShapeStyle(appearanceMode.windowBackgroundColor)
     }

@@ -64,14 +64,20 @@ struct SettingsView: View {
     @State private var selection: SettingsPane = .general
 
     var body: some View {
-        NavigationSplitView {
-            SettingsNativeSidebar(selection: $selection)
-        } detail: {
-            SettingsDetailHost(selection: $selection)
+        ZStack {
+            Rectangle()
+                .fill(settings.windowBackgroundStyle)
+                .ignoresSafeArea()
+
+            NavigationSplitView {
+                SettingsNativeSidebar(selection: $selection)
+            } detail: {
+                SettingsDetailHost(selection: $selection)
+            }
+            .navigationSplitViewStyle(.balanced)
+            .removeSidebarToggle()
+            .navigationTitle(selection.title)
         }
-        .navigationSplitViewStyle(.balanced)
-        .removeSidebarToggle()
-        .navigationTitle(selection.title)
         .frame(
             minWidth: SettingsWindowSupport.minSize.width,
             idealWidth: 980,
@@ -288,66 +294,104 @@ private struct ThemesPane: View {
                 }
             }
 
-            SettingsCard(title: "Custom", icon: "slider.horizontal.3") {
-                VStack(alignment: .leading, spacing: 14) {
-                    NativeToggleRow(title: "Use custom theme", isOn: $settings.usesCustomTheme)
-                    SettingsDivider()
+            CustomThemeEditor(settings: settings)
+        }
+    }
+}
 
-                    HStack(spacing: 12) {
-                        ForEach(settings.customThemeConfiguration.colors.indices, id: \.self) { index in
-                            ColorPicker(
-                                "Color \(index + 1)",
-                                selection: customColorBinding(at: index),
-                                supportsOpacity: false
+private struct CustomThemeEditor: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        SettingsCard(title: "Custom Theme", icon: "slider.horizontal.3") {
+            VStack(alignment: .leading, spacing: 16) {
+                CustomThemePreview(configuration: settings.customThemeConfiguration)
+
+                NativeToggleRow(title: "Use custom theme", isOn: $settings.usesCustomTheme)
+                SettingsDivider()
+
+                HStack {
+                    Text("Colors")
+                        .font(.headline)
+                    Spacer()
+                    Button("Add Color", systemImage: "plus") {
+                        addColor()
+                    }
+                    .disabled(settings.customThemeConfiguration.colors.count >= 5)
+                }
+
+                VStack(spacing: 8) {
+                    ForEach(0..<5, id: \.self) { index in
+                        if settings.customThemeConfiguration.colors.indices.contains(index) {
+                            CustomThemeColorRow(
+                                number: index + 1,
+                                color: customColorBinding(at: index),
+                                canRemove: settings.customThemeConfiguration.colors.count > 1,
+                                onRemove: { removeColor(at: index) }
                             )
-                            .labelsHidden()
                         }
-
-                        Spacer()
-
-                        Stepper(
-                            "\(settings.customThemeConfiguration.colors.count) color\(settings.customThemeConfiguration.colors.count == 1 ? "" : "s")",
-                            value: colorCountBinding,
-                            in: 1...3
-                        )
                     }
+                }
 
-                    NativePickerRow(title: "Direction") {
-                        Picker("Direction", selection: customDirectionBinding) {
-                            ForEach(CustomThemeDirection.allCases) { direction in
-                                Text(direction.title).tag(direction)
-                            }
-                        }
-                        .labelsHidden()
+                SettingsDivider()
+
+                ThemeSliderRow(
+                    title: "Angle",
+                    valueText: "\(Int(settings.customThemeConfiguration.angleDegrees.rounded()))°"
+                ) {
+                    Slider(value: customAngleBinding, in: 0...359, step: 1)
                         .disabled(settings.customThemeConfiguration.colors.count == 1)
-                    }
+                }
 
-                    NativeToggleRow(title: "Use dark interface text", isOn: customDarkTextBinding)
+                ThemeSliderRow(
+                    title: "Intensity",
+                    valueText: settings.customThemeConfiguration.intensity.formatted(.percent.precision(.fractionLength(0)))
+                ) {
+                    Slider(value: customIntensityBinding, in: 0.2...1, step: 0.01)
+                }
+
+                NativePickerRow(title: "Interface") {
+                    Picker("Interface", selection: customDarkTextBinding) {
+                        Text("Light text").tag(false)
+                        Text("Dark text").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 190)
                 }
             }
         }
     }
 
-    private var colorCountBinding: Binding<Int> {
-        Binding(
-            get: { settings.customThemeConfiguration.colors.count },
-            set: { count in
-                var configuration = settings.customThemeConfiguration
-                while configuration.colors.count < count {
-                    configuration.colors.append(configuration.colors.last ?? .init(red: 0.1, green: 0.42, blue: 0.82))
-                }
-                configuration.colors = Array(configuration.colors.prefix(count))
-                settings.customThemeConfiguration = configuration
-                settings.usesCustomTheme = true
-            }
-        )
+    private func addColor() {
+        var configuration = settings.customThemeConfiguration
+        guard configuration.colors.count < 5 else { return }
+        let previous = configuration.colors.last ?? .init(red: 0.1, green: 0.42, blue: 0.82)
+        configuration.colors.append(previous)
+        settings.customThemeConfiguration = configuration
+        settings.usesCustomTheme = true
+    }
+
+    private func removeColor(at index: Int) {
+        var configuration = settings.customThemeConfiguration
+        guard configuration.colors.count > 1,
+              configuration.colors.indices.contains(index) else { return }
+        configuration.colors.remove(at: index)
+        settings.customThemeConfiguration = configuration
+        settings.usesCustomTheme = true
     }
 
     private func customColorBinding(at index: Int) -> Binding<Color> {
         Binding(
-            get: { settings.customThemeConfiguration.colors[index].color },
+            get: {
+                guard settings.customThemeConfiguration.colors.indices.contains(index) else {
+                    return .clear
+                }
+                return settings.customThemeConfiguration.colors[index].color
+            },
             set: { color in
                 var configuration = settings.customThemeConfiguration
+                guard configuration.colors.indices.contains(index) else { return }
                 configuration.colors[index] = ThemeColorComponents(color: color)
                 settings.customThemeConfiguration = configuration
                 settings.usesCustomTheme = true
@@ -355,12 +399,24 @@ private struct ThemesPane: View {
         )
     }
 
-    private var customDirectionBinding: Binding<CustomThemeDirection> {
+    private var customAngleBinding: Binding<Double> {
         Binding(
-            get: { settings.customThemeConfiguration.direction },
-            set: { direction in
+            get: { settings.customThemeConfiguration.angleDegrees },
+            set: { angle in
                 var configuration = settings.customThemeConfiguration
-                configuration.direction = direction
+                configuration.angleDegrees = angle
+                settings.customThemeConfiguration = configuration
+                settings.usesCustomTheme = true
+            }
+        )
+    }
+
+    private var customIntensityBinding: Binding<Double> {
+        Binding(
+            get: { settings.customThemeConfiguration.intensity },
+            set: { intensity in
+                var configuration = settings.customThemeConfiguration
+                configuration.intensity = intensity
                 settings.customThemeConfiguration = configuration
                 settings.usesCustomTheme = true
             }
@@ -377,6 +433,81 @@ private struct ThemesPane: View {
                 settings.usesCustomTheme = true
             }
         )
+    }
+}
+
+private struct CustomThemePreview: View {
+    let configuration: CustomThemeConfiguration
+
+    var body: some View {
+        let points = configuration.gradientPoints
+        ZStack(alignment: .bottomLeading) {
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: configuration.resolvedColors,
+                        startPoint: points.start,
+                        endPoint: points.end
+                    )
+                )
+
+            HStack(spacing: 7) {
+                Circle()
+                    .frame(width: 9, height: 9)
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .frame(width: 74, height: 8)
+            }
+            .foregroundStyle(configuration.usesDarkText ? Color.black.opacity(0.72) : Color.white.opacity(0.78))
+            .padding(14)
+        }
+        .frame(height: 112)
+        .overlay {
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+        }
+    }
+}
+
+private struct CustomThemeColorRow: View {
+    let number: Int
+    @Binding var color: Color
+    let canRemove: Bool
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ColorPicker("Color \(number)", selection: $color, supportsOpacity: false)
+            Spacer()
+            Button("Remove Color", systemImage: "minus") {
+                onRemove()
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .disabled(!canRemove)
+            .help("Remove Color")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+private struct ThemeSliderRow<Control: View>: View {
+    let title: String
+    let valueText: String
+    @ViewBuilder let control: Control
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(valueText)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            control
+        }
     }
 }
 

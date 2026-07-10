@@ -8,6 +8,13 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.39
+
+- Rebuilt theme rendering around one normalized background pipeline shared by the main and Settings windows, reducing the visual intensity gap between solid and gradient presets.
+- Replaced the custom theme controls with a live preview, one-to-five guarded color rows, safe add/remove actions, a 0–359° angle slider, intensity control, and explicit interface contrast.
+- Migrated existing custom themes without losing their colors or legacy direction, and removed the indexed color binding that could crash while reducing the color count.
+- Rebuilt onboarding as a compact desktop setup panel on the standard Dark background, with persistent progress and navigation, smaller controls, and consistent cards across every stage.
+
 ## 0.15.38
 
 - Removed browser account scanning and cookie-database import completely; the secure embedded Google session is now the single sign-in route in both the account sheet and onboarding.

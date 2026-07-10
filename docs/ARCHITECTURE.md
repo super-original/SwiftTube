@@ -26,6 +26,12 @@ Responsibilities:
 - provide shared environment objects
 - own top-level UI customization such as theme selection and toolbar/search behavior
 
+Theme rendering is resolved by `AppSettings` into one window background style used by both
+the main and Settings windows. Custom themes persist one to five colors, an arbitrary
+gradient angle, intensity, and interface contrast; older direction-based configurations
+are migrated during decoding. Onboarding intentionally uses the standard Dark background
+instead of the selected theme so its setup surface remains stable and legible.
+
 ## In-process backend
 
 Important files:

@@ -22,111 +22,62 @@ struct OnboardingView: View {
     @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var authSession: AuthSessionModel
     @State private var stage: OnboardingStage = .welcome
-    @State private var isHoveringOverProgressView = false
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                AnimatedOnboardingBackground()
+        ZStack {
+            AppAppearanceMode.dark.windowBackgroundColor
+                .ignoresSafeArea()
 
-                VStack {
-                    progressView
-                        .padding(.top)
-                        .onHover { hovering in
-                            withAnimation(.easeOut(duration: 0.16)) {
-                                isHoveringOverProgressView = hovering
-                            }
-                        }
+            VStack(spacing: 0) {
+                OnboardingHeader(stage: stage)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 18)
 
-                    if isHoveringOverProgressView {
-                        Text(progressText)
-                            .textCase(.uppercase)
-                            .foregroundStyle(.secondary)
-                            .font(.footnote)
-                    }
+                Divider()
+
+                ScrollView {
+                    OnboardingStageContent(
+                        stage: stage,
+                        settings: settings,
+                        continueWithoutAccount: { stepStage() }
+                    )
+                    .id(stage)
+                    .padding(28)
+                    .frame(maxWidth: .infinity, minHeight: 390, alignment: .center)
+                    .transition(.opacity.combined(with: .scale(scale: 0.99)))
                 }
-                .frame(maxHeight: .infinity, alignment: .top)
 
-                VStack(spacing: 26) {
-                    stageContent
-                        .frame(width: min(geometry.size.width * 0.75, 860))
-                        .padding(.horizontal)
+                Divider()
 
-                    if shouldShowPrimaryButton {
-                        Button(stage == .finished ? "Start Watching" : "Next", systemImage: stage == .finished ? "play.fill" : "arrow.right") {
-                            if stage == .finished {
-                                withAnimation {
-                                    settings.onboardingCompleted = true
-                                }
-                            } else {
-                                stepStage()
-                            }
-                        }
-                        .clipShape(.capsule)
-                        .controlSize(.large)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-
+                OnboardingFooter(
+                    stage: stage,
+                    canGoBack: stage != .welcome,
+                    showsPrimaryAction: shouldShowPrimaryButton,
+                    onBack: { stepStage(by: -1) },
+                    onContinue: continueOnboarding
+                )
+                .padding(.horizontal, 24)
+                .padding(.vertical, 16)
             }
-            .foregroundStyle(.primary)
-            .preferredColorScheme(.dark)
-        }
-    }
-
-    private var progressView: some View {
-        HStack(spacing: 9) {
-            ForEach(OnboardingStage.allCases) { item in
-                if stage > item {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                } else if stage == item {
-                    Image(systemName: "circle")
-                        .symbolVariant(.fill)
-                        .foregroundStyle(BrandAssets.swiftTubeBlue)
-                    Text(item.rawValue)
-                        .font(.footnote.weight(.semibold))
-                } else {
-                    Image(systemName: "circle")
-                        .foregroundStyle(.secondary)
-                }
+            .frame(maxWidth: 820, maxHeight: 610)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
             }
+            .padding(28)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: Capsule())
+        .foregroundStyle(.primary)
+        .preferredColorScheme(.dark)
     }
 
-    private var progressText: String {
-        let stages = OnboardingStage.allCases
-        guard let index = stages.firstIndex(of: stage), stages.count > 1 else { return "0% complete" }
-        let fraction = Double(index) / Double(stages.count - 1)
-        return "\(fraction.formatted(.percent.precision(.fractionLength(0)))) complete"
-    }
-
-    @ViewBuilder
-    private var stageContent: some View {
-        switch stage {
-        case .welcome:
-            WelcomeStage()
-        case .theme:
-            ThemeStage(selection: $settings.appearanceMode)
-        case .sponsorBlock:
-            SponsorBlockStage(sponsorBlockEnabled: $settings.sponsorBlockEnabled)
-        case .controls:
-            ControlsStage(controlLayout: $settings.playerControlLayout)
-        case .layout:
-            LayoutStage(selection: $settings.browseVideoGridPreset)
-        case .account:
-            AccountStage(
-                continueWithoutAccount: {
-                    stepStage()
-                }
-            )
-        case .privacy:
-            PrivacyStage(sendWatchProgressToYouTube: $settings.sendWatchProgressToYouTube)
-        case .finished:
-            FinishedStage()
+    private func continueOnboarding() {
+        if stage == .finished {
+            withAnimation(.easeOut(duration: 0.2)) {
+                settings.onboardingCompleted = true
+            }
+        } else {
+            stepStage()
         }
     }
 
@@ -147,50 +98,129 @@ struct OnboardingView: View {
     }
 }
 
-private struct AnimatedOnboardingBackground: View {
+private struct OnboardingHeader: View {
+    let stage: OnboardingStage
+
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate
-            LinearGradient(
-                colors: [
-                    Color(red: 0.16, green: 0.30, blue: 0.38),
-                    Color(red: 0.10, green: 0.16, blue: 0.27),
-                    Color(red: 0.05, green: 0.07, blue: 0.12)
-                ],
-                startPoint: UnitPoint(
-                    x: 0.12 + 0.06 * sin(phase / 5),
-                    y: 0.05
-                ),
-                endPoint: UnitPoint(
-                    x: 0.88,
-                    y: 0.95 + 0.05 * cos(phase / 6)
-                )
-            )
-            .overlay {
-                Color.black.opacity(0.12)
+        HStack(spacing: 14) {
+            if let logo = BrandAssets.logo {
+                Image(nsImage: logo)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 28, height: 28)
             }
-            .ignoresSafeArea()
+
+            Text("SwiftTube")
+                .font(.headline)
+
+            Spacer()
+
+            OnboardingProgressStrip(stage: stage)
+        }
+    }
+}
+
+private struct OnboardingProgressStrip: View {
+    let stage: OnboardingStage
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(OnboardingStage.allCases) { item in
+                Capsule()
+                    .fill(item <= stage ? BrandAssets.swiftTubeBlue : Color.secondary.opacity(0.24))
+                    .frame(width: item == stage ? 24 : 10, height: 5)
+            }
+
+            Text(stage.rawValue)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 78, alignment: .trailing)
+        }
+        .animation(.smooth(duration: 0.22), value: stage)
+    }
+}
+
+private struct OnboardingStageContent: View {
+    let stage: OnboardingStage
+    @ObservedObject var settings: AppSettings
+    let continueWithoutAccount: () -> Void
+
+    var body: some View {
+        VStack {
+            switch stage {
+            case .welcome:
+                WelcomeStage()
+            case .theme:
+                ThemeStage(
+                    selection: $settings.appearanceMode,
+                    usesCustomTheme: $settings.usesCustomTheme
+                )
+            case .sponsorBlock:
+                SponsorBlockStage(sponsorBlockEnabled: $settings.sponsorBlockEnabled)
+            case .controls:
+                ControlsStage(controlLayout: $settings.playerControlLayout)
+            case .layout:
+                LayoutStage(selection: $settings.browseVideoGridPreset)
+            case .account:
+                AccountStage(continueWithoutAccount: continueWithoutAccount)
+            case .privacy:
+                PrivacyStage(sendWatchProgressToYouTube: $settings.sendWatchProgressToYouTube)
+            case .finished:
+                FinishedStage()
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private struct OnboardingFooter: View {
+    let stage: OnboardingStage
+    let canGoBack: Bool
+    let showsPrimaryAction: Bool
+    let onBack: () -> Void
+    let onContinue: () -> Void
+
+    var body: some View {
+        HStack {
+            Button("Back", systemImage: "chevron.left", action: onBack)
+                .disabled(!canGoBack)
+
+            Spacer()
+
+            if showsPrimaryAction {
+                Button(
+                    stage == .finished ? "Start Watching" : "Continue",
+                    systemImage: stage == .finished ? "play.fill" : "arrow.right",
+                    action: onContinue
+                )
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
         }
     }
 }
 
 private struct WelcomeStage: View {
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 12) {
             if let logo = BrandAssets.logo {
                 Image(nsImage: logo)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 128, height: 92)
+                    .frame(width: 76, height: 58)
             } else {
                 Image(nsImage: NSApp.applicationIconImage)
                     .resizable()
-                    .frame(width: 82, height: 82)
+                    .frame(width: 58, height: 58)
             }
 
             Text("SwiftTube")
-                .font(.system(size: 58, weight: .bold))
+                .font(.largeTitle.weight(.bold))
                 .foregroundStyle(.white)
+
+            Text("Set up playback, appearance, and YouTube access.")
+                .font(.body)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -311,6 +341,7 @@ private struct OnboardingDependencyChoice: View {
 
 private struct ThemeStage: View {
     @Binding var selection: AppAppearanceMode
+    @Binding var usesCustomTheme: Bool
 
     private let themes: [AppAppearanceMode] = [
         .dark,
@@ -329,6 +360,7 @@ private struct ThemeStage: View {
                 ForEach(themes) { theme in
                     ThemePreviewButton(theme: theme, isSelected: selection == theme) {
                         selection = theme
+                        usesCustomTheme = false
                     }
                 }
             }
@@ -345,7 +377,7 @@ private struct ThemePreviewButton: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 12) {
                 ZStack(alignment: .bottomLeading) {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(theme.previewGradient)
 
                     HStack(spacing: 6) {
@@ -356,9 +388,9 @@ private struct ThemePreviewButton: View {
                             .fill(Color.white.opacity(0.55))
                             .frame(width: 58, height: 8)
                     }
-                    .padding(12)
+                    .padding(10)
                 }
-                .frame(height: 96)
+                .frame(height: 66)
 
                 HStack {
                     Text(theme.title)
@@ -368,10 +400,10 @@ private struct ThemePreviewButton: View {
                         .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
                 }
             }
-            .padding(12)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .padding(10)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(isSelected ? BrandAssets.swiftTubeBlue.opacity(0.8) : Color.white.opacity(0.08), lineWidth: 1.5)
             )
         }
@@ -386,8 +418,8 @@ private struct SponsorBlockStage: View {
         VStack(alignment: .leading, spacing: 22) {
             stageTitle("SponsorBlock")
 
-            Text("SponsorBlock can detect, show, and skip unnecessary parts of the video such as sponsored segments, self promotion, and more.")
-                .font(.title3.weight(.semibold))
+            Text("Detect, mark, and skip sponsored segments and other interruptions.")
+                .font(.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -433,17 +465,17 @@ private struct SponsorBlockModeCard: View {
             HStack(spacing: 14) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
-                    .font(.title3.weight(.semibold))
+                    .font(.body.weight(.semibold))
 
                 Text(title)
-                    .font(.title3.weight(.bold))
+                    .font(.body.weight(.semibold))
                 Spacer()
             }
-            .padding(18)
+            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(isSelected ? BrandAssets.swiftTubeBlue.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1.5)
             )
         }
@@ -472,11 +504,11 @@ private struct ControlLayoutCard: View {
 
                 OnboardingPlayerControlsPreview(layout: layout)
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: 178, alignment: .topLeading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(isSelected ? BrandAssets.swiftTubeBlue.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1.5)
             )
         }
@@ -525,11 +557,11 @@ private struct GridPresetCard: View {
                     .font(.title3.weight(.bold))
                     .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, minHeight: 310, alignment: .topLeading)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(isSelected ? BrandAssets.swiftTubeBlue.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1.5)
             )
         }
@@ -577,25 +609,25 @@ private struct PrivacyChoiceCard: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Image(systemName: systemImage)
-                        .font(.system(size: 24, weight: .semibold))
+                        .font(.system(size: 20, weight: .semibold))
                     Spacer()
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
                 }
 
                 Text(title)
-                    .font(.title2.weight(.bold))
+                    .font(.headline)
 
                 Text(detail)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, minHeight: 190, alignment: .topLeading)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: 140, alignment: .topLeading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(isSelected ? BrandAssets.swiftTubeBlue.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1.5)
             )
         }
@@ -609,17 +641,17 @@ private struct AccountStage: View {
     @State private var isWebSignInPresented = false
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 18) {
             VStack(spacing: 8) {
                 Image(systemName: "person.crop.circle.badge.plus")
-                    .font(.system(size: 58, weight: .light))
+                    .font(.system(size: 36, weight: .light))
                     .foregroundStyle(BrandAssets.swiftTubeBlue)
 
                 Text("Connect YouTube")
-                    .font(.system(size: 38, weight: .bold))
+                    .font(.title.weight(.bold))
 
                 Text("Sign in with Google for subscriptions, playlists, history, and personalized recommendations.")
-                    .font(.title3)
+                    .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 560)
@@ -636,7 +668,7 @@ private struct AccountStage: View {
                     Label("Sign in with Google", systemImage: "person.crop.circle.badge.plus")
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.extraLarge)
+                .controlSize(.large)
                 .disabled(authSession.isWorking)
 
                 Button("Continue without an account", action: continueWithoutAccount)
@@ -663,42 +695,42 @@ private struct SignedInAccountCard: View {
                 CachedAsyncImage(url: avatarURL, maxPixelSize: 180) {
                     accountFallbackIcon
                 }
-                .frame(width: 96, height: 96)
+                .frame(width: 64, height: 64)
                 .clipShape(Circle())
                 .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 1))
             } else {
                 accountFallbackIcon
-                    .frame(width: 96, height: 96)
+                    .frame(width: 64, height: 64)
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Signed in to \(status.displayName?.nilIfBlank ?? status.browserLabel ?? "YouTube")")
-                    .font(.title2.weight(.bold))
+                    .font(.headline)
                     .lineLimit(2)
 
                 if let identifier = status.accountIdentifier {
                     Text(identifier)
-                        .font(.title3)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {
                     Text(status.browserLabel ?? "YouTube")
-                        .font(.title3)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
             }
         }
-        .padding(26)
-        .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 116, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(BrandAssets.swiftTubeBlue.opacity(0.65), lineWidth: 1.5)
         )
     }
 
     private var accountFallbackIcon: some View {
         Image(systemName: "person.crop.circle.badge.checkmark")
-            .font(.system(size: 64, weight: .semibold))
+            .font(.system(size: 44, weight: .semibold))
             .foregroundStyle(BrandAssets.swiftTubeBlue, Color.white.opacity(0.86))
     }
 }
@@ -768,11 +800,11 @@ private struct FinishedStage: View {
     var body: some View {
         VStack(spacing: 18) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 62, weight: .semibold))
+                .font(.system(size: 42, weight: .semibold))
                 .foregroundStyle(BrandAssets.swiftTubeBlue)
 
             Text("Ready")
-                .font(.system(size: 52, weight: .bold))
+                .font(.largeTitle.weight(.bold))
                 .foregroundStyle(.white)
         }
     }
@@ -792,7 +824,7 @@ private struct OnboardingPlayerControlsPreview: View {
             }
         }
         .padding(12)
-        .frame(height: 140, alignment: .bottom)
+        .frame(height: 104, alignment: .bottom)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(Color.black.opacity(0.20))
@@ -919,7 +951,7 @@ private struct SponsorBlockTimelineOverlayPreview: View {
 
 private func stageTitle(_ title: String) -> some View {
     Text(title)
-        .font(.system(size: 52, weight: .bold))
+        .font(.title.weight(.bold))
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, alignment: .leading)
 }
@@ -976,7 +1008,7 @@ private struct GridPreview: View {
             }
             .frame(width: contentWidth, alignment: .leading)
         }
-        .frame(height: 184)
+        .frame(height: 126)
     }
 }
 
