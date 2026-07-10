@@ -62,13 +62,15 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var selection: SettingsPane = .general
-    @Namespace private var settingsScrollTop
 
     var body: some View {
-        NavigationSplitView(columnVisibility: .constant(.all)) {
-            settingsSidebar
-        } detail: {
-            settingsDetail
+        HStack(spacing: 0) {
+            SettingsNavigationRail(selection: $selection)
+                .frame(width: 196)
+
+            Divider()
+
+            SettingsDetailHost(selection: $selection)
         }
         .frame(
             minWidth: SettingsWindowSupport.minSize.width,
@@ -87,72 +89,89 @@ struct SettingsView: View {
             }
         )
     }
+}
 
-    private var settingsSidebar: some View {
-        VStack(spacing: 0) {
-            List(selection: Binding(
-                get: { Optional(selection) },
-                set: {
-                    if let pane = $0 {
-                        selection = pane
-                    }
-                }
-            )) {
-                Section {
-                    ForEach(SettingsPane.appSection) { pane in
-                        SettingsSidebarLabel(pane: pane)
-                            .tag(pane)
-                    }
-                } header: {
-                    Text("SwiftTube")
-                        .font(.system(size: 34, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .padding(.top, 4)
-                        .padding(.bottom, 6)
-                }
-                .collapsible(false)
+private struct SettingsNavigationRail: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @Binding var selection: SettingsPane
 
-                Section("Player") {
-                    ForEach(SettingsPane.playbackSection) { pane in
-                        SettingsSidebarLabel(pane: pane)
-                            .tag(pane)
-                    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 9) {
+                if let logo = BrandAssets.logo {
+                    Image(nsImage: logo)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 26, height: 26)
                 }
-                .collapsible(false)
+                Text("SwiftTube")
+                    .font(.system(size: 20, weight: .bold))
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
 
-                Section("Tools") {
-                    ForEach(SettingsPane.toolsSection) { pane in
-                        SettingsSidebarLabel(pane: pane)
-                            .tag(pane)
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 13) {
+                    SettingsRailSection(title: nil, panes: SettingsPane.appSection, selection: $selection)
+                    SettingsRailSection(title: "Player", panes: SettingsPane.playbackSection, selection: $selection)
+                    SettingsRailSection(title: "Tools", panes: SettingsPane.toolsSection, selection: $selection)
+                    SettingsRailSection(title: "About", panes: SettingsPane.aboutSection, selection: $selection)
                 }
-                .collapsible(false)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 10)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(settings.sidebarBackgroundColor).opacity(0.72))
+    }
+}
 
-                Section("About") {
-                    ForEach(SettingsPane.aboutSection) { pane in
-                        SettingsSidebarLabel(pane: pane)
-                            .tag(pane)
-                    }
-                }
-                .collapsible(false)
+private struct SettingsRailSection: View {
+    let title: String?
+    let panes: [SettingsPane]
+    @Binding var selection: SettingsPane
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if let title {
+                Text(title.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 9)
+                    .padding(.bottom, 2)
             }
 
+            ForEach(panes) { pane in
+                Button {
+                    selection = pane
+                } label: {
+                    SettingsSidebarLabel(pane: pane)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 9)
+                        .frame(height: 30)
+                        .background(
+                            selection == pane ? BrandAssets.swiftTubeBlue.opacity(0.22) : .clear,
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .listStyle(.sidebar)
-        .scrollDisabled(true)
-        .removeSidebarToggle()
-        .navigationSplitViewColumnWidth(min: 220, ideal: 220, max: 220)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
+}
 
-    @ViewBuilder
-    private var settingsDetail: some View {
+private struct SettingsDetailHost: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @Binding var selection: SettingsPane
+    @Namespace private var scrollTop
+
+    var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
+                VStack(alignment: .leading, spacing: 16) {
                     Color.clear
                         .frame(height: 0)
-                        .id(settingsScrollTop)
+                        .id(scrollTop)
 
                     switch selection {
                     case .general:
@@ -175,10 +194,10 @@ struct SettingsView: View {
                         ChangelogPane()
                     }
                 }
-                .padding(28)
+                .padding(22)
             }
             .onChange(of: selection) { _, _ in
-                proxy.scrollTo(settingsScrollTop, anchor: .top)
+                proxy.scrollTo(scrollTop, anchor: .top)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -190,7 +209,7 @@ private struct GeneralPane: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "General",
                 subtitle: "Navigation and startup behavior."
@@ -199,7 +218,7 @@ private struct GeneralPane: View {
             AppearancePaneContent()
 
             SettingsCard(title: nil, icon: nil) {
-                VStack(spacing: 18) {
+                VStack(spacing: 10) {
                     NativeToggleRow(
                         title: "Automatically collapse sidebar on video pages",
                         isOn: $settings.autoHideSidebarOnPlayback
@@ -224,13 +243,13 @@ private struct GeneralPane: View {
                     .labelsHidden()
                 }
 
-                SettingsDivider().padding(.vertical, 14)
+                SettingsDivider().padding(.vertical, 6)
                 NativeToggleRow(title: "Fade images in", isOn: $settings.thumbnailFadeInEnabled)
-                SettingsDivider().padding(.vertical, 14)
+                SettingsDivider().padding(.vertical, 6)
                 NativeToggleRow(title: "Animate on hover", isOn: $settings.hoverAnimationsEnabled)
-                SettingsDivider().padding(.vertical, 14)
+                SettingsDivider().padding(.vertical, 6)
                 NativeToggleRow(title: "Show watch progress", isOn: $settings.showVideoProgressBars)
-                SettingsDivider().padding(.vertical, 14)
+                SettingsDivider().padding(.vertical, 6)
                 NativeToggleRow(title: "Show duration badges", isOn: $settings.showDurationBadges)
             }
         }
@@ -267,7 +286,7 @@ private struct ThemesPane: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "Themes",
                 subtitle: "Color presets."
@@ -455,14 +474,14 @@ private struct SidebarPane: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "Sidebar",
                 subtitle: "Navigation order and visibility."
             )
 
             SettingsCard(title: "Navigation Items", icon: "sidebar.left") {
-                List {
+                LazyVStack(spacing: 0) {
                     ForEach(settings.sidebarItemOrder) { item in
                         SidebarSettingsListRow(
                             item: item,
@@ -470,17 +489,18 @@ private struct SidebarPane: View {
                         ) { visible in
                             settings.setSidebarItem(item, visible: visible)
                         }
-                        .listRowBackground(Color.clear)
-                        .moveDisabled(item == .home)
                     }
-                    .onMove { source, destination in
-                        settings.moveSidebarItems(from: source, to: destination)
+                    .reorderable()
+                }
+                .reorderContainer(for: SidebarItemKind.self, itemID: \.self) { difference in
+                    guard let dragged = difference.sources.first else { return }
+                    switch difference.destination.position {
+                    case .before(let target):
+                        settings.reorderSidebarItem(dragged, before: target)
+                    case .end:
+                        settings.reorderSidebarItem(dragged, to: settings.sidebarItemOrder.count)
                     }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .background(Color.clear)
-                .frame(height: CGFloat(settings.sidebarItemOrder.count) * 44 + 18)
             }
         }
     }
@@ -502,18 +522,18 @@ private struct SidebarSettingsListRow: View {
             } label: {
                 Image(systemName: checkboxSymbol)
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(item == .home ? .secondary : (isVisible ? Color.accentColor : .secondary))
+                    .foregroundStyle(item.isRequired ? .secondary : (isVisible ? Color.accentColor : .secondary))
                     .frame(width: 22)
             }
             .buttonStyle(.plain)
-            .disabled(item == .home)
+            .disabled(item.isRequired)
 
             Label(item.title, systemImage: item.systemImage)
-                .foregroundStyle(item == .home ? .primary : (isVisible ? .primary : .secondary))
+                .foregroundStyle(item.isRequired ? .primary : (isVisible ? .primary : .secondary))
 
             Spacer()
 
-            if item == .home {
+            if item.isRequired {
                 Text("Required")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -523,10 +543,16 @@ private struct SidebarSettingsListRow: View {
     }
 
     private var checkboxSymbol: String {
-        if item == .home {
+        if item.isRequired {
             return "checkmark.square.fill"
         }
         return isVisible ? "checkmark.square.fill" : "square"
+    }
+}
+
+private extension SidebarItemKind {
+    var isRequired: Bool {
+        self == .search || self == .home
     }
 }
 
@@ -534,7 +560,7 @@ private struct NotificationsPane: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "Notifications",
                 subtitle: "Toast display and placement."
@@ -592,7 +618,7 @@ private struct NotificationsPane: View {
 
                         if index < TimedDebugNotification.allCases.count - 1 {
                             SettingsDivider()
-                                .padding(.vertical, 14)
+                                .padding(.vertical, 6)
                         }
                     }
                 }
@@ -610,7 +636,7 @@ private struct AdvancedPane: View {
     @State private var customColor = Color(red: 0.49, green: 0.75, blue: 1.0)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "Advanced",
                 subtitle: "Reset and notification testing."
@@ -738,7 +764,7 @@ private struct PlaybackPane: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "Playback",
                 subtitle: "Default playback quality and speed."
@@ -818,7 +844,7 @@ private struct SponsorBlockPane: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "SponsorBlock",
                 subtitle: "Global toggle and category behavior."
@@ -902,7 +928,7 @@ private struct ChangelogPane: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "Changelog",
                 subtitle: "Current version and release history."
@@ -983,7 +1009,7 @@ private struct ControlsPane: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 14) {
             SettingsHeader(
                 title: "Controls",
                 subtitle: "Seek amounts and keyboard shortcuts."
@@ -1085,7 +1111,8 @@ private struct SettingsHeader: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 34, weight: .bold))
+            .font(.system(size: 26, weight: .bold))
+            .padding(.bottom, 2)
     }
 }
 
@@ -1210,27 +1237,26 @@ private struct SettingsCard<Content: View>: View {
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
 
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 10) {
             if let title, let icon {
                 Label(title, systemImage: icon)
-                    .font(.title3.weight(.bold))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
             content
         }
-        .padding(20)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: shape)
         .background(
             shape
-                .fill(Color(settings.elevatedBackgroundColor).opacity(0.42))
+                .fill(Color(settings.elevatedBackgroundColor).opacity(0.62))
         )
         .overlay(
             shape
-                .strokeBorder(.separator.opacity(0.9), lineWidth: 0.7)
+                .strokeBorder(.separator.opacity(0.72), lineWidth: 0.7)
         )
-        .shadow(color: Color.black.opacity(settings.preferredColorScheme == .dark ? 0.18 : 0.07), radius: 18, x: 0, y: 12)
     }
 }
 
@@ -1291,15 +1317,16 @@ private struct NativePickerRow<PickerContent: View>: View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.headline)
+                    .font(.body)
                 if let selectionText {
                     Text(selectionText)
-                        .font(.callout)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer()
             pickerContent
+                .controlSize(.small)
         }
     }
 }
@@ -1319,11 +1346,11 @@ private struct NativeToggleRow: View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.headline)
+                    .font(.body)
 
                 if let detail {
                     Text(detail)
-                        .font(.callout)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1334,7 +1361,9 @@ private struct NativeToggleRow: View {
             Toggle(title, isOn: $isOn)
                 .toggleStyle(.switch)
                 .labelsHidden()
+                .controlSize(.small)
         }
+        .frame(minHeight: 26)
     }
 }
 

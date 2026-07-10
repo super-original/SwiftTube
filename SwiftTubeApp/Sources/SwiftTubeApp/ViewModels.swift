@@ -262,6 +262,9 @@ final class SearchViewModel: ObservableObject {
 
     @Published var query: String = ""
     @Published private(set) var results: [VideoItem] = []
+    @Published private(set) var channels: [SearchChannelItem] = []
+    @Published private(set) var playlists: [PlaylistSummary] = []
+    @Published private(set) var filterGroups: [SearchFilterGroup] = []
     @Published private(set) var isSearching = false
     @Published private(set) var errorMessage: String? = nil
     @Published private(set) var isActive = false
@@ -271,6 +274,7 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var hasSuspendedResults = false
 
     private var continuation: String? = nil
+    private var currentParams: String? = nil
     @Published private(set) var lastQuery: String = ""
     private var suggestionTask: Task<Void, Never>? = nil
     private var linkPreviewTask: Task<Void, Never>? = nil
@@ -319,9 +323,13 @@ final class SearchViewModel: ObservableObject {
         linkPreviewTask?.cancel()
         query = ""
         results = []
+        channels = []
+        playlists = []
+        filterGroups = []
         isActive = false
         errorMessage = nil
         continuation = nil
+        currentParams = nil
         lastQuery = ""
         suggestions = []
         linkPreview = nil
@@ -427,14 +435,14 @@ final class SearchViewModel: ObservableObject {
     }
 
     func suspendResultsForNavigation() {
-        guard isActive, !results.isEmpty else { return }
+        guard isActive, hasResults else { return }
         dismissAssist()
         isActive = false
         hasSuspendedResults = true
     }
 
     func resumeSuspendedResultsIfNeeded() {
-        guard hasSuspendedResults, !results.isEmpty else { return }
+        guard hasSuspendedResults, hasResults else { return }
         isActive = true
         hasSuspendedResults = false
     }
@@ -443,6 +451,25 @@ final class SearchViewModel: ObservableObject {
         guard let last = results.last, last == currentVideo else { return }
         guard !isSearching, continuation != nil else { return }
         performSearch(query: lastQuery, reset: false)
+    }
+
+    func loadMoreResults() {
+        guard !isSearching, continuation != nil else { return }
+        performSearch(query: lastQuery, reset: false)
+    }
+
+    func applyFilter(_ option: SearchFilterOption) {
+        guard let params = option.params, !lastQuery.isEmpty else { return }
+        performSearch(query: lastQuery, reset: true, params: params)
+    }
+
+    func clearFilters() {
+        guard !lastQuery.isEmpty else { return }
+        performSearch(query: lastQuery, reset: true, params: nil)
+    }
+
+    var hasResults: Bool {
+        !results.isEmpty || !channels.isEmpty || !playlists.isEmpty
     }
 
     func applyLocalProgress(_ progress: VideoProgress, to videoID: String) {
@@ -454,12 +481,15 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
-    private func performSearch(query: String, reset: Bool) {
+    private func performSearch(query: String, reset: Bool, params: String? = nil) {
         let searchQuery = query
         if reset {
             results = []
+            channels = []
+            playlists = []
             continuation = nil
             lastQuery = searchQuery
+            currentParams = params
         }
         isActive = true
         isSearching = true
@@ -472,16 +502,29 @@ final class SearchViewModel: ObservableObject {
             defer { isSearching = false }
             do {
                 var mergedResults = reset ? [] : results
+                var mergedChannels = reset ? [] : channels
+                var mergedPlaylists = reset ? [] : playlists
                 var nextContinuation = reset ? nil : continuation
                 var remainingDuplicatePages = paginationDuplicateHopLimit
 
                 while true {
                     let response = try await BackendClient.shared.fetchSearch(
                         query: searchQuery,
+                        params: currentParams,
                         continuation: nextContinuation
                     )
                     let mergeResult = appendUniqueItems(existing: mergedResults, incoming: response.items, id: \.id)
                     mergedResults = mergeResult.items
+                    mergedChannels = appendUniqueItems(
+                        existing: mergedChannels,
+                        incoming: response.channels,
+                        id: \.channelId
+                    ).items
+                    mergedPlaylists = appendUniqueItems(
+                        existing: mergedPlaylists,
+                        incoming: response.playlists,
+                        id: \.playlistId
+                    ).items
 
                     let shouldAdvance = mergeResult.appendedCount == 0
                         && response.continuation != nil
@@ -490,6 +533,11 @@ final class SearchViewModel: ObservableObject {
                     if !shouldAdvance {
                         continuation = response.continuation
                         results = mergedResults
+                        channels = mergedChannels
+                        playlists = mergedPlaylists
+                        if response.filterGroups.isEmpty == false {
+                            filterGroups = response.filterGroups
+                        }
                         AppMutationCenter.shared.showTimedDebug(
                             .search,
                             title: reset ? "Loaded search in" : "Loaded more search in",
@@ -1148,6 +1196,10 @@ final class PlaylistFeedViewModel: ObservableObject {
         let playlistID = playlist.playlistId
         let previousItems = items
         items = move(video, in: items, toTop: true)
+        guard let destination = playlistMoveDestination(for: setVideoId, in: items) else {
+            items = previousItems
+            return
+        }
         mutationIDs.insert(setVideoId)
 
         mutationCenter.submit(
@@ -1174,10 +1226,11 @@ final class PlaylistFeedViewModel: ObservableObject {
                 self.errorMessage = error.localizedDescription
             },
             execute: {
-                _ = try await BackendClient.shared.reorderPlaylistItem(
+                _ = try await BackendClient.shared.movePlaylistItem(
                     playlistId: playlistID,
                     setVideoId: setVideoId,
-                    position: "top"
+                    predecessorSetVideoId: destination.predecessor,
+                    successorSetVideoId: destination.successor
                 )
             },
             applySuccess: { [weak self] (_: Void) in
@@ -1194,6 +1247,10 @@ final class PlaylistFeedViewModel: ObservableObject {
         let playlistID = playlist.playlistId
         let previousItems = items
         items = move(video, in: items, toTop: false)
+        guard let destination = playlistMoveDestination(for: setVideoId, in: items) else {
+            items = previousItems
+            return
+        }
         mutationIDs.insert(setVideoId)
 
         mutationCenter.submit(
@@ -1220,10 +1277,11 @@ final class PlaylistFeedViewModel: ObservableObject {
                 self.errorMessage = error.localizedDescription
             },
             execute: {
-                _ = try await BackendClient.shared.reorderPlaylistItem(
+                _ = try await BackendClient.shared.movePlaylistItem(
                     playlistId: playlistID,
                     setVideoId: setVideoId,
-                    position: "bottom"
+                    predecessorSetVideoId: destination.predecessor,
+                    successorSetVideoId: destination.successor
                 )
             },
             applySuccess: { [weak self] (_: Void) in
@@ -1406,6 +1464,11 @@ final class PlaylistFeedViewModel: ObservableObject {
 
         let previousItems = items
         items = updated
+        guard let movedSetVideoID = updated.first(where: { $0.playlistIdentity == draggedID })?.playlistSetVideoId,
+              let destination = playlistMoveDestination(for: movedSetVideoID, in: updated) else {
+            items = previousItems
+            return false
+        }
         if let feed {
             self.feed = feed.with(items: updated)
         }
@@ -1438,7 +1501,12 @@ final class PlaylistFeedViewModel: ObservableObject {
                 self.errorMessage = error.localizedDescription
             },
             execute: {
-                try await self.syncPlaylistOrder(updated)
+                _ = try await BackendClient.shared.movePlaylistItem(
+                    playlistId: self.playlist.playlistId,
+                    setVideoId: movedSetVideoID,
+                    predecessorSetVideoId: destination.predecessor,
+                    successorSetVideoId: destination.successor
+                )
             },
             applySuccess: { [weak self] (_: Void) in
                 self?.isReordering = false
@@ -1449,7 +1517,6 @@ final class PlaylistFeedViewModel: ObservableObject {
         return true
     }
 
-    @available(macOS 27.0, *)
     func reorderItems(
         using difference: ReorderDifference<String, ReorderableSingleCollectionIdentifier>
     ) {
@@ -1490,15 +1557,25 @@ final class PlaylistFeedViewModel: ObservableObject {
         return updated
     }
 
-    private func syncPlaylistOrder(_ items: [VideoItem]) async throws {
-        for item in items.reversed() {
-            guard let setVideoId = item.playlistSetVideoId else { continue }
-            _ = try await BackendClient.shared.reorderPlaylistItem(
-                playlistId: playlist.playlistId,
-                setVideoId: setVideoId,
-                position: "top"
-            )
+    private func playlistMoveDestination(
+        for setVideoID: String,
+        in orderedItems: [VideoItem]
+    ) -> (predecessor: String?, successor: String?)? {
+        guard let index = orderedItems.firstIndex(where: { $0.playlistSetVideoId == setVideoID }) else {
+            return nil
         }
+
+        if index > 0,
+           let predecessor = orderedItems[index - 1].playlistSetVideoId {
+            return (predecessor, nil)
+        }
+
+        if index + 1 < orderedItems.count,
+           let successor = orderedItems[index + 1].playlistSetVideoId {
+            return (nil, successor)
+        }
+
+        return nil
     }
 }
 

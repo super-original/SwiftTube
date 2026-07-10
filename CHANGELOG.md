@@ -8,6 +8,16 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.34
+
+- Added Search as a dedicated, reorderable sidebar destination above Home, with server-provided YouTube filter menus, mixed video/channel/playlist results, and grid/list layouts.
+- Restored the SwiftTube logo and isolated the brand control from the Back and Forward toolbar group using macOS 27 toolbar margins and its own interactive glass capsule.
+- Replaced playlist-wide reorder loops with a single neighbor-aware YouTube `playlist/edit` action, and applied the macOS 27 reorder container to playlist and sidebar item ordering.
+- Unified playlist video rows with the shared animated inline thumbnail loader and reduced their size and spacing.
+- Rebuilt Settings around a compact custom navigation rail and dense preference surfaces, with smaller native switches, pickers, headings, cards, and spacing.
+- Updated Liked Videos parsing for YouTube lockup view models and added the current liked-library browse fallback.
+- Restored active PiP glass focus while preserving and restoring the previous first responder, expanded the collapsed tab’s hit target, and added an animated pull-to-expand transition.
+
 ## 0.15.33
 
 - Raised SwiftTube’s minimum deployment target to macOS 27 and removed macOS 26 as a supported runtime.

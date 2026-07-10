@@ -1,6 +1,7 @@
 import Foundation
 
-enum SidebarItemKind: String, CaseIterable, Identifiable, Codable {
+enum SidebarItemKind: String, CaseIterable, Identifiable, Codable, Hashable {
+    case search
     case home
     case history
     case playlists
@@ -11,6 +12,7 @@ enum SidebarItemKind: String, CaseIterable, Identifiable, Codable {
 
     var title: String {
         switch self {
+        case .search: return "Search"
         case .home: return "Home"
         case .history: return "History"
         case .playlists: return "Playlists"
@@ -21,6 +23,7 @@ enum SidebarItemKind: String, CaseIterable, Identifiable, Codable {
 
     var systemImage: String {
         switch self {
+        case .search: return "magnifyingglass"
         case .home: return "house"
         case .history: return "clock.arrow.trianglehead.counterclockwise.rotate.90"
         case .playlists: return "music.note.list"
@@ -67,6 +70,7 @@ struct ChannelRoute: Equatable, Hashable, Identifiable, Sendable {
 }
 
 enum AppRoute: Equatable {
+    case search
     case home
     case watchHistory
     case playlistLibrary
@@ -125,6 +129,11 @@ final class AppNavigationModel: ObservableObject {
     func showHome() {
         selectedSidebarItem = .home
         navigate(to: .home)
+    }
+
+    func showSearch() {
+        selectedSidebarItem = .search
+        navigate(to: .search)
     }
 
     func showWatchHistory() {
@@ -316,6 +325,8 @@ final class AppNavigationModel: ObservableObject {
 
     func selectSidebarItem(_ item: SidebarItemKind) {
         switch item {
+        case .search:
+            showSearch()
         case .home:
             showHome()
         case .history:
@@ -391,6 +402,8 @@ final class AppNavigationModel: ObservableObject {
 
     private func syncSidebarSelection(with route: AppRoute) {
         switch route {
+        case .search:
+            selectedSidebarItem = .search
         case .home:
             selectedSidebarItem = .home
         case .watchHistory:

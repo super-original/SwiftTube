@@ -161,30 +161,33 @@ actor SwiftTubeBackend {
         return RecommendationsResponse(items: items, continuation: token, note: note)
     }
 
-    func fetchSearch(query: String, continuation: String? = nil) async throws -> SearchResponse {
+    func fetchSearch(query: String, params: String? = nil, continuation: String? = nil) async throws -> SearchResponse {
         let usingAuth = await authManager.currentMaterial() != nil
 
         let data: JSONDictionary
         if usingAuth {
             do {
-                data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: true)
+                data = try await api.search(query: continuation == nil ? query : nil, params: params, continuation: continuation, authenticated: true)
             } catch {
                 if await refreshAuthenticatedSessionIfPossible() {
                     do {
-                        data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: true)
+                        data = try await api.search(query: continuation == nil ? query : nil, params: params, continuation: continuation, authenticated: true)
                     } catch {
-                        data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: false)
+                        data = try await api.search(query: continuation == nil ? query : nil, params: params, continuation: continuation, authenticated: false)
                     }
                 } else {
-                    data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: false)
+                    data = try await api.search(query: continuation == nil ? query : nil, params: params, continuation: continuation, authenticated: false)
                 }
             }
         } else {
-            data = try await api.search(query: continuation == nil ? query : nil, continuation: continuation, authenticated: false)
+            data = try await api.search(query: continuation == nil ? query : nil, params: params, continuation: continuation, authenticated: false)
         }
 
         return SearchResponse(
             items: await mergeStoredProgress(into: extractVideoItems(from: data)),
+            channels: extractSearchChannels(from: data),
+            playlists: extractSearchPlaylists(from: data),
+            filterGroups: extractSearchFilterGroups(from: data),
             continuation: extractContinuationToken(from: data),
             query: query
         )
@@ -590,7 +593,11 @@ actor SwiftTubeBackend {
                 continuation: continuation,
                 authenticated: true
             )
-            return await mergeStoredProgress(into: extractPlaylistFeed(from: data, playlistID: playlistID.removingPrefix("VL")))
+            return try await resolvedPlaylistFeed(
+                from: data,
+                playlistID: playlistID.removingPrefix("VL"),
+                isInitialPage: continuation == nil
+            )
         } catch {
             if await refreshAuthenticatedSessionIfPossible() {
                 let data = try await api.browse(
@@ -598,7 +605,11 @@ actor SwiftTubeBackend {
                     continuation: continuation,
                     authenticated: true
                 )
-                return await mergeStoredProgress(into: extractPlaylistFeed(from: data, playlistID: playlistID.removingPrefix("VL")))
+                return try await resolvedPlaylistFeed(
+                    from: data,
+                    playlistID: playlistID.removingPrefix("VL"),
+                    isInitialPage: continuation == nil
+                )
             }
             throw BackendClientError(message: "Your YouTube session expired. SwiftTube is reconnecting using the last browser session if possible.")
         }
@@ -742,23 +753,26 @@ actor SwiftTubeBackend {
         return PlaylistItemMutationResponse(success: true)
     }
 
-    func reorderPlaylistItem(playlistID: String, setVideoID: String, position: String) async throws -> PlaylistItemMutationResponse {
+    func movePlaylistItem(
+        playlistID: String,
+        setVideoID: String,
+        predecessorSetVideoID: String?,
+        successorSetVideoID: String?
+    ) async throws -> PlaylistItemMutationResponse {
         _ = try await requireAuthenticatedMaterial()
-        let action: String
-        switch position.lowercased() {
-        case "top":
-            action = "ACTION_MOVE_VIDEO_AFTER"
-        case "bottom":
-            action = "ACTION_MOVE_VIDEO_BEFORE"
-        default:
-            throw BackendClientError(message: "Playlist reorder position must be top or bottom.")
+
+        var action: JSONDictionary = ["setVideoId": setVideoID]
+        if let predecessorSetVideoID, !predecessorSetVideoID.isEmpty {
+            action["action"] = "ACTION_MOVE_VIDEO_AFTER"
+            action["movedSetVideoIdPredecessor"] = predecessorSetVideoID
+        } else if let successorSetVideoID, !successorSetVideoID.isEmpty {
+            action["action"] = "ACTION_MOVE_VIDEO_BEFORE"
+            action["movedSetVideoIdSuccessor"] = successorSetVideoID
+        } else {
+            throw BackendClientError(message: "A playlist item needs a neighboring video before it can be moved.")
         }
 
-        let browseData = try await api.browse(browseID: playlistBrowseID(for: playlistID), authenticated: true)
-        guard let command = extractPlaylistItemActionCommand(from: browseData, setVideoID: setVideoID, action: action) else {
-            throw BackendClientError(message: "That playlist item can’t be reordered right now.")
-        }
-        _ = try await api.dispatch(command: command)
+        _ = try await api.editPlaylist(playlistID: playlistID, actions: [action])
         return PlaylistItemMutationResponse(success: true)
     }
 
@@ -1639,6 +1653,27 @@ actor SwiftTubeBackend {
 
     private func playlistBrowseID(for playlistID: String) -> String {
         playlistID.hasPrefix("VL") ? playlistID : "VL\(playlistID)"
+    }
+
+    private func resolvedPlaylistFeed(
+        from data: JSONDictionary,
+        playlistID: String,
+        isInitialPage: Bool
+    ) async throws -> PlaylistFeed {
+        var feed = extractPlaylistFeed(from: data, playlistID: playlistID)
+
+        if playlistID == "LL", isInitialPage, feed.items.isEmpty {
+            let fallbackData = try await api.browse(
+                browseID: "FElibrary_liked_videos",
+                authenticated: true
+            )
+            let fallbackFeed = extractPlaylistFeed(from: fallbackData, playlistID: playlistID)
+            if !fallbackFeed.items.isEmpty {
+                feed = fallbackFeed.with(title: "Liked Videos")
+            }
+        }
+
+        return await mergeStoredProgress(into: feed)
     }
 }
 
@@ -4581,6 +4616,82 @@ private func extractVideoItems(from data: Any, limit: Int = 120) -> [VideoItem] 
     return items
 }
 
+private func extractSearchChannels(from data: Any) -> [SearchChannelItem] {
+    var channels: [SearchChannelItem] = []
+    var seen = Set<String>()
+    visitJSONObjects(in: data) { node in
+        guard let renderer = node["channelRenderer"] as? JSONDictionary else { return .continue }
+        let endpoint = (renderer["navigationEndpoint"] as? JSONDictionary)?["browseEndpoint"] as? JSONDictionary
+        guard let channelID = (renderer["channelId"] as? String) ?? (endpoint?["browseId"] as? String),
+              !channelID.isEmpty,
+              seen.insert(channelID).inserted else { return .continue }
+        channels.append(
+            SearchChannelItem(
+                channelId: channelID,
+                title: textValue(from: renderer["title"]) ?? "Channel",
+                handle: textValue(from: renderer["shortBylineText"]),
+                subscriberCountText: textValue(from: renderer["subscriberCountText"]),
+                descriptionText: textValue(from: renderer["descriptionSnippet"]),
+                avatarUrl: bestThumbnailURL(thumbnails(from: renderer["thumbnail"])),
+                canonicalBaseUrl: endpoint?["canonicalBaseUrl"] as? String
+            )
+        )
+        return .continue
+    }
+    return channels
+}
+
+private func extractSearchPlaylists(from data: Any) -> [PlaylistSummary] {
+    var playlists: [PlaylistSummary] = []
+    var seen = Set<String>()
+    visitJSONObjects(in: data) { node in
+        let playlist: PlaylistSummary?
+        if let lockup = node["lockupViewModel"] as? JSONDictionary {
+            playlist = parseLockupPlaylistItem(lockup)
+        } else if let renderer = node["playlistRenderer"] as? JSONDictionary {
+            playlist = parsePlaylistRendererItem(renderer)
+        } else {
+            playlist = nil
+        }
+        if let playlist, seen.insert(playlist.playlistId).inserted {
+            playlists.append(playlist)
+        }
+        return .continue
+    }
+    return playlists
+}
+
+private func extractSearchFilterGroups(from data: Any) -> [SearchFilterGroup] {
+    var groups: [SearchFilterGroup] = []
+    var seen = Set<String>()
+    visitJSONObjects(in: data) { node in
+        guard let renderer = node["searchFilterGroupRenderer"] as? JSONDictionary,
+              let title = textValue(from: renderer["title"]),
+              seen.insert(title).inserted else { return .continue }
+
+        let options = ((renderer["filters"] as? [Any]) ?? []).compactMap { value -> SearchFilterOption? in
+            guard let container = value as? JSONDictionary,
+                  let filter = container["searchFilterRenderer"] as? JSONDictionary,
+                  let optionTitle = textValue(from: filter["label"]) ?? textValue(from: filter["title"]) else {
+                return nil
+            }
+            let endpoint = filter["navigationEndpoint"] as? JSONDictionary
+            let searchEndpoint = endpoint?["searchEndpoint"] as? JSONDictionary
+            return SearchFilterOption(
+                title: optionTitle,
+                params: searchEndpoint?["params"] as? String,
+                selected: filter["status"] as? String == "FILTER_STATUS_SELECTED"
+                    || filter["selected"] as? Bool == true
+            )
+        }
+        if options.isEmpty == false {
+            groups.append(SearchFilterGroup(title: title, options: options))
+        }
+        return .continue
+    }
+    return groups
+}
+
 private func extractHistoryItems(from data: Any, limit: Int = 200) -> [VideoItem] {
     Array(extractHistoryVideoRecords(from: data, limit: limit).map(\.item).prefix(limit))
 }
@@ -4951,6 +5062,21 @@ private func extractPlaylistFeed(from data: Any, playlistID: String) -> Playlist
         return .continue
     }
 
+    visitJSONObjects(in: data) { node in
+        guard let lockup = node["lockupViewModel"] as? JSONDictionary,
+              var item = parseLockupVideoItem(lockup),
+              seen.insert(item.id).inserted else {
+            return .continue
+        }
+
+        let setVideoID = extractSetVideoID(from: lockup)
+        if let setVideoID {
+            item.playlistSetVideoId = setVideoID
+        }
+        items.append(item)
+        return .continue
+    }
+
     return PlaylistFeed(
         playlistId: playlistID,
         title: title,
@@ -4960,6 +5086,18 @@ private func extractPlaylistFeed(from data: Any, playlistID: String) -> Playlist
         items: items,
         continuation: extractContinuationToken(from: data)
     )
+}
+
+private func extractSetVideoID(from value: Any) -> String? {
+    var result: String?
+    visitJSONObjects(in: value) { node in
+        if let setVideoID = node["setVideoId"] as? String, !setVideoID.isEmpty {
+            result = setVideoID
+            return .stop
+        }
+        return .continue
+    }
+    return result
 }
 
 private func extractSubscriptionState(from data: Any, metadata: [String: String]) -> SubscriptionState? {

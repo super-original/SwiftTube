@@ -1213,6 +1213,8 @@ private extension PlayerScreen {
               let setVideoId = video.playlistSetVideoId else { return }
 
         let previousItems = navigation.activePlaylistItems
+        let updated = reorderedQueue(previousItems, moving: video, position: position)
+        guard let destination = queueMoveDestination(for: setVideoId, in: updated) else { return }
 
         mutationCenter.submit(
             key: MutationQueueKey.playlistPosition(playlistID: playlistID, setVideoID: setVideoId),
@@ -1231,16 +1233,17 @@ private extension PlayerScreen {
                 )
             },
             optimistic: {
-                navigation.replaceActivePlaylistItems(reorderedQueue(previousItems, moving: video, position: position))
+                navigation.replaceActivePlaylistItems(updated)
             },
             rollback: { _ in
                 navigation.replaceActivePlaylistItems(previousItems)
             },
             execute: {
-                _ = try await BackendClient.shared.reorderPlaylistItem(
+                _ = try await BackendClient.shared.movePlaylistItem(
                     playlistId: playlistID,
                     setVideoId: setVideoId,
-                    position: position
+                    predecessorSetVideoId: destination.predecessor,
+                    successorSetVideoId: destination.successor
                 )
             }
         )
@@ -1256,6 +1259,10 @@ private extension PlayerScreen {
 
         let updated = reorderedQueue(previousItems, sourceIndex: sourceIndex, insertionIndex: insertionIndex)
         guard updated != previousItems else { return false }
+        guard let movedSetVideoID = updated.first(where: { $0.playlistIdentity == draggedID })?.playlistSetVideoId,
+              let destination = queueMoveDestination(for: movedSetVideoID, in: updated) else {
+            return false
+        }
 
         mutationCenter.submit(
             key: MutationQueueKey.playlistOrder(playlistID: playlistID),
@@ -1280,7 +1287,12 @@ private extension PlayerScreen {
                 navigation.replaceActivePlaylistItems(previousItems)
             },
             execute: {
-                try await syncQueueOrder(updated, playlistId: playlistID)
+                _ = try await BackendClient.shared.movePlaylistItem(
+                    playlistId: playlistID,
+                    setVideoId: movedSetVideoID,
+                    predecessorSetVideoId: destination.predecessor,
+                    successorSetVideoId: destination.successor
+                )
             }
         )
 
@@ -1397,15 +1409,25 @@ private extension PlayerScreen {
         return updated
     }
 
-    func syncQueueOrder(_ items: [VideoItem], playlistId: String) async throws {
-        for queueVideo in items.reversed() {
-            guard let setVideoId = queueVideo.playlistSetVideoId else { continue }
-            _ = try await BackendClient.shared.reorderPlaylistItem(
-                playlistId: playlistId,
-                setVideoId: setVideoId,
-                position: "top"
-            )
+    func queueMoveDestination(
+        for setVideoID: String,
+        in orderedItems: [VideoItem]
+    ) -> (predecessor: String?, successor: String?)? {
+        guard let index = orderedItems.firstIndex(where: { $0.playlistSetVideoId == setVideoID }) else {
+            return nil
         }
+
+        if index > 0,
+           let predecessor = orderedItems[index - 1].playlistSetVideoId {
+            return (predecessor, nil)
+        }
+
+        if index + 1 < orderedItems.count,
+           let successor = orderedItems[index + 1].playlistSetVideoId {
+            return (nil, successor)
+        }
+
+        return nil
     }
 
     func canReorderQueueVideo(_ video: VideoItem) -> Bool {

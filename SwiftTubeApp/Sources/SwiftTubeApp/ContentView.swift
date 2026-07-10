@@ -72,13 +72,7 @@ struct ContentView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             backgroundView
-
-            NavigationSplitView(columnVisibility: $sidebarVisibility) {
-                sidebar
-            } detail: {
-                currentScreenContainer
-            }
-            .navigationSplitViewStyle(.balanced)
+            appNavigationView
         }
         .overlay(backendOverlay)
         .overlay {
@@ -89,54 +83,7 @@ struct ContentView: View {
                 .environmentObject(authSession)
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    if case .home = navigation.currentRoute {
-                        viewModel.reload()
-                    } else {
-                        searchViewModel.clear()
-                        navigation.showHome()
-                    }
-                } label: {
-                    BrandToolbarLabel()
-                }
-                .buttonStyle(.plain)
-            }
-
-            ToolbarSpacer(.fixed)
-
-            ToolbarItemGroup(placement: .navigation) {
-                Button(action: handleBackNavigation) {
-                    Label("Back", systemImage: "chevron.left")
-                }
-                .disabled(!navigation.canGoBack)
-
-                Button(action: handleForwardNavigation) {
-                    Label("Forward", systemImage: "chevron.right")
-                }
-                .disabled(!navigation.canGoForward)
-            }
-
-            ToolbarItem(placement: .principal) {
-                ToolbarSearchField(
-                    text: $searchViewModel.query,
-                    isFocused: $isSearchFieldFocused,
-                    placeholder: toolbarSearchPlaceholder,
-                    onSubmit: handleToolbarSubmit,
-                    onClear: handleToolbarClear,
-                    onFocusChange: handleSearchFieldFocusChange,
-                    onMoveSuggestion: moveSelectedSearchSuggestion,
-                    onAcceptAssist: acceptSelectedSearchAssist
-                )
-                .frame(width: searchChromeWidth)
-            }
-
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button(action: refreshCurrentRoute) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(!backend.isRunning)
-            }
+            appToolbar
         }
         .task(id: backend.state) {
             if backend.isRunning {
@@ -199,6 +146,68 @@ struct ContentView: View {
                 onEscape: exitFullscreenIfNeeded
             )
         )
+    }
+
+    private var appNavigationView: some View {
+        NavigationSplitView(columnVisibility: $sidebarVisibility) {
+            sidebar
+        } detail: {
+            currentScreenContainer
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    @ToolbarContentBuilder
+    private var appToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+                Button {
+                    if case .home = navigation.currentRoute {
+                        viewModel.reload()
+                    } else {
+                        searchViewModel.clear()
+                        navigation.showHome()
+                    }
+                } label: {
+                    BrandToolbarLabel()
+                }
+                .buttonStyle(.plain)
+            }
+            .contentMarginsRemoved()
+
+        ToolbarSpacer(.fixed)
+
+        ToolbarItemGroup(placement: .navigation) {
+                Button(action: handleBackNavigation) {
+                    Label("Back", systemImage: "chevron.left")
+                }
+                .disabled(!navigation.canGoBack)
+
+                Button(action: handleForwardNavigation) {
+                    Label("Forward", systemImage: "chevron.right")
+                }
+                .disabled(!navigation.canGoForward)
+        }
+
+        ToolbarItem(placement: .principal) {
+                ToolbarSearchField(
+                    text: $searchViewModel.query,
+                    isFocused: $isSearchFieldFocused,
+                    placeholder: toolbarSearchPlaceholder,
+                    onSubmit: handleToolbarSubmit,
+                    onClear: handleToolbarClear,
+                    onFocusChange: handleSearchFieldFocusChange,
+                    onMoveSuggestion: moveSelectedSearchSuggestion,
+                    onAcceptAssist: acceptSelectedSearchAssist
+                )
+                .frame(width: searchChromeWidth)
+        }
+
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button(action: refreshCurrentRoute) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .disabled(!backend.isRunning)
+        }
     }
 }
 
@@ -324,43 +333,55 @@ private extension ContentView {
 
     @ViewBuilder
     var currentScreen: some View {
-        if searchViewModel.isActive, !navigation.currentRoute.isWatchRoute {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    searchContentView
-                }
-                .padding(24)
-            }
-        } else {
-            switch navigation.currentRoute {
-            case .home:
-                homeScreen
-            case .watchHistory:
-                watchHistoryScreen
-            case .playlistLibrary:
-                PlaylistLibraryScreen(viewModel: playlistLibraryViewModel)
-                    .environmentObject(navigation)
-                    .id("playlist-library-\(navigation.routeRefreshID.uuidString)")
-            case .playlistFeed(let playlist):
-                PlaylistFeedScreen(
-                    playlist: playlist,
-                    libraryPlaylists: playlistLibraryViewModel.playlists
-                )
-                    .environmentObject(navigation)
-                    .id("\(playlist.id)-\(navigation.routeRefreshID.uuidString)")
-            case .channel(let route):
-                ChannelPageScreen(
-                    route: route
-                )
-                    .environmentObject(navigation)
-                    .id("\(route.channel.channelId)-\(navigation.routeRefreshID.uuidString)")
-            case .video(let video):
-                PlayerScreen(
-                    video: video,
-                    libraryPlaylists: playlistLibraryViewModel.playlists
-                )
-                    .id("\(video.id)-\(navigation.routeRefreshID.uuidString)")
-            }
+        switch navigation.currentRoute {
+        case .search:
+            SearchScreen(
+                viewModel: searchViewModel,
+                onOpenVideo: openVideoFromSearch,
+                onOpenChannel: { channel in
+                    navigation.showChannel(channel)
+                    searchViewModel.suspendResultsForNavigation()
+                },
+                onOpenPlaylist: { playlist in
+                    navigation.showPlaylist(
+                        PlaylistReference(
+                            playlistId: playlist.playlistId,
+                            title: playlist.title,
+                            kind: playlist.referenceKind
+                        )
+                    )
+                    searchViewModel.suspendResultsForNavigation()
+                },
+                onRetry: handleToolbarSubmit,
+                onFocusSearch: { isSearchFieldFocused = true }
+            )
+        case .home:
+            homeScreen
+        case .watchHistory:
+            watchHistoryScreen
+        case .playlistLibrary:
+            PlaylistLibraryScreen(viewModel: playlistLibraryViewModel)
+                .environmentObject(navigation)
+                .id("playlist-library-\(navigation.routeRefreshID.uuidString)")
+        case .playlistFeed(let playlist):
+            PlaylistFeedScreen(
+                playlist: playlist,
+                libraryPlaylists: playlistLibraryViewModel.playlists
+            )
+                .environmentObject(navigation)
+                .id("\(playlist.id)-\(navigation.routeRefreshID.uuidString)")
+        case .channel(let route):
+            ChannelPageScreen(
+                route: route
+            )
+                .environmentObject(navigation)
+                .id("\(route.channel.channelId)-\(navigation.routeRefreshID.uuidString)")
+        case .video(let video):
+            PlayerScreen(
+                video: video,
+                libraryPlaylists: playlistLibraryViewModel.playlists
+            )
+                .id("\(video.id)-\(navigation.routeRefreshID.uuidString)")
         }
     }
 
@@ -523,77 +544,6 @@ private extension ContentView {
         }
     }
 
-    @ViewBuilder
-    var searchContentView: some View {
-        Text("Results for \"\(searchViewModel.lastQuery)\"")
-            .font(.title3.weight(.semibold))
-
-        if searchViewModel.results.isEmpty {
-            if searchViewModel.isSearching {
-                placeholderGrid
-            } else if let error = searchViewModel.errorMessage {
-                EmptyStateView(
-                    title: "Search failed",
-                    message: error,
-                    actionTitle: "Try Again"
-                ) {
-                    handleToolbarSubmit()
-                }
-            } else {
-                EmptyStateView(
-                    title: "No results",
-                    message: "No videos found for \"\(searchViewModel.lastQuery)\".",
-                    actionTitle: "Clear Search"
-                ) {
-                    handleToolbarClear()
-                }
-            }
-        } else {
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                ForEach(Array(searchViewModel.results.enumerated()), id: \.element.id) { index, video in
-                    VideoCard(
-                        video: video,
-                        onOpenChannel: {
-                            openChannelFromSearch(video)
-                        }
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(RoundedRectangle(cornerRadius: 16))
-                    .onTapGesture {
-                        openVideoFromSearch(video)
-                    }
-                    .contextMenu {
-                        VideoContextMenuContent(
-                            video: video,
-                            userPlaylists: userOwnedPlaylists,
-                            onPlay: { openVideoFromSearch(video) },
-                            onPlayFromHere: nil,
-                            onAddToWatchLater: authSession.status.authenticated ? queueAddToWatchLater(videoID: video.id) : nil,
-                            onSaveToPlaylist: authSession.status.authenticated ? { playlistID in
-                                queueSaveToPlaylist(videoID: video.id, playlistID: playlistID)
-                            } : nil,
-                            onMoveToPlaylist: nil,
-                            onMoveToWatchLater: nil,
-                            onRemoveFromCurrentPlaylist: nil,
-                            onMoveToTop: nil,
-                            onMoveToBottom: nil,
-                            onRemoveFromWatchHistory: nil
-                        )
-                    }
-                    .onAppear {
-                        searchViewModel.loadMoreIfNeeded(currentVideo: video)
-                    }
-                    .staggeredFadeIn(id: video.id, index: index, columns: columns.count)
-                }
-            }
-
-            if searchViewModel.isSearching {
-                LoadingMoreIndicator(text: "Loading more results...")
-                    .padding(.top, 16)
-            }
-        }
-    }
-
     var placeholderGrid: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
             ForEach(0..<8, id: \.self) { _ in
@@ -610,6 +560,12 @@ private extension ContentView {
         }
 
         switch navigation.currentRoute {
+        case .search:
+            if searchViewModel.lastQuery.isEmpty {
+                isSearchFieldFocused = true
+            } else {
+                handleToolbarSubmit()
+            }
         case .home:
             viewModel.reload()
         case .watchHistory:
@@ -877,7 +833,9 @@ private extension ContentView {
         isSearchFieldFocused = false
         let outcome = searchViewModel.submit(navigation: navigation, scope: toolbarSearchScope)
         searchViewModel.dismissAssist()
-        if outcome == .openedVideoLink {
+        if outcome == .search {
+            navigation.showSearch()
+        } else if outcome == .openedVideoLink {
             searchViewModel.dismissResults()
         }
     }
@@ -2652,20 +2610,20 @@ private struct PlaylistFeedScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                if #available(macOS 27.0, *) {
-                    modernPlaylistList
-                } else {
-                    legacyPlaylistList
-                }
+                modernPlaylistList
             }
         }
     }
 
-    @available(macOS 27.0, *)
     private var modernPlaylistList: some View {
         LazyVStack(spacing: 4) {
             ForEach(viewModel.items, id: \.playlistIdentity) { video in
-                playlistRow(video, usesSystemReordering: true)
+                playlistRow(video)
+                    .staggeredFadeIn(
+                        id: video.playlistIdentity,
+                        index: viewModel.items.firstIndex(where: { $0.playlistIdentity == video.playlistIdentity }) ?? 0,
+                        columns: 1
+                    )
             }
             .reorderable()
 
@@ -2673,21 +2631,6 @@ private struct PlaylistFeedScreen: View {
         }
         .reorderContainer(for: VideoItem.self, itemID: \.playlistIdentity) { difference in
             viewModel.reorderItems(using: difference)
-        }
-    }
-
-    private var legacyPlaylistList: some View {
-        LazyVStack(spacing: 4) {
-            ForEach(Array(viewModel.items.enumerated()), id: \.element.playlistIdentity) { index, video in
-                PlaylistReorderDropZone {
-                    viewModel.reorderItem(withID: $0, toInsertionIndex: index)
-                }
-                playlistRow(video, usesSystemReordering: false)
-            }
-            PlaylistReorderDropZone {
-                viewModel.reorderItem(withID: $0, toInsertionIndex: viewModel.items.count)
-            }
-            loadingMoreRows
         }
     }
 
@@ -2699,10 +2642,9 @@ private struct PlaylistFeedScreen: View {
         }
     }
 
-    private func playlistRow(_ video: VideoItem, usesSystemReordering: Bool) -> some View {
+    private func playlistRow(_ video: VideoItem) -> some View {
         PlaylistFeedDraggableRow(
             video: video,
-            usesSystemReordering: usesSystemReordering,
             isCurrent: isCurrent(video),
             isMutating: viewModel.mutationIDs.contains(video.playlistSetVideoId ?? ""),
             onPlay: { playPlaylist(startingWith: video) },
@@ -3042,11 +2984,18 @@ private struct PlaylistVideoRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
-            HistoryVideoThumbnail(video: video)
+            InlineVideoThumbnail(
+                video: video,
+                width: 168,
+                height: 95,
+                cornerRadius: 10,
+                maxPixelSize: 480,
+                placeholderIconSize: 24
+            )
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(video.title)
-                    .font(.title3.weight(.semibold))
+                    .font(.headline)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
 
@@ -3078,7 +3027,6 @@ private struct PlaylistVideoRow: View {
 private struct PlaylistFeedDraggableRow: View {
     @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
-    let usesSystemReordering: Bool
     let isCurrent: Bool
     let isMutating: Bool
     let onPlay: () -> Void
@@ -3092,13 +3040,7 @@ private struct PlaylistFeedDraggableRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
-            Group {
-                if usesSystemReordering {
-                    rowHandle
-                } else {
-                    rowHandle.draggable(video.playlistIdentity)
-                }
-            }
+            rowHandle
 
             PlaylistVideoRow(
                 video: video,
@@ -3112,7 +3054,7 @@ private struct PlaylistFeedDraggableRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 22)
                 .fill(
@@ -3145,7 +3087,7 @@ private struct PlaylistFeedDraggableRow: View {
             canReorder: canReorder,
             fallbackText: video.playlistIndexText,
             isCurrent: isCurrent,
-            fullHeight: 128
+            fullHeight: 95
         )
     }
 }
@@ -3180,26 +3122,6 @@ private struct PlaylistRowHandle: View {
     }
 }
 
-private struct PlaylistReorderDropZone: View {
-    let onInsert: (String) -> Bool
-    @State private var isTargeted = false
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 999, style: .continuous)
-            .fill(isTargeted ? Color.blue.opacity(0.65) : .clear)
-            .frame(height: isTargeted ? 5 : 10)
-            .padding(.leading, 48)
-            .padding(.trailing, 16)
-            .animation(.easeOut(duration: 0.12), value: isTargeted)
-            .dropDestination(for: String.self) { items, _ in
-                guard let draggedID = items.first else { return false }
-                return onInsert(draggedID)
-            } isTargeted: { hovering in
-                isTargeted = hovering
-            }
-    }
-}
-
 private struct BrandToolbarLabel: View {
     var body: some View {
         HStack(spacing: 8) {
@@ -3216,6 +3138,7 @@ private struct BrandToolbarLabel: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .foregroundStyle(.primary)
+        .glassEffect(.regular.interactive(), in: Capsule())
         .contentShape(Capsule())
     }
 }

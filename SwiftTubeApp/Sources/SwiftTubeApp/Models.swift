@@ -157,8 +157,42 @@ struct ChannelAvatarResponse: Codable, Sendable {
 
 struct SearchResponse: Codable, Sendable {
     let items: [VideoItem]
+    let channels: [SearchChannelItem]
+    let playlists: [PlaylistSummary]
+    let filterGroups: [SearchFilterGroup]
     let continuation: String?
     let query: String
+}
+
+struct SearchChannelItem: Codable, Hashable, Identifiable, Sendable {
+    let channelId: String
+    let title: String
+    let handle: String?
+    let subscriberCountText: String?
+    let descriptionText: String?
+    let avatarUrl: String?
+    let canonicalBaseUrl: String?
+
+    var id: String { channelId }
+    var avatarURL: URL? { avatarUrl.flatMap(URL.init(string:)) }
+    var reference: ChannelReference {
+        ChannelReference(channelId: channelId, title: title, canonicalBaseUrl: canonicalBaseUrl)
+    }
+}
+
+struct SearchFilterGroup: Codable, Hashable, Identifiable, Sendable {
+    let title: String
+    let options: [SearchFilterOption]
+
+    var id: String { title }
+}
+
+struct SearchFilterOption: Codable, Hashable, Identifiable, Sendable {
+    let title: String
+    let params: String?
+    let selected: Bool
+
+    var id: String { "\(title)|\(params ?? "selected")" }
 }
 
 struct WatchHistoryResponse: Codable, Sendable {

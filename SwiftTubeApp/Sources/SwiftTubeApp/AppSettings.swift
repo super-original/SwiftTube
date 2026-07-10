@@ -1061,7 +1061,15 @@ final class AppSettings: ObservableObject {
         let storedOrder = (defaults.array(forKey: sidebarOrderKey) as? [String]) ?? []
         let orderedItems = storedOrder.compactMap(SidebarItemKind.init(rawValue:))
         let missingItems = SidebarItemKind.allCases.filter { !orderedItems.contains($0) }
-        self.sidebarItemOrder = orderedItems + missingItems
+        var resolvedSidebarOrder = orderedItems + missingItems
+        if !orderedItems.contains(.search),
+           let insertedSearchIndex = resolvedSidebarOrder.firstIndex(of: .search) {
+            resolvedSidebarOrder.move(
+                fromOffsets: IndexSet(integer: insertedSearchIndex),
+                toOffset: 0
+            )
+        }
+        self.sidebarItemOrder = resolvedSidebarOrder
         self.hiddenSidebarItems = Set((defaults.array(forKey: sidebarHiddenKey) as? [String]) ?? [])
         self.sidebarPlaylistOrder = (defaults.array(forKey: sidebarPlaylistOrderKey) as? [String]) ?? []
         self.hiddenSidebarPlaylistIDs = Set((defaults.array(forKey: hiddenSidebarPlaylistIDsKey) as? [String]) ?? [])
@@ -1270,12 +1278,12 @@ final class AppSettings: ObservableObject {
     }
 
     func isSidebarItemVisible(_ item: SidebarItemKind) -> Bool {
-        if item == .home { return true }
+        if item == .search || item == .home { return true }
         return !hiddenSidebarItems.contains(item.rawValue)
     }
 
     func setSidebarItem(_ item: SidebarItemKind, visible: Bool) {
-        guard item != .home else { return }
+        guard item != .search, item != .home else { return }
         if visible {
             hiddenSidebarItems.remove(item.rawValue)
         } else {
@@ -1359,7 +1367,7 @@ final class AppSettings: ObservableObject {
     func visibleSidebarItems(isAuthenticated: Bool) -> [SidebarItemKind] {
         let available = sidebarItemOrder.filter { item in
             switch item {
-            case .home:
+            case .search, .home:
                 return true
             case .history, .playlists, .watchLater, .likedVideos:
                 return isAuthenticated

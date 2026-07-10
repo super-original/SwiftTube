@@ -32,8 +32,8 @@ final class BackendClient {
         try await backend.fetchChannelAbout(token: token)
     }
 
-    func fetchSearch(query: String, continuation: String? = nil) async throws -> SearchResponse {
-        try await backend.fetchSearch(query: query, continuation: continuation)
+    func fetchSearch(query: String, params: String? = nil, continuation: String? = nil) async throws -> SearchResponse {
+        try await backend.fetchSearch(query: query, params: params, continuation: continuation)
     }
 
     func fetchWatchHistory(query: String? = nil, continuation: String? = nil) async throws -> WatchHistoryResponse {
@@ -140,12 +140,18 @@ final class BackendClient {
         try await backend.removePlaylistItem(playlistID: playlistId, setVideoID: setVideoId)
     }
 
-    func reorderPlaylistItem(
+    func movePlaylistItem(
         playlistId: String,
         setVideoId: String,
-        position: String
+        predecessorSetVideoId: String?,
+        successorSetVideoId: String?
     ) async throws -> PlaylistItemMutationResponse {
-        try await backend.reorderPlaylistItem(playlistID: playlistId, setVideoID: setVideoId, position: position)
+        try await backend.movePlaylistItem(
+            playlistID: playlistId,
+            setVideoID: setVideoId,
+            predecessorSetVideoID: predecessorSetVideoId,
+            successorSetVideoID: successorSetVideoId
+        )
     }
 
     func fetchAuthStatus() async throws -> AuthStatusResponse {

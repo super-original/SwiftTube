@@ -228,6 +228,7 @@ final class YouTubeAPI: @unchecked Sendable {
 
     func search(
         query: String? = nil,
+        params: String? = nil,
         continuation: String? = nil,
         authenticated: Bool = false
     ) async throws -> JSONDictionary {
@@ -237,7 +238,22 @@ final class YouTubeAPI: @unchecked Sendable {
         if let continuation {
             body["continuation"] = continuation
         }
+        if let params, continuation == nil {
+            body["params"] = params
+        }
         return try await request(profile: .web, endpoint: "search", body: body, authenticated: authenticated)
+    }
+
+    func editPlaylist(playlistID: String, actions: [JSONDictionary]) async throws -> JSONDictionary {
+        try await request(
+            profile: .web,
+            endpoint: "playlist/edit",
+            body: [
+                "playlistId": playlistID,
+                "actions": actions,
+            ],
+            authenticated: true
+        )
     }
 
     func next(

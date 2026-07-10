@@ -19,6 +19,8 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
     private var snapTask: Task<Void, Never>?
     private var isApplyingProgrammaticFrame = false
     private var isInteractivelyMoving = false
+    private weak var previousKeyWindow: NSWindow?
+    private weak var previousFirstResponder: NSResponder?
 
     var symbolName: String {
         isActive ? "pip.exit" : "pip.enter"
@@ -78,6 +80,7 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
             return
         }
         panel.delegate = nil
+        restorePreviousFocus()
         panel.orderOut(nil)
         panel.close()
         self.panel = nil
@@ -123,12 +126,59 @@ final class PlayerPictureInPictureCoordinator: NSObject, ObservableObject {
     }
 
     func raiseForInteraction() {
-        panel?.orderFrontRegardless()
+        guard let panel else { return }
+        if NSApp.keyWindow !== panel {
+            if let keyWindow = NSApp.keyWindow, keyWindow !== panel {
+                previousKeyWindow = keyWindow
+                previousFirstResponder = keyWindow.firstResponder
+            }
+            panel.makeKeyAndOrderFront(nil)
+        } else {
+            panel.orderFrontRegardless()
+        }
+    }
+
+    func restorePreviousFocus() {
+        guard NSApp.keyWindow === panel, let previousKeyWindow else { return }
+        previousKeyWindow.makeKeyAndOrderFront(nil)
+        if let previousFirstResponder {
+            previousKeyWindow.makeFirstResponder(previousFirstResponder)
+        }
+        self.previousKeyWindow = nil
+        self.previousFirstResponder = nil
     }
 
     fileprivate func beginInteractiveMove() {
         isInteractivelyMoving = true
         snapTask?.cancel()
+    }
+
+    fileprivate func updateCollapsedDrag(_ delta: CGVector) -> Bool {
+        guard isCollapsed, let panel else { return false }
+        let inwardDistance = collapsedEdge == .left ? delta.dx : -delta.dx
+        guard inwardDistance > 18 else { return false }
+
+        let tabFrame = panel.frame.offsetBy(dx: delta.dx, dy: delta.dy)
+        let expandedSize = expandedFrame?.size
+            ?? defaultExpandedFrame(aspect: Double(panel.contentAspectRatio.width)).size
+        let originX = collapsedEdge == .left
+            ? tabFrame.maxX + 8
+            : tabFrame.minX - expandedSize.width - 8
+        let target = clampedExpandedFrame(
+            NSRect(
+                x: originX,
+                y: tabFrame.midY - expandedSize.height / 2,
+                width: expandedSize.width,
+                height: expandedSize.height
+            ),
+            screen: panel.screen
+        )
+
+        isCollapsed = false
+        panel.minSize = NSSize(width: 360, height: 202)
+        expandedFrame = target
+        applyFrame(target, to: panel, animate: true)
+        return true
     }
 
     fileprivate func completeMove(optionHeld: Bool, velocity: CGVector) {
@@ -249,7 +299,7 @@ private extension PlayerPictureInPictureCoordinator {
         panel.isMovableByWindowBackground = false
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
-        panel.becomesKeyOnlyIfNeeded = true
+        panel.becomesKeyOnlyIfNeeded = false
         panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.screenSaverWindow)))
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.backgroundColor = .clear
@@ -532,6 +582,7 @@ private struct PlayerPictureInPictureContent: View {
                 try? await Task.sleep(nanoseconds: 80_000_000)
                 guard !Task.isCancelled else { return }
                 playbackCoordinator.setHovering(false)
+                pictureInPicture.restorePreviousFocus()
             }
         }
     }
@@ -561,11 +612,13 @@ private struct PlayerPictureInPictureContent: View {
                 onMove: {},
                 onClick: pictureInPicture.expand,
                 onDragBegan: pictureInPicture.beginInteractiveMove,
+                onDragChanged: pictureInPicture.updateCollapsedDrag,
                 onDragEnded: { optionHeld, velocity in
                     pictureInPicture.completeMove(optionHeld: optionHeld, velocity: velocity)
                 },
                 excludesResizeEdges: false
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .glassEffect(.regular.interactive(), in: shape)
         .overlay {
@@ -638,6 +691,7 @@ private struct PlayerPictureInPictureInteractionView: NSViewRepresentable {
     let onMove: () -> Void
     let onClick: () -> Void
     let onDragBegan: () -> Void
+    var onDragChanged: (CGVector) -> Bool = { _ in false }
     let onDragEnded: (Bool, CGVector) -> Void
     var excludesResizeEdges = true
 
@@ -647,6 +701,7 @@ private struct PlayerPictureInPictureInteractionView: NSViewRepresentable {
         view.onMove = onMove
         view.onClick = onClick
         view.onDragBegan = onDragBegan
+        view.onDragChanged = onDragChanged
         view.onDragEnded = onDragEnded
         view.excludesResizeEdges = excludesResizeEdges
         return view
@@ -657,6 +712,7 @@ private struct PlayerPictureInPictureInteractionView: NSViewRepresentable {
         nsView.onMove = onMove
         nsView.onClick = onClick
         nsView.onDragBegan = onDragBegan
+        nsView.onDragChanged = onDragChanged
         nsView.onDragEnded = onDragEnded
         nsView.excludesResizeEdges = excludesResizeEdges
     }
@@ -668,6 +724,7 @@ private final class PlayerPictureInPictureInteractionNSView: NSView {
     var onMove: (() -> Void)?
     var onClick: (() -> Void)?
     var onDragBegan: (() -> Void)?
+    var onDragChanged: ((CGVector) -> Bool)?
     var onDragEnded: ((Bool, CGVector) -> Void)?
     var excludesResizeEdges = true
 
@@ -678,6 +735,7 @@ private final class PlayerPictureInPictureInteractionNSView: NSView {
     private var lastMouseTime: TimeInterval?
     private var velocity: CGVector = .zero
     private var didDrag = false
+    private var suppressDragUntilMouseUp = false
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         if excludesResizeEdges {
@@ -722,6 +780,7 @@ private final class PlayerPictureInPictureInteractionNSView: NSView {
         lastMouseTime = event.timestamp
         velocity = .zero
         didDrag = false
+        suppressDragUntilMouseUp = false
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -738,6 +797,10 @@ private final class PlayerPictureInPictureInteractionNSView: NSView {
         }
 
         if didDrag {
+            if !suppressDragUntilMouseUp, onDragChanged?(delta) == true {
+                suppressDragUntilMouseUp = true
+            }
+            guard !suppressDragUntilMouseUp else { return }
             window.setFrameOrigin(NSPoint(
                 x: windowStartOrigin.x + delta.dx,
                 y: windowStartOrigin.y + delta.dy
@@ -760,6 +823,7 @@ private final class PlayerPictureInPictureInteractionNSView: NSView {
         lastMouseTime = nil
         velocity = .zero
         didDrag = false
+        suppressDragUntilMouseUp = false
     }
 
     private func updateVelocity(currentLocation: NSPoint, timestamp: TimeInterval) {
