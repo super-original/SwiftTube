@@ -22,6 +22,7 @@ struct OnboardingView: View {
     @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var authSession: AuthSessionModel
     @State private var stage: OnboardingStage = .welcome
+    @Namespace private var brandNamespace
 
     var body: some View {
         ZStack {
@@ -29,16 +30,20 @@ struct OnboardingView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                OnboardingHeader(stage: stage)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 18)
+                if stage != .welcome {
+                    OnboardingHeader(stage: stage, brandNamespace: brandNamespace)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 18)
+                        .transition(.move(edge: .top).combined(with: .opacity))
 
-                Divider()
+                    Divider()
+                }
 
                 ScrollView {
                     OnboardingStageContent(
                         stage: stage,
                         settings: settings,
+                        brandNamespace: brandNamespace,
                         continueWithoutAccount: { stepStage() }
                     )
                     .id(stage)
@@ -100,18 +105,11 @@ struct OnboardingView: View {
 
 private struct OnboardingHeader: View {
     let stage: OnboardingStage
+    let brandNamespace: Namespace.ID
 
     var body: some View {
         HStack(spacing: 14) {
-            if let logo = BrandAssets.logo {
-                Image(nsImage: logo)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 28, height: 28)
-            }
-
-            Text("SwiftTube")
-                .font(.headline)
+            OnboardingBrand(hero: false, namespace: brandNamespace)
 
             Spacer()
 
@@ -143,13 +141,14 @@ private struct OnboardingProgressStrip: View {
 private struct OnboardingStageContent: View {
     let stage: OnboardingStage
     @ObservedObject var settings: AppSettings
+    let brandNamespace: Namespace.ID
     let continueWithoutAccount: () -> Void
 
     var body: some View {
         VStack {
             switch stage {
             case .welcome:
-                WelcomeStage()
+                WelcomeStage(brandNamespace: brandNamespace)
             case .theme:
                 ThemeStage(
                     selection: $settings.appearanceMode,
@@ -183,6 +182,8 @@ private struct OnboardingFooter: View {
     var body: some View {
         HStack {
             Button("Back", systemImage: "chevron.left", action: onBack)
+                .buttonStyle(.glass(.regular.interactive()))
+                .buttonBorderShape(.capsule)
                 .disabled(!canGoBack)
 
             Spacer()
@@ -193,7 +194,8 @@ private struct OnboardingFooter: View {
                     systemImage: stage == .finished ? "play.fill" : "arrow.right",
                     action: onContinue
                 )
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glass(.regular.tint(BrandAssets.swiftTubeBlue).interactive()))
+                .buttonBorderShape(.capsule)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -201,26 +203,50 @@ private struct OnboardingFooter: View {
 }
 
 private struct WelcomeStage: View {
+    let brandNamespace: Namespace.ID
+
     var body: some View {
-        VStack(spacing: 12) {
-            if let logo = BrandAssets.logo {
-                Image(nsImage: logo)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 76, height: 58)
+        OnboardingBrand(hero: true, namespace: brandNamespace)
+            .frame(maxWidth: .infinity, minHeight: 330)
+    }
+}
+
+private struct OnboardingBrand: View {
+    let hero: Bool
+    let namespace: Namespace.ID
+
+    var body: some View {
+        Group {
+            if hero {
+                VStack(spacing: 16) {
+                    brandImage
+                        .frame(width: 86, height: 68)
+                    Text("Welcome to SwiftTube")
+                        .font(.largeTitle.weight(.bold))
+                }
             } else {
-                Image(nsImage: NSApp.applicationIconImage)
-                    .resizable()
-                    .frame(width: 58, height: 58)
+                HStack(spacing: 12) {
+                    brandImage
+                        .frame(width: 28, height: 28)
+                    Text("SwiftTube")
+                        .font(.headline)
+                }
             }
+        }
+        .matchedGeometryEffect(id: "onboarding-brand", in: namespace)
+        .foregroundStyle(.white)
+    }
 
-            Text("SwiftTube")
-                .font(.largeTitle.weight(.bold))
-                .foregroundStyle(.white)
-
-            Text("Set up playback, appearance, and YouTube access.")
-                .font(.body)
-                .foregroundStyle(.secondary)
+    @ViewBuilder
+    private var brandImage: some View {
+        if let logo = BrandAssets.logo {
+            Image(nsImage: logo)
+                .resizable()
+                .scaledToFit()
+        } else {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .scaledToFit()
         }
     }
 }
@@ -476,7 +502,7 @@ private struct SponsorBlockStage: View {
     @Binding var sponsorBlockEnabled: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 5) {
                 stageTitle("Skip interruptions")
                 Text("SponsorBlock marks community-reported segments on the player timeline.")
@@ -487,10 +513,11 @@ private struct SponsorBlockStage: View {
             SponsorBlockOnboardingPreview(isEnabled: sponsorBlockEnabled)
 
             HStack(spacing: 14) {
-                Image(systemName: "scissors")
-                    .font(.title2)
-                    .foregroundStyle(BrandAssets.swiftTubeBlue)
-                    .frame(width: 32)
+                Image(systemName: "forward.end.fill")
+                    .font(.headline)
+                    .foregroundStyle(SponsorBlockCategory.sponsor.tint)
+                    .frame(width: 34, height: 34)
+                    .background(Color.primary.opacity(0.06), in: Circle())
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Automatically skip sponsors")
@@ -507,7 +534,7 @@ private struct SponsorBlockStage: View {
                     .toggleStyle(.switch)
             }
             .padding(16)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
     }
 }
@@ -516,45 +543,65 @@ private struct SponsorBlockOnboardingPreview: View {
     let isEnabled: Bool
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.black.opacity(0.78))
+        VStack(spacing: 20) {
+            HStack {
+                Label("Player timeline", systemImage: "play.rectangle")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
-            Image(systemName: "play.rectangle.fill")
-                .font(.system(size: 48, weight: .light))
-                .foregroundStyle(Color.white.opacity(0.13))
+                Spacer()
 
-            VStack(spacing: 10) {
-                if isEnabled {
-                    Label("Sponsor skipped", systemImage: "forward.fill")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .frame(height: 28)
-                        .background(.regularMaterial, in: Capsule())
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.20))
-                        Capsule()
-                            .fill(Color.white.opacity(0.85))
-                            .frame(width: proxy.size.width * 0.36)
-                        Capsule()
-                            .fill(SponsorBlockCategory.sponsor.tint)
-                            .frame(width: proxy.size.width * 0.20)
-                            .offset(x: proxy.size.width * 0.36)
-                        Circle()
-                            .fill(.white)
-                            .frame(width: 14, height: 14)
-                            .offset(x: proxy.size.width * (isEnabled ? 0.56 : 0.36) - 7)
-                    }
-                }
-                .frame(height: 14)
+                Label(isEnabled ? "Auto-skip on" : "Preview only", systemImage: isEnabled ? "checkmark.circle.fill" : "eye")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isEnabled ? SponsorBlockCategory.sponsor.tint : .secondary)
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .glassEffect(.regular, in: Capsule())
             }
-            .padding(16)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.14))
+                    Capsule()
+                        .fill(Color.primary.opacity(0.72))
+                        .frame(width: proxy.size.width * 0.38)
+                    Capsule()
+                        .fill(SponsorBlockCategory.sponsor.tint)
+                        .frame(width: proxy.size.width * 0.18)
+                        .offset(x: proxy.size.width * 0.38)
+                    Circle()
+                        .fill(.white)
+                        .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+                        .frame(width: 15, height: 15)
+                        .offset(x: proxy.size.width * (isEnabled ? 0.56 : 0.38) - 7.5)
+                }
+            }
+            .frame(height: 14)
+
+            HStack {
+                Text("0:00")
+                Spacer()
+                Label("Sponsor", systemImage: "scissors")
+                    .foregroundStyle(SponsorBlockCategory.sponsor.tint)
+                Spacer()
+                Text("8:42")
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
         }
-        .frame(height: 190)
+        .padding(18)
+        .background {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.primary.opacity(0.075), BrandAssets.swiftTubeBlue.opacity(0.08)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        }
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(height: 154)
         .animation(.smooth(duration: 0.25), value: isEnabled)
     }
 }
@@ -611,52 +658,32 @@ private struct LayoutStage: View {
     @Binding var selection: BrowseVideoGridPreset
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 20) {
             stageTitle("Video grid")
 
-            HStack(spacing: 16) {
-                ForEach(BrowseVideoGridPreset.allCases) { preset in
-                    GridPresetCard(preset: preset, selection: $selection)
-                }
-            }
-        }
-    }
-}
+            VideoGridPresetSelector(selection: $selection)
 
-private struct GridPresetCard: View {
-    let preset: BrowseVideoGridPreset
-    @Binding var selection: BrowseVideoGridPreset
+            HStack(spacing: 18) {
+                GridPreview(columns: selection.columnCount)
+                    .frame(maxWidth: .infinity)
 
-    private var isSelected: Bool { selection == preset }
-
-    var body: some View {
-        Button {
-            selection = preset
-        } label: {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text(preset.title)
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(selection.title)
+                        .font(.title2.weight(.bold))
+                    Text(selection.columnHint)
                         .font(.headline)
-                    Spacer()
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
+                        .foregroundStyle(BrandAssets.swiftTubeBlue)
+                    Text("Changes the density of video grids throughout SwiftTube.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                GridPreview(columns: preset.columnCount)
-
-                Text(preset.columnHint)
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(isSelected ? BrandAssets.swiftTubeBlue : .secondary)
+                .frame(width: 220, alignment: .leading)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(isSelected ? BrandAssets.swiftTubeBlue.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1.5)
-            )
+            .padding(18)
+            .frame(height: 180)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        .buttonStyle(.plain)
     }
 }
 
@@ -1077,7 +1104,9 @@ private struct GridPreview: View {
     var body: some View {
         GeometryReader { proxy in
             let availableThumbnailWidth = max(1, (proxy.size.width - CGFloat(columns - 1) * spacing) / CGFloat(columns))
-            let thumbnailWidth = min(maxThumbnailWidth, availableThumbnailWidth)
+            let availableRowHeight = max(1, (proxy.size.height - spacing) / 2)
+            let heightLimitedWidth = max(1, (availableRowHeight - 17) * 16 / 9)
+            let thumbnailWidth = min(maxThumbnailWidth, availableThumbnailWidth, heightLimitedWidth)
             let cellHeight = thumbnailWidth * 9 / 16 + 17
             let contentWidth = thumbnailWidth * CGFloat(columns) + CGFloat(columns - 1) * spacing
 

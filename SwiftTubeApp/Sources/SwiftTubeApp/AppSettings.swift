@@ -1361,17 +1361,19 @@ final class AppSettings: ObservableObject {
     }
 
     func isSidebarItemVisible(_ item: SidebarItemKind) -> Bool {
-        if item == .search || item == .home { return true }
         return !hiddenSidebarItems.contains(item.rawValue)
     }
 
     func setSidebarItem(_ item: SidebarItemKind, visible: Bool) {
-        guard item != .search, item != .home else { return }
         if visible {
             hiddenSidebarItems.remove(item.rawValue)
         } else {
             hiddenSidebarItems.insert(item.rawValue)
         }
+    }
+
+    func setAllSidebarItems(visible: Bool) {
+        hiddenSidebarItems = visible ? [] : Set(SidebarItemKind.allCases.map(\.rawValue))
     }
 
     func isSidebarPlaylistVisible(_ playlistID: String) -> Bool {
@@ -1457,8 +1459,7 @@ final class AppSettings: ObservableObject {
             }
         }
 
-        let visible = available.filter(isSidebarItemVisible)
-        return visible.isEmpty ? [.home] : visible
+        return available.filter(isSidebarItemVisible)
     }
 
     static func playbackSpeedLabel(_ speed: Double) -> String {

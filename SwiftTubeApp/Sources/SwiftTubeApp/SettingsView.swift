@@ -253,24 +253,10 @@ private struct AppearancePaneContent: View {
 
     var body: some View {
         SettingsCard(title: "Video Grid", icon: "rectangle.grid.2x2") {
-            Slider(value: gridSize, in: 0...2, step: 1) {
-                Text("Grid size")
-            }
+            VideoGridPresetSelector(selection: $settings.browseVideoGridPreset)
             .help("\(settings.browseVideoGridPreset.title), \(settings.browseVideoGridPreset.columnHint)")
             .accessibilityValue("\(settings.browseVideoGridPreset.title), \(settings.browseVideoGridPreset.columnHint)")
         }
-    }
-
-    private var gridSize: Binding<Double> {
-        Binding(
-            get: {
-                Double(BrowseVideoGridPreset.allCases.firstIndex(of: settings.browseVideoGridPreset) ?? 1)
-            },
-            set: { value in
-                let index = min(max(Int(value.rounded()), 0), BrowseVideoGridPreset.allCases.count - 1)
-                settings.browseVideoGridPreset = BrowseVideoGridPreset.allCases[index]
-            }
-        )
     }
 }
 
@@ -595,15 +581,51 @@ private struct SidebarPane: View {
                 subtitle: "Navigation order and visibility."
             )
 
-            SettingsCard(title: "Navigation Items", icon: "sidebar.left") {
-                LazyVStack(spacing: 0) {
-                    ForEach(settings.sidebarItemOrder, id: \.self) { item in
+            SidebarNavigationEditor(settings: settings)
+        }
+    }
+}
+
+private struct SidebarNavigationEditor: View {
+    @ObservedObject var settings: AppSettings
+
+    private var visibleItems: [SidebarItemKind] {
+        settings.sidebarItemOrder.filter(settings.isSidebarItemVisible)
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            SidebarEditorPreview(items: visibleItems)
+                .frame(width: 170)
+
+            VStack(spacing: 12) {
+                HStack {
+                    Text("\(visibleItems.count) of \(settings.sidebarItemOrder.count) shown")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Button("Hide All") {
+                        settings.setAllSidebarItems(visible: false)
+                    }
+                    .buttonStyle(.glass(.regular.interactive()))
+                    .controlSize(.small)
+
+                    Button("Show All") {
+                        settings.setAllSidebarItems(visible: true)
+                    }
+                    .buttonStyle(.glass(.regular.interactive()))
+                    .controlSize(.small)
+                }
+
+                LazyVStack(spacing: 8) {
+                    ForEach(settings.sidebarItemOrder) { item in
                         SidebarSettingsListRow(
                             item: item,
-                            isVisible: settings.isSidebarItemVisible(item)
-                        ) { visible in
-                            settings.setSidebarItem(item, visible: visible)
-                        }
+                            isVisible: settings.isSidebarItemVisible(item),
+                            onVisibilityChanged: { settings.setSidebarItem(item, visible: $0) }
+                        )
                     }
                     .reorderable()
                 }
@@ -617,7 +639,44 @@ private struct SidebarPane: View {
                     }
                 }
             }
+            .padding(14)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
+    }
+}
+
+private struct SidebarEditorPreview: View {
+    let items: [SidebarItemKind]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Preview", systemImage: "sidebar.left")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 6) {
+                if items.isEmpty {
+                    ContentUnavailableView(
+                        "No Items",
+                        systemImage: "sidebar.left",
+                        description: Text("The sidebar will stay empty.")
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 250)
+                } else {
+                    ForEach(items) { item in
+                        Label(item.title, systemImage: item.systemImage)
+                            .font(.callout.weight(.medium))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .frame(height: 36)
+                            .background(Color.primary.opacity(item == items.first ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(16)
+        .frame(minHeight: 370, alignment: .topLeading)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
@@ -627,47 +686,57 @@ private struct SidebarSettingsListRow: View {
     let onVisibilityChanged: (Bool) -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "line.3.horizontal")
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            Button {
-                onVisibilityChanged(!isVisible)
-            } label: {
-                Image(systemName: checkboxSymbol)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(item.isRequired ? .secondary : (isVisible ? Color.accentColor : .secondary))
-                    .frame(width: 22)
-            }
-            .buttonStyle(.plain)
-            .disabled(item.isRequired)
-
-            Label(item.title, systemImage: item.systemImage)
-                .foregroundStyle(item.isRequired ? .primary : (isVisible ? .primary : .secondary))
-
-            Spacer()
-
-            if item.isRequired {
-                Text("Required")
-                    .font(.caption.weight(.semibold))
+        Button {
+            onVisibilityChanged(!isVisible)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "line.3.horizontal")
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 32)
+
+                Image(systemName: item.systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isVisible ? BrandAssets.swiftTubeBlue : .secondary)
+                    .frame(width: 34, height: 34)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title)
+                        .font(.headline)
+                    Text(isVisible ? "Shown in the sidebar" : "Hidden from the sidebar")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                ZStack(alignment: isVisible ? .trailing : .leading) {
+                    Capsule()
+                        .fill(isVisible ? Color.accentColor : Color.secondary.opacity(0.28))
+                        .frame(width: 38, height: 22)
+                    Circle()
+                        .fill(.white)
+                        .shadow(color: .black.opacity(0.18), radius: 1, y: 1)
+                        .frame(width: 18, height: 18)
+                        .padding(2)
+                }
+                .animation(.snappy(duration: 0.18, extraBounce: 0), value: isVisible)
             }
         }
-        .padding(.vertical, 6)
-    }
-
-    private var checkboxSymbol: String {
-        if item.isRequired {
-            return "checkmark.square.fill"
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .frame(height: 58)
+        .background(Color.primary.opacity(isVisible ? 0.055 : 0.025), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(Color.primary.opacity(isVisible ? 0.08 : 0.04), lineWidth: 1)
         }
-        return isVisible ? "checkmark.square.fill" : "square"
-    }
-}
-
-private extension SidebarItemKind {
-    var isRequired: Bool {
-        self == .search || self == .home
+        .opacity(isVisible ? 1 : 0.66)
+        .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .accessibilityLabel(item.title)
+        .accessibilityValue(isVisible ? "Shown" : "Hidden")
+        .accessibilityAddTraits(isVisible ? .isSelected : [])
     }
 }
 

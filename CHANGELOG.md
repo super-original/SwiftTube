@@ -8,6 +8,14 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.44
+
+- Rebuilt Sidebar settings as a live-preview navigation editor with full-row drag snapshots, compact reorder surfaces, Show All and Hide All actions, and support for disabling every item including Search and Home.
+- Replaced both the onboarding grid cards and Settings slider with one shared three-segment Liquid Glass video-grid selector, eliminating Large-preview clipping.
+- Refined SponsorBlock onboarding into a compact timeline explanation and converted onboarding navigation to Liquid Glass controls.
+- Simplified the welcome screen to “Welcome to SwiftTube” and added a matched transition that moves the centered brand into the persistent top-left onboarding header.
+- Added the standard video context menu to channel grid and list results, including authenticated Watch Later and playlist actions, while retaining the shared thumbnail renderer.
+
 ## 0.15.43
 
 - Rebuilt thumbnail delivery around a dedicated memory/disk transport cache, URL-level request coalescing, off-main downsampling, and a cost-bounded decoded-image cache.

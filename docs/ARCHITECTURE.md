@@ -46,6 +46,11 @@ centered loading states, pagination indicators, and the SwiftTube activity indic
 screens should reuse these components instead of introducing screen-specific spinners or
 thumbnail placeholders.
 
+Video grid density is selected through the shared `VideoGridPresetSelector` in both
+onboarding and Settings. Channel video grids use `VideoCard`, channel list rows use
+`InlineVideoThumbnail`, and both attach the same `VideoContextMenuContent` actions used by
+the rest of the app.
+
 ## In-process backend
 
 Important files:

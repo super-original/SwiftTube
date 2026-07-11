@@ -967,10 +967,13 @@ private struct ChannelPageScreen: View {
     let route: ChannelRoute
 
     @StateObject private var viewModel = ChannelPageViewModel()
+    @StateObject private var playlistLibraryViewModel = PlaylistLibraryViewModel()
     @AppStorage("channelContentLayoutMode") private var contentLayoutModeRaw = ChannelContentLayoutMode.grid.rawValue
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var mutationCenter = AppMutationCenter.shared
 
     @EnvironmentObject private var navigation: AppNavigationModel
+    @EnvironmentObject private var authSession: AuthSessionModel
 
     var body: some View {
         GeometryReader { proxy in
@@ -1055,6 +1058,11 @@ private struct ChannelPageScreen: View {
         .task(id: route.id) {
             viewModel.load(route: route)
         }
+        .task(id: authSession.status.authenticated) {
+            if authSession.status.authenticated {
+                playlistLibraryViewModel.loadInitial()
+            }
+        }
     }
 
     private var visibleTabs: [ChannelTabSummary] {
@@ -1092,6 +1100,18 @@ private struct ChannelPageScreen: View {
                         .contentShape(RoundedRectangle(cornerRadius: 16))
                         .onTapGesture {
                             navigation.showVideo(video)
+                        }
+                        .contextMenu {
+                            ChannelVideoContextMenu(
+                                video: video,
+                                userPlaylists: userOwnedPlaylists,
+                                isAuthenticated: authSession.status.authenticated,
+                                onPlay: { navigation.showVideo(video) },
+                                onAddToWatchLater: { queueAddToWatchLater(videoID: video.id) },
+                                onSaveToPlaylist: { playlistID in
+                                    queueSaveToPlaylist(videoID: video.id, playlistID: playlistID)
+                                }
+                            )
                         }
                         .onAppear {
                             viewModel.loadMoreIfNeeded(currentItem: item)
@@ -1132,6 +1152,18 @@ private struct ChannelPageScreen: View {
                                 navigation.showChannel(channel)
                             }
                         )
+                        .contextMenu {
+                            ChannelVideoContextMenu(
+                                video: video,
+                                userPlaylists: userOwnedPlaylists,
+                                isAuthenticated: authSession.status.authenticated,
+                                onPlay: { navigation.showVideo(video) },
+                                onAddToWatchLater: { queueAddToWatchLater(videoID: video.id) },
+                                onSaveToPlaylist: { playlistID in
+                                    queueSaveToPlaylist(videoID: video.id, playlistID: playlistID)
+                                }
+                            )
+                        }
                         .onAppear {
                             viewModel.loadMoreIfNeeded(currentItem: item)
                         }
@@ -1231,6 +1263,65 @@ private struct ChannelPageScreen: View {
         }
     }
 
+    private var userOwnedPlaylists: [PlaylistSummary] {
+        playlistLibraryViewModel.playlists.filter {
+            !["WL", "LL"].contains($0.playlistId)
+        }
+    }
+
+    private func queueAddToWatchLater(videoID: String) {
+        mutationCenter.submit(
+            key: MutationQueueKey.watchLater(videoID: videoID),
+            successNotice: MutationNotice(
+                title: "Added to Watch Later",
+                message: nil,
+                symbol: "clock.fill",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t update Watch Later",
+                    message: error.localizedDescription,
+                    symbol: "clock",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            execute: {
+                _ = try await BackendClient.shared.updateWatchLater(id: videoID, saved: true)
+            }
+        )
+    }
+
+    private func queueSaveToPlaylist(videoID: String, playlistID: String) {
+        let playlistTitle = userOwnedPlaylists.first(where: { $0.playlistId == playlistID })?.title ?? "playlist"
+        mutationCenter.submit(
+            key: MutationQueueKey.playlist(videoID: videoID, playlistID: playlistID),
+            successNotice: MutationNotice(
+                title: "Saved to \(playlistTitle)",
+                message: nil,
+                symbol: "music.note.list",
+                accent: .green
+            ),
+            errorNotice: { error in
+                MutationNotice(
+                    title: "Couldn’t save to \(playlistTitle)",
+                    message: error.localizedDescription,
+                    symbol: "music.note.list",
+                    accent: .red
+                )
+            },
+            optimistic: {},
+            execute: {
+                _ = try await BackendClient.shared.updatePlaylist(
+                    id: videoID,
+                    playlistId: playlistID,
+                    saved: true
+                )
+            }
+        )
+    }
+
     private var emptyStateMessage: String {
         switch route.tab {
         case .about:
@@ -1245,6 +1336,32 @@ private struct ChannelPageScreen: View {
         default:
             return "YouTube didn’t return any items for this tab."
         }
+    }
+}
+
+private struct ChannelVideoContextMenu: View {
+    let video: VideoItem
+    let userPlaylists: [PlaylistSummary]
+    let isAuthenticated: Bool
+    let onPlay: () -> Void
+    let onAddToWatchLater: () -> Void
+    let onSaveToPlaylist: (String) -> Void
+
+    var body: some View {
+        VideoContextMenuContent(
+            video: video,
+            userPlaylists: userPlaylists,
+            onPlay: onPlay,
+            onPlayFromHere: nil,
+            onAddToWatchLater: isAuthenticated ? onAddToWatchLater : nil,
+            onSaveToPlaylist: isAuthenticated ? onSaveToPlaylist : nil,
+            onMoveToPlaylist: nil,
+            onMoveToWatchLater: nil,
+            onRemoveFromCurrentPlaylist: nil,
+            onMoveToTop: nil,
+            onMoveToBottom: nil,
+            onRemoveFromWatchHistory: nil
+        )
     }
 }
 
