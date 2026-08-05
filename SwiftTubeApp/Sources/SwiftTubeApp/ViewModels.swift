@@ -1517,6 +1517,7 @@ final class PlaylistFeedViewModel: ObservableObject {
         return true
     }
 
+    @available(macOS 27.0, *)
     func reorderItems(
         using difference: ReorderDifference<String, ReorderableSingleCollectionIdentifier>
     ) {

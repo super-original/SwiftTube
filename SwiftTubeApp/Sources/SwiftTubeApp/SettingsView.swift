@@ -619,29 +619,80 @@ private struct SidebarNavigationEditor: View {
                     .controlSize(.small)
                 }
 
-                LazyVStack(spacing: 8) {
-                    ForEach(settings.sidebarItemOrder) { item in
-                        SidebarSettingsListRow(
-                            item: item,
-                            isVisible: settings.isSidebarItemVisible(item),
-                            onVisibilityChanged: { settings.setSidebarItem(item, visible: $0) }
-                        )
-                    }
-                    .reorderable()
-                }
-                .reorderContainer(for: SidebarItemKind.self, itemID: \.self) { difference in
-                    guard let dragged = difference.sources.first else { return }
-                    switch difference.destination.position {
-                    case .before(let target):
-                        settings.reorderSidebarItem(dragged, before: target)
-                    case .end:
-                        settings.reorderSidebarItem(dragged, to: settings.sidebarItemOrder.count)
-                    }
+                if #available(macOS 27.0, *) {
+                    modernSidebarItemList
+                } else {
+                    legacySidebarItemList
                 }
             }
             .padding(14)
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
+    }
+
+    @available(macOS 27.0, *)
+    private var modernSidebarItemList: some View {
+        LazyVStack(spacing: 8) {
+            ForEach(settings.sidebarItemOrder) { item in
+                sidebarItemRow(item)
+            }
+            .reorderable()
+        }
+        .reorderContainer(for: SidebarItemKind.self, itemID: \.self) { difference in
+            guard let dragged = difference.sources.first else { return }
+            switch difference.destination.position {
+            case .before(let target):
+                settings.reorderSidebarItem(dragged, before: target)
+            case .end:
+                settings.reorderSidebarItem(dragged, to: settings.sidebarItemOrder.count)
+            }
+        }
+    }
+
+    private var legacySidebarItemList: some View {
+        LazyVStack(spacing: 4) {
+            ForEach(Array(settings.sidebarItemOrder.enumerated()), id: \.element) { index, item in
+                SidebarReorderDropZone {
+                    settings.reorderSidebarItem($0, to: index)
+                }
+                sidebarItemRow(item)
+                    .draggable(item.rawValue)
+            }
+            SidebarReorderDropZone {
+                settings.reorderSidebarItem($0, to: settings.sidebarItemOrder.count)
+            }
+        }
+    }
+
+    private func sidebarItemRow(_ item: SidebarItemKind) -> some View {
+        SidebarSettingsListRow(
+            item: item,
+            isVisible: settings.isSidebarItemVisible(item),
+            onVisibilityChanged: { settings.setSidebarItem(item, visible: $0) }
+        )
+    }
+}
+
+private struct SidebarReorderDropZone: View {
+    let onInsert: (SidebarItemKind) -> Void
+    @State private var isTargeted = false
+
+    var body: some View {
+        Capsule()
+            .fill(isTargeted ? Color.accentColor.opacity(0.7) : .clear)
+            .frame(height: isTargeted ? 4 : 4)
+            .padding(.horizontal, 12)
+            .animation(.easeOut(duration: 0.12), value: isTargeted)
+            .dropDestination(for: String.self) { items, _ in
+                guard let rawValue = items.first,
+                      let item = SidebarItemKind(rawValue: rawValue) else {
+                    return false
+                }
+                onInsert(item)
+                return true
+            } isTargeted: { hovering in
+                isTargeted = hovering
+            }
     }
 }
 

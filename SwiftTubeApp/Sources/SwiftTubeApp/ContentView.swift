@@ -2703,15 +2703,20 @@ private struct PlaylistFeedScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                modernPlaylistList
+                if #available(macOS 27.0, *) {
+                    modernPlaylistList
+                } else {
+                    legacyPlaylistList
+                }
             }
         }
     }
 
+    @available(macOS 27.0, *)
     private var modernPlaylistList: some View {
         LazyVStack(spacing: 4) {
             ForEach(viewModel.items, id: \.playlistIdentity) { video in
-                playlistRow(video)
+                playlistRow(video, usesSystemReordering: true)
                     .staggeredFadeIn(
                         id: video.playlistIdentity,
                         index: viewModel.items.firstIndex(where: { $0.playlistIdentity == video.playlistIdentity }) ?? 0,
@@ -2727,6 +2732,27 @@ private struct PlaylistFeedScreen: View {
         }
     }
 
+    private var legacyPlaylistList: some View {
+        LazyVStack(spacing: 4) {
+            ForEach(Array(viewModel.items.enumerated()), id: \.element.playlistIdentity) { index, video in
+                PlaylistReorderDropZone {
+                    viewModel.reorderItem(withID: $0, toInsertionIndex: index)
+                }
+                playlistRow(video, usesSystemReordering: false)
+                    .staggeredFadeIn(
+                        id: video.playlistIdentity,
+                        index: index,
+                        columns: 1
+                    )
+            }
+            PlaylistReorderDropZone {
+                viewModel.reorderItem(withID: $0, toInsertionIndex: viewModel.items.count)
+            }
+
+            loadingMoreRows
+        }
+    }
+
     @ViewBuilder
     private var loadingMoreRows: some View {
         if viewModel.isLoading {
@@ -2735,9 +2761,10 @@ private struct PlaylistFeedScreen: View {
         }
     }
 
-    private func playlistRow(_ video: VideoItem) -> some View {
+    private func playlistRow(_ video: VideoItem, usesSystemReordering: Bool) -> some View {
         PlaylistFeedDraggableRow(
             video: video,
+            usesSystemReordering: usesSystemReordering,
             isCurrent: isCurrent(video),
             isMutating: viewModel.mutationIDs.contains(video.playlistSetVideoId ?? ""),
             onPlay: { playPlaylist(startingWith: video) },
@@ -3120,6 +3147,7 @@ private struct PlaylistVideoRow: View {
 private struct PlaylistFeedDraggableRow: View {
     @ObservedObject private var settings = AppSettings.shared
     let video: VideoItem
+    let usesSystemReordering: Bool
     let isCurrent: Bool
     let isMutating: Bool
     let onPlay: () -> Void
@@ -3133,7 +3161,13 @@ private struct PlaylistFeedDraggableRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
-            rowHandle
+            Group {
+                if usesSystemReordering {
+                    rowHandle
+                } else {
+                    rowHandle.draggable(video.playlistIdentity)
+                }
+            }
 
             PlaylistVideoRow(
                 video: video,
@@ -3182,6 +3216,26 @@ private struct PlaylistFeedDraggableRow: View {
             isCurrent: isCurrent,
             fullHeight: 95
         )
+    }
+}
+
+private struct PlaylistReorderDropZone: View {
+    let onInsert: (String) -> Bool
+    @State private var isTargeted = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 999, style: .continuous)
+            .fill(isTargeted ? Color.blue.opacity(0.65) : .clear)
+            .frame(height: isTargeted ? 5 : 10)
+            .padding(.leading, 48)
+            .padding(.trailing, 16)
+            .animation(.easeOut(duration: 0.12), value: isTargeted)
+            .dropDestination(for: String.self) { items, _ in
+                guard let draggedID = items.first else { return false }
+                return onInsert(draggedID)
+            } isTargeted: { hovering in
+                isTargeted = hovering
+            }
     }
 }
 

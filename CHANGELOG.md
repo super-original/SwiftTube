@@ -8,6 +8,10 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.45
+
+- Restored macOS 26 support and added compatible drag-and-drop reordering fallbacks for playlist pages, the in-player queue, and Sidebar settings while retaining native reorder containers on macOS 27.
+
 ## 0.15.44
 
 - Rebuilt Sidebar settings as a live-preview navigation editor with full-row drag snapshots, compact reorder surfaces, Show All and Hide All actions, and support for disabling every item including Search and Home.

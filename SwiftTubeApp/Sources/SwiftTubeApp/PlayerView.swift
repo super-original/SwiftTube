@@ -3776,35 +3776,11 @@ private struct PlaylistQueueList<ContextMenuContent: View>: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(items, id: \.playlistIdentity) { video in
-                        Button {
-                            onOpen(video)
-                        } label: {
-                            PlaylistQueueRailRow(
-                                video: video,
-                                isCurrent: currentVideoID == video.id,
-                                canReorder: video.playlistSetVideoId != nil
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .id(video.playlistIdentity)
-                        .contextMenu {
-                            contextMenuContent(video)
-                        }
-                    }
-                    .reorderable()
-                }
-                .reorderContainer(for: VideoItem.self, itemID: \.playlistIdentity) { difference in
-                    guard let draggedID = difference.sources.first else { return }
-                    switch difference.destination.position {
-                    case .before(let destinationID):
-                        guard let destinationIndex = items.firstIndex(where: { $0.playlistIdentity == destinationID }) else {
-                            return
-                        }
-                        _ = onReorder(draggedID, destinationIndex)
-                    case .end:
-                        _ = onReorder(draggedID, items.count)
+                Group {
+                    if #available(macOS 27.0, *) {
+                        modernQueueList
+                    } else {
+                        legacyQueueList
                     }
                 }
                 .padding(.trailing, 4)
@@ -3820,6 +3796,86 @@ private struct PlaylistQueueList<ContextMenuContent: View>: View {
                 }
             }
         }
+    }
+
+    @available(macOS 27.0, *)
+    private var modernQueueList: some View {
+        LazyVStack(alignment: .leading, spacing: 4) {
+            ForEach(items, id: \.playlistIdentity) { video in
+                queueRow(video, usesSystemReordering: true)
+            }
+            .reorderable()
+        }
+        .reorderContainer(for: VideoItem.self, itemID: \.playlistIdentity) { difference in
+            guard let draggedID = difference.sources.first else { return }
+            switch difference.destination.position {
+            case .before(let destinationID):
+                guard let destinationIndex = items.firstIndex(where: { $0.playlistIdentity == destinationID }) else {
+                    return
+                }
+                _ = onReorder(draggedID, destinationIndex)
+            case .end:
+                _ = onReorder(draggedID, items.count)
+            }
+        }
+    }
+
+    private var legacyQueueList: some View {
+        LazyVStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(items.enumerated()), id: \.element.playlistIdentity) { index, video in
+                PlaylistQueueReorderDropZone {
+                    onReorder($0, index)
+                }
+                queueRow(video, usesSystemReordering: false)
+            }
+            PlaylistQueueReorderDropZone {
+                onReorder($0, items.count)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func queueRow(_ video: VideoItem, usesSystemReordering: Bool) -> some View {
+        let row = Button {
+            onOpen(video)
+        } label: {
+            PlaylistQueueRailRow(
+                video: video,
+                isCurrent: currentVideoID == video.id,
+                canReorder: video.playlistSetVideoId != nil
+            )
+        }
+        .buttonStyle(.plain)
+        .id(video.playlistIdentity)
+        .contextMenu {
+            contextMenuContent(video)
+        }
+
+        if usesSystemReordering {
+            row
+        } else {
+            row.draggable(video.playlistIdentity)
+        }
+    }
+}
+
+private struct PlaylistQueueReorderDropZone: View {
+    let onInsert: (String) -> Bool
+    @State private var isTargeted = false
+
+    var body: some View {
+        Capsule()
+            .fill(isTargeted ? Color.accentColor.opacity(0.7) : .clear)
+            .frame(height: isTargeted ? 4 : 6)
+            .padding(.leading, 42)
+            .padding(.trailing, 8)
+            .animation(.easeOut(duration: 0.12), value: isTargeted)
+            .dropDestination(for: String.self) { items, _ in
+                guard let draggedID = items.first else { return false }
+                return onInsert(draggedID)
+            } isTargeted: { hovering in
+                isTargeted = hovering
+            }
     }
 }
 
