@@ -40,11 +40,17 @@ final class HomeViewModel: ObservableObject {
 
     private var continuation: String? = nil
     private var hasLoadedInitial = false
+    private var feedAuthenticated: Bool? = nil
+    private var loadGeneration = 0
+    private var loadTask: Task<Void, Never>?
 
     func loadInitial() {
         guard !hasLoadedInitial else { return }
         hasLoadedInitial = true
-        Task { await fetchRecommendations(reset: true) }
+        loadGeneration += 1
+        let generation = loadGeneration
+        loadTask?.cancel()
+        loadTask = Task { await fetchRecommendations(reset: true, generation: generation) }
     }
 
     func reload() {
@@ -55,7 +61,8 @@ final class HomeViewModel: ObservableObject {
     func loadMoreIfNeeded(currentVideo: VideoItem) {
         guard let last = videos.last, last == currentVideo else { return }
         guard !isLoading, continuation != nil else { return }
-        Task { await fetchRecommendations(reset: false) }
+        let generation = loadGeneration
+        loadTask = Task { await fetchRecommendations(reset: false, generation: generation) }
     }
 
     func applyLocalProgress(_ progress: VideoProgress, to videoID: String) {
@@ -67,25 +74,40 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
-    private func fetchRecommendations(reset: Bool) async {
+    private func fetchRecommendations(reset: Bool, generation: Int) async {
         isLoading = true
         let startDate = Date()
-        defer { isLoading = false }
+        defer {
+            if generation == loadGeneration {
+                isLoading = false
+            }
+        }
 
         if reset {
             continuation = nil
             videos = []
             notice = nil
+            feedAuthenticated = nil
         }
 
         do {
+            if reset {
+                feedAuthenticated = try await BackendClient.shared.fetchAuthStatus().authenticated
+            }
+            guard !Task.isCancelled, generation == loadGeneration,
+                  let feedAuthenticated else { return }
+
             var mergedVideos = reset ? [] : videos
             var nextContinuation = continuation
             var remainingDuplicatePages = paginationDuplicateHopLimit
             var latestNote = notice
 
             while true {
-                let response = try await BackendClient.shared.fetchRecommendations(continuation: nextContinuation)
+                let response = try await BackendClient.shared.fetchRecommendations(
+                    continuation: nextContinuation,
+                    authenticated: feedAuthenticated
+                )
+                guard !Task.isCancelled, generation == loadGeneration else { return }
                 let mergeResult = appendUniqueItems(existing: mergedVideos, incoming: response.items, id: \.id)
                 mergedVideos = mergeResult.items
                 latestNote = response.note
@@ -112,6 +134,7 @@ final class HomeViewModel: ObservableObject {
                 elapsedMilliseconds: Int(Date().timeIntervalSince(startDate) * 1000)
             )
         } catch {
+            guard !Task.isCancelled, generation == loadGeneration else { return }
             errorMessage = "Failed to load recommendations."
         }
     }

@@ -8,6 +8,11 @@ Future second-digit releases, for example `0.12.x -> 0.13.0`, must include:
 - a flagship feature or clear release theme
 - a matching changelog entry
 
+## 0.15.48
+
+- Fixed Home flattening regional news shelves into the personalized recommendation grid and following shelf pagination instead of the main feed.
+- Kept each Home load bound to one authentication state so signed-in feeds can no longer silently fall back to or merge with anonymous regional results.
+
 ## 0.15.47
 
 - Fixed the first video opened after launch exposing only the 360p fallback by bootstrapping native player clients with the watch page visitor ID before their first request, and strengthened the live extractor check to require an HD quality option.

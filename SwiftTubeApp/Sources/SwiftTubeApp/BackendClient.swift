@@ -8,8 +8,14 @@ final class BackendClient {
 
     private init() {}
 
-    func fetchRecommendations(continuation: String? = nil) async throws -> RecommendationsResponse {
-        try await backend.fetchRecommendations(continuation: continuation)
+    func fetchRecommendations(
+        continuation: String? = nil,
+        authenticated: Bool? = nil
+    ) async throws -> RecommendationsResponse {
+        try await backend.fetchRecommendations(
+            continuation: continuation,
+            authenticated: authenticated
+        )
     }
 
     func fetchChannelAvatar(channelID: String) async throws -> ChannelAvatarResponse {

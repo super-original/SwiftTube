@@ -535,6 +535,87 @@ final class DependencySelectionTests: XCTestCase {
         print("Native YouTube extraction: \(nativeElapsed)s, \(nativePlayback.streams.count) streams, qualities: \(qualityTitles)")
     }
 
+    func testHomeFeedKeepsNestedShelvesOutOfRecommendationGrid() {
+        let directVideo: JSONDictionary = [
+            "richItemRenderer": [
+                "content": [
+                    "videoRenderer": [
+                        "videoId": "personal-video",
+                        "title": ["simpleText": "Personal recommendation"],
+                    ],
+                ],
+            ],
+        ]
+        let nestedShelf: JSONDictionary = [
+            "richSectionRenderer": [
+                "content": [
+                    "richShelfRenderer": [
+                        "contents": [[
+                            "richItemRenderer": [
+                                "content": [
+                                    "videoRenderer": [
+                                        "videoId": "regional-news",
+                                        "title": ["simpleText": "Regional news"],
+                                    ],
+                                ],
+                            ],
+                        ]],
+                        "continuations": [[
+                            "nextContinuationData": ["continuation": "shelf-token"],
+                        ]],
+                    ],
+                ],
+            ],
+        ]
+        let gridContinuation: JSONDictionary = [
+            "continuationItemRenderer": [
+                "continuationEndpoint": [
+                    "continuationCommand": ["token": "grid-token"],
+                ],
+            ],
+        ]
+        let payload: JSONDictionary = [
+            "contents": [
+                "richGridRenderer": [
+                    "contents": [directVideo, nestedShelf, gridContinuation],
+                ],
+            ],
+        ]
+
+        XCTAssertEqual(debugHomeFeedVideoIDsForTesting(payload), ["personal-video"])
+        XCTAssertEqual(debugHomeFeedContinuationForTesting(payload), "grid-token")
+    }
+
+    func testAuthenticatedHomeResponseWhenRealYouTubeTestsAreEnabled() async throws {
+        guard ProcessInfo.processInfo.environment["SWIFTTUBE_RUN_REAL_YOUTUBE_TESTS"] == "1" else {
+            throw XCTSkip("Set SWIFTTUBE_RUN_REAL_YOUTUBE_TESTS=1 to hit real YouTube.")
+        }
+
+        let authManager = YouTubeAuthManager()
+        guard await authManager.currentMaterial() != nil else {
+            throw XCTSkip("Sign in to SwiftTube before testing the authenticated Home feed.")
+        }
+
+        let payload = try await YouTubeAPI(authManager: authManager).browse(
+            browseID: "FEwhat_to_watch",
+            authenticated: true
+        )
+        let responseContext = payload["responseContext"] as? JSONDictionary
+        let mainContext = responseContext?["mainAppWebResponseContext"] as? JSONDictionary
+
+        XCTAssertEqual(mainContext?["loggedOut"] as? Bool, false)
+
+        let firstPage = try await SwiftTubeBackend.shared.fetchRecommendations()
+        XCTAssertFalse(firstPage.items.isEmpty)
+        XCTAssertNil(firstPage.note)
+
+        if let continuation = firstPage.continuation {
+            let secondPage = try await SwiftTubeBackend.shared.fetchRecommendations(continuation: continuation)
+            XCTAssertFalse(secondPage.items.isEmpty)
+            XCTAssertNil(secondPage.note)
+        }
+    }
+
     private func assertStreamAcceptsRangeRequest(
         _ stream: StreamInfo,
         file: StaticString = #filePath,

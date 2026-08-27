@@ -73,9 +73,17 @@ actor SwiftTubeBackend {
         try await authManager.clear(preserveBrowserChoice: false)
     }
 
-    func fetchRecommendations(continuation: String? = nil) async throws -> RecommendationsResponse {
+    func fetchRecommendations(
+        continuation: String? = nil,
+        authenticated requestedAuthentication: Bool? = nil
+    ) async throws -> RecommendationsResponse {
         var note: String?
-        let usingAuth = await authManager.currentMaterial() != nil
+        let hasAuthMaterial = await authManager.currentMaterial() != nil
+        let usingAuth = requestedAuthentication ?? hasAuthMaterial
+
+        if usingAuth, !hasAuthMaterial {
+            throw BackendClientError(message: "Your YouTube session expired. Sign in again to continue.")
+        }
 
         let data: JSONDictionary
         if usingAuth {
@@ -86,22 +94,20 @@ actor SwiftTubeBackend {
                     do {
                         data = try await loadRecommendations(continuation: continuation, authenticated: true)
                     } catch {
-                        note = "Your saved YouTube session expired. Showing public picks instead."
-                        data = try await loadRecommendations(continuation: continuation, authenticated: false)
+                        throw BackendClientError(message: "Your personalized YouTube Home feed could not be loaded.")
                     }
                 } else {
-                    note = "Your saved YouTube session expired. Showing public picks instead."
-                    data = try await loadRecommendations(continuation: continuation, authenticated: false)
+                    throw BackendClientError(message: "Your personalized YouTube Home feed could not be loaded.")
                 }
             }
         } else {
             data = try await loadRecommendations(continuation: continuation, authenticated: false)
         }
 
-        var items = extractVideoItems(from: data)
-        var token = extractContinuationToken(from: data)
+        var items = extractHomeVideoItems(from: data)
+        var token = extractHomeContinuationToken(from: data)
 
-        if items.isEmpty, continuation == nil {
+        if items.isEmpty, continuation == nil, !usingAuth {
             let guide = try await api.guide(authenticated: false)
             let browseIDs = extractBrowseIDsFromGuide(from: guide, limit: 4)
             var fallbackItems: [VideoItem] = []
@@ -118,9 +124,7 @@ actor SwiftTubeBackend {
             }
 
             if !fallbackItems.isEmpty {
-                note = usingAuth
-                    ? "History is off on YouTube. Showing Explore picks instead."
-                    : "You’re logged out. Showing Explore picks instead."
+                note = "You’re logged out. Showing Explore picks instead."
                 items = fallbackItems
                 token = nil
             }
@@ -4604,6 +4608,75 @@ private func extractVideoItems(from data: Any, limit: Int = 120) -> [VideoItem] 
     }
 
     return items
+}
+
+private func extractHomeVideoItems(from data: Any, limit: Int = 120) -> [VideoItem] {
+    var items: [VideoItem] = []
+    var seen = Set<String>()
+
+    for contents in homeFeedContentLists(from: data) {
+        for value in contents {
+            guard let container = value as? JSONDictionary else { continue }
+            let content = (container["richItemRenderer"] as? JSONDictionary)?["content"] as? JSONDictionary
+                ?? container
+
+            let item: VideoItem?
+            if let lockup = content["lockupViewModel"] as? JSONDictionary {
+                item = parseLockupVideoItem(lockup)
+            } else {
+                let renderer = (content["videoRenderer"] as? JSONDictionary)
+                    ?? (content["gridVideoRenderer"] as? JSONDictionary)
+                item = renderer.flatMap(parseStandardVideoItem)
+            }
+
+            guard let item, seen.insert(item.id).inserted else { continue }
+            items.append(item)
+            if items.count >= limit { return items }
+        }
+    }
+
+    return items
+}
+
+private func extractHomeContinuationToken(from data: Any) -> String? {
+    for contents in homeFeedContentLists(from: data) {
+        for value in contents.reversed() {
+            if let token = continuationToken(in: value), !token.isEmpty {
+                return token
+            }
+        }
+    }
+    return nil
+}
+
+private func homeFeedContentLists(from data: Any) -> [[Any]] {
+    var lists: [[Any]] = []
+
+    visitJSONObjects(in: data) { node in
+        if let contents = ((node["richGridRenderer"] as? JSONDictionary)?["contents"] as? [Any]) {
+            lists.append(contents)
+        }
+        if let contents = ((node["richGridContinuation"] as? JSONDictionary)?["contents"] as? [Any]) {
+            lists.append(contents)
+        }
+        if let contents = ((node["appendContinuationItemsAction"] as? JSONDictionary)?["continuationItems"] as? [Any]) {
+            lists.append(contents)
+        }
+        if let contents = ((node["reloadContinuationItemsCommand"] as? JSONDictionary)?["continuationItems"] as? [Any]) {
+            lists.append(contents)
+        }
+        return .continue
+    }
+
+    return lists
+}
+
+func debugHomeFeedVideoIDsForTesting(_ data: JSONDictionary) -> [String] {
+    extractHomeVideoItems(from: data).map(\.id)
+}
+
+func debugHomeFeedContinuationForTesting(_ data: JSONDictionary) -> String? {
+    extractHomeContinuationToken(from: data)
 }
 
 private func extractSearchChannels(from data: Any) -> [SearchChannelItem] {

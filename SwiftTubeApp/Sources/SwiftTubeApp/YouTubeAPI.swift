@@ -573,6 +573,10 @@ final class YouTubeAPI: @unchecked Sendable {
             throw BackendClientError(message: message)
         }
 
+        if authenticated, responseAuthenticated(dictionary) == false {
+            throw BackendClientError(message: "YouTube did not accept this signed-in session. Try signing in again.")
+        }
+
         return dictionary
     }
 
