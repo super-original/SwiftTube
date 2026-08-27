@@ -34,4 +34,8 @@ The resulting bundle is written to `SwiftTubeApp/Build/SwiftTube.app`.
 
 More detail is available in the [architecture](docs/ARCHITECTURE.md), [playback](docs/PLAYBACK.md), and [release process](docs/RELEASE_PROCESS.md) guides.
 
+## License
+
+SwiftTube is licensed under the [GNU General Public License v3.0](LICENSE).
+
 SwiftTube is an unofficial personal project and is not affiliated with YouTube or Google.
