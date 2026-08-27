@@ -964,13 +964,31 @@ actor SwiftTubeBackend {
     private func buildVideoPlayback(videoID: String, authenticated: Bool) async throws -> VideoPlayback {
         async let watchTask = api.next(videoID: videoID, authenticated: authenticated)
         async let webSafariWatchPageTask = api.watchPage(videoID: videoID, profile: .webSafari, authenticated: false)
-        async let visionOSPlayerTask = api.player(videoID: videoID, profile: .visionOS, authenticated: false)
-        async let androidPlayerTask = api.player(videoID: videoID, profile: .android, authenticated: false)
-        async let iosPlayerTask = api.player(videoID: videoID, profile: .ios, authenticated: false)
 
         let watchData = try await watchTask
         let webSafariWatchPageHTML = try? await webSafariWatchPageTask
         let webSafariPlayerData = webSafariWatchPageHTML.flatMap(extractInitialPlayerResponse) ?? [:]
+        let webSafariVisitorData = webSafariWatchPageHTML.flatMap(extractVisitorData)
+
+        async let visionOSPlayerTask = api.player(
+            videoID: videoID,
+            profile: .visionOS,
+            visitorData: webSafariVisitorData,
+            authenticated: false
+        )
+        async let androidPlayerTask = api.player(
+            videoID: videoID,
+            profile: .android,
+            visitorData: webSafariVisitorData,
+            authenticated: false
+        )
+        async let iosPlayerTask = api.player(
+            videoID: videoID,
+            profile: .ios,
+            visitorData: webSafariVisitorData,
+            authenticated: false
+        )
+
         let visionOSPlayerData = (try? await visionOSPlayerTask) ?? [:]
         let androidPlayerData = (try? await androidPlayerTask) ?? [:]
         let iosPlayerData = (try? await iosPlayerTask) ?? [:]

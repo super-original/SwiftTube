@@ -510,6 +510,19 @@ final class DependencySelectionTests: XCTestCase {
         XCTAssertNotNil(nativePlayback.bestStream)
         XCTAssertFalse(nativePlayback.playbackStrategy.isEmpty)
 
+        let qualityTitles = await MainActor.run {
+            PlayerPlaybackCoordinator()
+                .debugQualityOptionsForTesting(playback: nativePlayback)
+                .map(\.title)
+        }
+        XCTAssertTrue(
+            qualityTitles.contains { title in
+                guard let height = Int(title.prefix { $0.isNumber }) else { return false }
+                return height >= 720
+            },
+            "Expected HD qualities, got \(qualityTitles)"
+        )
+
         var checkedURLs = Set<String>()
         for stream in [
             nativePlayback.preferredMuxedStream,
@@ -519,7 +532,7 @@ final class DependencySelectionTests: XCTestCase {
             try await assertStreamAcceptsRangeRequest(stream)
         }
 
-        print("Native YouTube extraction: \(nativeElapsed)s, \(nativePlayback.streams.count) streams")
+        print("Native YouTube extraction: \(nativeElapsed)s, \(nativePlayback.streams.count) streams, qualities: \(qualityTitles)")
     }
 
     private func assertStreamAcceptsRangeRequest(
