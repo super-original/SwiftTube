@@ -501,16 +501,47 @@ final class DependencySelectionTests: XCTestCase {
             throw XCTSkip("Set SWIFTTUBE_RUN_REAL_YOUTUBE_TESTS=1 to hit real YouTube.")
         }
 
+        let videoID = ProcessInfo.processInfo.environment["SWIFTTUBE_REAL_YOUTUBE_VIDEO_ID"] ?? "dQw4w9WgXcQ"
         let nativeStart = Date()
-        let nativePlayback = try await SwiftTubeBackend.shared.fetchVideo(id: "dQw4w9WgXcQ")
+        let nativePlayback = try await SwiftTubeBackend.shared.fetchVideo(id: videoID)
         let nativeElapsed = Date().timeIntervalSince(nativeStart)
 
         XCTAssertFalse(nativePlayback.streams.isEmpty)
-        XCTAssertGreaterThan(nativePlayback.streams.count, 1)
         XCTAssertNotNil(nativePlayback.bestStream)
         XCTAssertFalse(nativePlayback.playbackStrategy.isEmpty)
 
+        var checkedURLs = Set<String>()
+        for stream in [
+            nativePlayback.preferredMuxedStream,
+            nativePlayback.preferredVideoStream,
+            nativePlayback.preferredAudioStream,
+        ].compactMap({ $0 }) where checkedURLs.insert(stream.url).inserted {
+            try await assertStreamAcceptsRangeRequest(stream)
+        }
+
         print("Native YouTube extraction: \(nativeElapsed)s, \(nativePlayback.streams.count) streams")
+    }
+
+    private func assertStreamAcceptsRangeRequest(
+        _ stream: StreamInfo,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        let url = try XCTUnwrap(URL(string: stream.url), file: file, line: line)
+        var request = URLRequest(url: url)
+        request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
+        for (header, value) in stream.httpHeaders ?? [:] {
+            request.setValue(value, forHTTPHeaderField: header)
+        }
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        let httpResponse = try XCTUnwrap(response as? HTTPURLResponse, file: file, line: line)
+        XCTAssertTrue(
+            [200, 206].contains(httpResponse.statusCode),
+            "Format \(stream.formatId ?? "unknown") returned HTTP \(httpResponse.statusCode)",
+            file: file,
+            line: line
+        )
     }
 
     private func temporaryDirectory() throws -> URL {

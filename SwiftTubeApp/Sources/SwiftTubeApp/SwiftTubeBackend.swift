@@ -964,114 +964,96 @@ actor SwiftTubeBackend {
     private func buildVideoPlayback(videoID: String, authenticated: Bool) async throws -> VideoPlayback {
         async let watchTask = api.next(videoID: videoID, authenticated: authenticated)
         async let webSafariWatchPageTask = api.watchPage(videoID: videoID, profile: .webSafari, authenticated: false)
+        async let visionOSPlayerTask = api.player(videoID: videoID, profile: .visionOS, authenticated: false)
         async let androidPlayerTask = api.player(videoID: videoID, profile: .android, authenticated: false)
         async let iosPlayerTask = api.player(videoID: videoID, profile: .ios, authenticated: false)
 
         let watchData = try await watchTask
         let webSafariWatchPageHTML = try? await webSafariWatchPageTask
         let webSafariPlayerData = webSafariWatchPageHTML.flatMap(extractInitialPlayerResponse) ?? [:]
-        let webSafariVisitorData = webSafariWatchPageHTML.flatMap(extractVisitorData)
-        let androidVRPlayerData: JSONDictionary
-        if let webSafariVisitorData {
-            androidVRPlayerData = (try? await api.player(
-                videoID: videoID,
-                profile: .androidVR,
-                visitorData: webSafariVisitorData,
-                authenticated: false
-            )) ?? [:]
-        } else {
-            androidVRPlayerData = [:]
-        }
+        let visionOSPlayerData = (try? await visionOSPlayerTask) ?? [:]
         let androidPlayerData = (try? await androidPlayerTask) ?? [:]
         let iosPlayerData = (try? await iosPlayerTask) ?? [:]
 
         let metadata = extractWatchMetadata(from: watchData)
-        let liveBroadcastDetails = [webSafariPlayerData, androidPlayerData, iosPlayerData].compactMap {
+        let liveBroadcastDetails = [webSafariPlayerData, visionOSPlayerData, androidPlayerData, iosPlayerData].compactMap {
             (($0["microformat"] as? JSONDictionary)?["playerMicroformatRenderer"] as? JSONDictionary)?["liveBroadcastDetails"] as? JSONDictionary
         }
 
-        let androidVRStreams = parseStreams(from: androidVRPlayerData, defaultHeaders: api.streamRequestHeaders(for: .androidVR))
+        let visionOSStreams = parseStreams(from: visionOSPlayerData, defaultHeaders: api.streamRequestHeaders(for: .visionOS))
         var androidStreams = parseStreams(from: androidPlayerData, defaultHeaders: api.streamRequestHeaders(for: .android))
-        var iosStreams = parseStreams(from: iosPlayerData, defaultHeaders: api.streamRequestHeaders(for: .ios))
+        let iosStreams = parseStreams(from: iosPlayerData, defaultHeaders: api.streamRequestHeaders(for: .ios))
         let webSafariStreams = parseStreams(from: webSafariPlayerData, defaultHeaders: api.streamRequestHeaders(for: .webSafari))
-        let adaptiveManifestStreams = mergeStreams(webSafariStreams, iosStreams)
-            .filter { $0.formatId == "hls-manifest" }
-        var hlsManifestSources = webSafariStreams
-        if liveBroadcastDetails.isEmpty == false {
-            hlsManifestSources += iosStreams
-        }
+        let visionOSPlaybackStreams = streamsPlayableWithoutProofToken(visionOSStreams, profile: .visionOS)
+        var androidPlaybackStreams = streamsPlayableWithoutProofToken(androidStreams, profile: .android)
+        let webSafariPlaybackStreams = streamsPlayableWithoutProofToken(webSafariStreams, profile: .webSafari)
+        let adaptiveManifestStreams = webSafariPlaybackStreams
+        let hlsManifestSources = webSafariPlaybackStreams
         var hlsVariantStreams = await loadHLSVariantStreams(from: hlsManifestSources)
-        let fallbackAudioLanguage = preferredNativeAudioLanguage(in: androidVRStreams + androidStreams + iosStreams)
+        let fallbackAudioLanguage = preferredNativeAudioLanguage(in: visionOSStreams + androidStreams + iosStreams)
             ?? automaticCaptionLanguage(from: webSafariPlayerData)
         var playerAPIStreams = sortedYouTubePlaybackStreams(applyingFallbackAudioLanguage(
             fallbackAudioLanguage,
             to: mergeYouTubeFormatStreams(
-            hlsVariantStreams,
-            androidVRStreams,
-            androidStreams,
-            iosStreams.filter { $0.formatId != "hls-manifest" }
+                hlsVariantStreams,
+                visionOSPlaybackStreams,
+                androidPlaybackStreams
             )
         ))
 
         if playerAPIStreams.count <= 1 {
             if let retriedAndroidData = try? await api.player(videoID: videoID, profile: .android, authenticated: false) {
                 androidStreams = parseStreams(from: retriedAndroidData, defaultHeaders: api.streamRequestHeaders(for: .android))
-            }
-            if let retriedIOSData = try? await api.player(videoID: videoID, profile: .ios, authenticated: false) {
-                iosStreams = parseStreams(from: retriedIOSData, defaultHeaders: api.streamRequestHeaders(for: .ios))
+                androidPlaybackStreams = streamsPlayableWithoutProofToken(androidStreams, profile: .android)
             }
             if hlsVariantStreams.isEmpty {
-                hlsManifestSources = webSafariStreams
-                if liveBroadcastDetails.isEmpty == false {
-                    hlsManifestSources += iosStreams
-                }
                 hlsVariantStreams = await loadHLSVariantStreams(from: hlsManifestSources)
             }
             playerAPIStreams = sortedYouTubePlaybackStreams(applyingFallbackAudioLanguage(
                 fallbackAudioLanguage,
                 to: mergeYouTubeFormatStreams(
-                hlsVariantStreams,
-                androidVRStreams,
-                androidStreams,
-                iosStreams.filter { $0.formatId != "hls-manifest" }
+                    hlsVariantStreams,
+                    visionOSPlaybackStreams,
+                    androidPlaybackStreams
                 )
             ))
         }
         let playerStreams = playerAPIStreams
         let playerSubtitles = deduplicatedSubtitles(
-            extractSubtitles(from: androidVRPlayerData)
+            extractSubtitles(from: visionOSPlayerData)
                 + extractSubtitles(from: androidPlayerData)
                 + extractSubtitles(from: iosPlayerData)
         )
         let playbackTags = deduplicatedVideoTags(
             extractVideoTags(from: watchData),
             extractVideoTags(from: webSafariPlayerData),
-            extractVideoTags(from: androidVRPlayerData),
+            extractVideoTags(from: visionOSPlayerData),
             extractVideoTags(from: androidPlayerData),
             extractVideoTags(from: iosPlayerData)
         )
         let accessIssue = resolveVideoAccessIssue(
             from: [
-                PlaybackIssueSource(data: androidVRPlayerData, streams: androidVRStreams),
-                PlaybackIssueSource(data: webSafariPlayerData, streams: mergeStreams(webSafariStreams, hlsVariantStreams)),
-                PlaybackIssueSource(data: androidPlayerData, streams: androidStreams),
-                PlaybackIssueSource(data: iosPlayerData, streams: mergeStreams(iosStreams, hlsVariantStreams)),
+                PlaybackIssueSource(data: visionOSPlayerData, streams: visionOSPlaybackStreams),
+                PlaybackIssueSource(data: webSafariPlayerData, streams: mergeStreams(webSafariPlaybackStreams, hlsVariantStreams)),
+                PlaybackIssueSource(data: androidPlayerData, streams: androidPlaybackStreams),
+                PlaybackIssueSource(data: iosPlayerData, streams: []),
             ],
             fallbackTags: playbackTags
         )
 
+        let visionOSDetails = visionOSPlayerData["videoDetails"] as? JSONDictionary
         let androidDetails = androidPlayerData["videoDetails"] as? JSONDictionary
         let iosDetails = iosPlayerData["videoDetails"] as? JSONDictionary
         let webSafariDetails = webSafariPlayerData["videoDetails"] as? JSONDictionary
         let isLive = liveBroadcastDetails.contains { ($0["isLiveNow"] as? Bool) == true }
-        let isUpcoming = [webSafariDetails, androidDetails, iosDetails].contains { ($0?["isUpcoming"] as? Bool) == true }
+        let isUpcoming = [webSafariDetails, visionOSDetails, androidDetails, iosDetails].contains { ($0?["isUpcoming"] as? Bool) == true }
         let liveManifestMetadata = isLive
             ? await loadLiveManifestMetadata(from: iosPlayerData.isEmpty ? androidPlayerData : iosPlayerData, api: api)
             : nil
         let livePlaybackStreams = hlsVariantStreams.isEmpty
             ? sortedYouTubePlaybackStreams(mergeYouTubeFormatStreams(
-                androidStreams.filter { $0.formatId != "hls-manifest" && $0.formatId != "dash-manifest" },
-                iosStreams.filter { $0.formatId != "hls-manifest" && $0.formatId != "dash-manifest" }
+                visionOSPlaybackStreams.filter { $0.formatId != "hls-manifest" && $0.formatId != "dash-manifest" },
+                androidPlaybackStreams.filter { $0.formatId != "hls-manifest" && $0.formatId != "dash-manifest" }
             ))
             : hlsVariantStreams
         let nativePlaybackStreams = isLive ? livePlaybackStreams : playerStreams
@@ -1094,10 +1076,12 @@ actor SwiftTubeBackend {
 
         let title: String? = metadata["title"]
             ?? (webSafariDetails?["title"] as? String)
+            ?? (visionOSDetails?["title"] as? String)
             ?? (androidDetails?["title"] as? String)
             ?? (iosDetails?["title"] as? String)
         let duration = metadata["durationText"]
             ?? metadataDurationText(from: webSafariDetails)
+            ?? metadataDurationText(from: visionOSDetails)
             ?? metadataDurationText(from: androidDetails)
             ?? metadataDurationText(from: iosDetails)
         let durationSeconds = parseDurationSeconds(from: duration)
@@ -1117,7 +1101,8 @@ actor SwiftTubeBackend {
             durationSeconds: durationSeconds
         )
         let relatedItems = await mergeStoredProgress(into: extractRelatedVideos(from: watchData, currentVideoID: videoID))
-        let storyboard = extractStoryboard(from: androidPlayerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
+        let storyboard = extractStoryboard(from: visionOSPlayerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
+            ?? extractStoryboard(from: androidPlayerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
             ?? extractStoryboard(from: iosPlayerData, liveTimeline: liveManifestMetadata?.storyboardTimeline)
 
         return VideoPlayback(
@@ -2328,6 +2313,24 @@ private func parseStreams(
     }
 
     return results
+}
+
+private func streamsPlayableWithoutProofToken(
+    _ streams: [StreamInfo],
+    profile: InnerTubeClientProfile
+) -> [StreamInfo] {
+    switch profile {
+    case .visionOS:
+        return streams
+    case .android:
+        // YouTube currently exempts muxed itag 18 and Android HLS from GVS PO-token enforcement.
+        return streams.filter { $0.formatId == "18" || $0.formatId == "hls-manifest" }
+    case .webSafari:
+        // Web HTTPS/DASH URLs require a GVS PO token, while Safari HLS remains tokenless.
+        return streams.filter { $0.formatId == "hls-manifest" }
+    default:
+        return []
+    }
 }
 
 private func isSkippedNativeFormatID(_ formatId: String?) -> Bool {

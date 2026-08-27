@@ -6,8 +6,8 @@ enum InnerTubeClientProfile: Hashable, Sendable {
     case webParentTools
     case mweb
     case android
-    case androidVR
     case ios
+    case visionOS
 }
 
 private struct InnerTubeClientContext: @unchecked Sendable {
@@ -57,7 +57,7 @@ private struct InnerTubeClientContext: @unchecked Sendable {
 private enum InnerTubeClients {
     static let web = InnerTubeClientContext(
         clientName: "WEB",
-        clientVersion: "2.20250626.01.00",
+        clientVersion: "2.20260708.00.00",
         clientID: 1,
         apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
         userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36",
@@ -67,7 +67,7 @@ private enum InnerTubeClients {
 
     static let webSafari = InnerTubeClientContext(
         clientName: "WEB",
-        clientVersion: "2.20260114.08.00",
+        clientVersion: "2.20260708.00.00",
         clientID: 1,
         apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
         userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)",
@@ -90,7 +90,7 @@ private enum InnerTubeClients {
 
     static let mweb = InnerTubeClientContext(
         clientName: "MWEB",
-        clientVersion: "2.20260115.01.00",
+        clientVersion: "2.20260708.05.00",
         clientID: 2,
         apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
         userAgent: "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1,gzip(gfe)",
@@ -103,51 +103,50 @@ private enum InnerTubeClients {
 
     static let android = InnerTubeClientContext(
         clientName: "ANDROID",
-        clientVersion: "21.02.35",
+        clientVersion: "21.26.364",
         clientID: 3,
         apiKey: nil,
-        userAgent: "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip",
+        userAgent: "com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip",
         referer: nil,
         additionalClientContext: [
             "androidSdkVersion": 30,
             "osName": "Android",
             "osVersion": "11",
-            "userAgent": "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip",
-            "hl": "en",
-        ]
-    )
-
-    static let androidVR = InnerTubeClientContext(
-        clientName: "ANDROID_VR",
-        clientVersion: "1.65.10",
-        clientID: 28,
-        apiKey: nil,
-        userAgent: "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-        referer: nil,
-        additionalClientContext: [
-            "androidSdkVersion": 32,
-            "deviceMake": "Oculus",
-            "deviceModel": "Quest 3",
-            "osName": "Android",
-            "osVersion": "12L",
-            "userAgent": "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            "userAgent": "com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip",
             "hl": "en",
         ]
     )
 
     static let ios = InnerTubeClientContext(
         clientName: "IOS",
-        clientVersion: "21.02.3",
+        clientVersion: "21.26.4",
         clientID: 5,
         apiKey: nil,
-        userAgent: "com.google.ios.youtube/21.02.3 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+        userAgent: "com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
         referer: nil,
         additionalClientContext: [
             "deviceMake": "Apple",
             "deviceModel": "iPhone16,2",
             "osName": "iPhone",
             "osVersion": "18.3.2.22D82",
-            "userAgent": "com.google.ios.youtube/21.02.3 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+            "userAgent": "com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+            "hl": "en",
+        ]
+    )
+
+    static let visionOS = InnerTubeClientContext(
+        clientName: "VISIONOS",
+        clientVersion: "1.02",
+        clientID: 101,
+        apiKey: nil,
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
+        referer: nil,
+        additionalClientContext: [
+            "deviceMake": "Apple",
+            "deviceModel": "RealityDevice17,1",
+            "osName": "visionOS",
+            "osVersion": "26.5.23O471",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
             "hl": "en",
         ]
     )
@@ -164,10 +163,10 @@ private enum InnerTubeClients {
             return mweb
         case .android:
             return android
-        case .androidVR:
-            return androidVR
         case .ios:
             return ios
+        case .visionOS:
+            return visionOS
         }
     }
 }
